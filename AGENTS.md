@@ -17,8 +17,8 @@ This is a new project for Google's 2026 [All Things Agentic Hackathon](https://a
 - It must use at least one Google agent framework: Google ADK, GenAI SDK, Antigravity SDK, or Genkit.
 - It must use at least one Google Cloud infrastructure service.
 
-## Decision boundary
+## Bonus criteria
 
-Architecture and implementation choices have not been decided. Do not treat proposals from earlier discussions or the README as approved decisions.
-
-Keep this file short. It is loaded into every agent prompt, so it should contain only user-confirmed project facts, binding external constraints, and genuinely durable instructions. Ask Oana before adding inferred product requirements, architecture, policies, or workflow details.
+- Public content explaining how the project was built: up to +0.2 points. It must state that it was created for this hackathon.
+- A public social post with `#AllThingsAgenticHackathon`: up to +0.2 points.
+- Each successfully integrated additional Google AI model, such as Gemma, Veo, or Lyria: +0.2 points each, up to +0.6 total.
