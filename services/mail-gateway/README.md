@@ -32,6 +32,16 @@ mail handlers only there. It enables `inbound_services: mail`, restricts handler
 App Engine internal/admin requests, uses the dedicated keyless mail identity, and
 caps automatic scaling at one F1 instance with a zero minimum.
 
+Every message is external, untrusted evidence. Before any durable write, the gateway
+requires one valid sender, bounded singleton transport headers, a structurally valid
+MIME tree, at most 100 parts/eight levels/20 attachments, and an allowlist limited to
+plain text, HTML, common inline images, and PDF. Active or unknown content types,
+unsafe filenames, unknown transfer encodings, malformed MIME, and oversized headers
+or attachments are discarded with no object, record, or event. Instruction-like text
+is not heuristically interpreted or filtered: accepted bytes remain opaque in private
+storage, while the metadata-only event carries `trust_class=untrusted_external` so a
+later parser or agent must treat them as data, never instructions.
+
 Review the upload manifest before deploying. Deploy a unique version without
 promoting it, inspect its configuration and logs, then move traffic only after the
 version is healthy. Actual `/_ah/mail/...` verification must use App Engine's inbound

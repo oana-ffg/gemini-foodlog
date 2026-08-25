@@ -11,7 +11,7 @@ from mail_gateway.adapters import (
     GCSRawMailStore,
     PubSubMailEventPublisher,
 )
-from mail_gateway.domain import InvalidRecipient, UnknownRecipient
+from mail_gateway.domain import InvalidRecipient, UnknownRecipient, UnsafeMail
 from mail_gateway.service import MailGatewayService
 
 LOGGER = logging.getLogger(__name__)
@@ -66,6 +66,9 @@ class MailGatewayApplication:
             )
         except (InvalidRecipient, UnknownRecipient):
             LOGGER.warning("Discarded inbound mail for an inactive or invalid recipient")
+            return self._respond(start_response, "204 No Content")
+        except UnsafeMail as error:
+            LOGGER.warning("Discarded unsafe inbound mail: %s", error.code)
             return self._respond(start_response, "204 No Content")
         except Exception:
             LOGGER.exception("Inbound mail persistence or publication failed")

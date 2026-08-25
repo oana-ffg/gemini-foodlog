@@ -132,11 +132,16 @@ class FirestoreMailRepository:
 
     @staticmethod
     def _document(record: RawMailRecord) -> dict:
-        return {**asdict(record), "schema_version": 1}
+        return {
+            **asdict(record),
+            "content_types": list(record.content_types),
+            "schema_version": 1,
+        }
 
     @staticmethod
     def _from_document(data: dict) -> RawMailRecord:
         data.pop("schema_version", None)
+        data["content_types"] = tuple(data.get("content_types", ()))
         return RawMailRecord(**data)
 
 

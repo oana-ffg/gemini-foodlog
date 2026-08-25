@@ -72,7 +72,7 @@ belong in private Cloud Storage rather than Firestore.
 | `knowledge/{knowledge_id}` | Revisable household facts and hypotheses | statement <= 2,000 chars, `kind`, confidence, status, evidence refs <= 50, supersedes ID, learned-from feedback/question IDs; conflicts create revisions, not silent replacement. |
 | `purchases/{purchase_id}` | Normalized invoice/order | merchant, order/reference hash, purchased/delivery timestamps, currency, bounded totals, `raw_mail_id`; line items are separate documents. |
 | `purchases/{purchase_id}/items/{item_id}` | One purchased product | normalized name <= 500 chars, quantity/unit, amount, category, source text <= 1,000 chars. |
-| `raw_mail/{mail_id}` | MIME transport metadata and immutable object link | recipient, nullable sender <= 500 chars, nullable subject <= 500 chars, nullable normalized message-ID hash, content SHA-256, byte size, server-derived `object_key`, transport status (`reserved`, `stored`, or `published`), bounded publish attempt/provider IDs, and timestamps; MIME bytes stay in GCS and parsing adds separate normalized purchase evidence. |
+| `raw_mail/{mail_id}` | MIME transport metadata and immutable object link | recipient, nullable sender <= 500 chars, normalized sender address, nullable subject <= 500 chars, nullable normalized message-ID hash, fixed `trust_class` (`untrusted_external`), bounded MIME part/attachment counts and accepted content-type list, content SHA-256, byte size, server-derived `object_key`, transport status (`reserved`, `stored`, or `published`), bounded publish attempt/provider IDs, and timestamps; MIME bytes stay in GCS and parsing adds separate normalized purchase evidence. |
 | `traces/{trace_id}` | Agent-run index | event/job IDs, model and prompt versions, status, started/completed timestamps, token/cost counters, immutable GCS `object_key` and SHA-256; full trace stays in GCS. |
 | `jobs/{job_id}` | Durable asynchronous work state | `kind`, subject ID and revision, status, attempt count, `available_at`, lease token/owner/expiry, last error code/message <= 2,000 chars; payload <= 20 scalar/reference keys. |
 | `exports/{export_id}` | User data-export state | status, requested/completed/expiry timestamps, temporary GCS object key, byte size, SHA-256; object expires after one day. |
@@ -100,6 +100,10 @@ belong in private Cloud Storage rather than Firestore.
    publication. A reused Message-ID with different bytes falls back to a
    content-qualified identity so conflicting evidence is preserved rather than
    overwritten or dropped.
+9. Inbound MIME bytes are always `untrusted_external`. The gateway validates bounded
+   structure and supported passive content before storage, publishes no message body
+   or attachment content, and never promotes email text into executable agent
+   instructions.
 
 ## Query and index contract
 

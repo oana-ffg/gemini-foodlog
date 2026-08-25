@@ -4,7 +4,9 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email import policy
-from email.parser import BytesHeaderParser
+from email.message import Message
+from email.parser import BytesParser
+from email.utils import getaddresses
 from hashlib import sha256
 from typing import Literal
 
@@ -13,6 +15,31 @@ DOMAIN_PATTERN = re.compile(
     r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
 )
 MESSAGE_ID_PATTERN = re.compile(r"^<[^<>\s]{1,990}>$")
+MAILBOX_PATTERN = re.compile(r"^[^\s<>@]{1,64}@[^\s<>@]{1,253}$")
+MAX_HEADER_BYTES = 64 * 1024
+MAX_HEADER_COUNT = 100
+MAX_HEADER_LINE_BYTES = 998
+MAX_PART_HEADER_COUNT = 30
+MAX_PART_HEADER_VALUE_CHARS = 8 * 1024
+MAX_MIME_PARTS = 100
+MAX_MIME_DEPTH = 8
+MAX_ATTACHMENTS = 20
+MAX_ATTACHMENT_ENCODED_BYTES = 10 * 1024 * 1024
+ALLOWED_MULTIPART_TYPES = frozenset(
+    {"multipart/alternative", "multipart/mixed", "multipart/related"}
+)
+ALLOWED_LEAF_TYPES = frozenset(
+    {
+        "application/pdf",
+        "image/gif",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "text/html",
+        "text/plain",
+    }
+)
+ALLOWED_TRANSFER_ENCODINGS = frozenset({"7bit", "8bit", "base64", "binary", "quoted-printable"})
 
 
 class InvalidRecipient(ValueError):
@@ -25,6 +52,14 @@ class UnknownRecipient(ValueError):
 
 class MailIdentityCollision(ValueError):
     pass
+
+
+class UnsafeMail(ValueError):
+    """An external message that exceeds the deliberately accepted MIME surface."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
 
 
 def utc_now() -> datetime:
@@ -66,24 +101,152 @@ def bounded_header(value: str | None, *, limit: int) -> str | None:
 @dataclass(frozen=True)
 class RawMailHeaders:
     sender: str | None
+    sender_address: str
     subject: str | None
     message_id_hash: str | None
 
 
-def extract_bounded_headers(raw_message: bytes) -> RawMailHeaders:
-    message = BytesHeaderParser(policy=policy.default).parsebytes(raw_message)
+@dataclass(frozen=True)
+class MimeInspection:
+    headers: RawMailHeaders
+    mime_part_count: int
+    attachment_count: int
+    content_types: tuple[str, ...]
+
+
+def _header_block(raw_message: bytes) -> bytes:
+    candidates = [
+        position for marker in (b"\r\n\r\n", b"\n\n") if (position := raw_message.find(marker)) >= 0
+    ]
+    if not candidates:
+        raise UnsafeMail("missing_header_terminator")
+    block = raw_message[: min(candidates)]
+    if len(block) > MAX_HEADER_BYTES:
+        raise UnsafeMail("headers_too_large")
+    lines = block.splitlines()
+    if any(len(line) > MAX_HEADER_LINE_BYTES for line in lines):
+        raise UnsafeMail("header_line_too_long")
+    if b"\x00" in block:
+        raise UnsafeMail("nul_in_headers")
+    return block
+
+
+def _validate_singleton_headers(message: Message) -> None:
+    if len(list(message.raw_items())) > MAX_HEADER_COUNT:
+        raise UnsafeMail("too_many_headers")
+    for name in ("from", "message-id", "subject"):
+        if len(message.get_all(name, [])) > 1:
+            raise UnsafeMail(f"duplicate_{name}")
+
+
+def _sender(message: Message) -> tuple[str | None, str]:
+    raw_sender = message.get("From")
+    if raw_sender is None:
+        raise UnsafeMail("missing_from")
+    parsed = getaddresses([str(raw_sender)])
+    if len(parsed) != 1:
+        raise UnsafeMail("ambiguous_from")
+    _, address = parsed[0]
+    normalized_address = address.strip().casefold()
+    if len(normalized_address) > 320 or MAILBOX_PATTERN.fullmatch(normalized_address) is None:
+        raise UnsafeMail("invalid_from")
+    _, domain = normalized_address.rsplit("@", 1)
+    try:
+        normalize_domain(domain)
+    except ValueError as error:
+        raise UnsafeMail("invalid_from") from error
+    return bounded_header(str(raw_sender), limit=500), normalized_address
+
+
+def _walk_parts(message: Message, *, depth: int = 0) -> list[Message]:
+    if depth > MAX_MIME_DEPTH:
+        raise UnsafeMail("mime_too_deep")
+    parts = [message]
+    if message.is_multipart():
+        payload = message.get_payload()
+        if not isinstance(payload, list):
+            raise UnsafeMail("invalid_multipart_payload")
+        for child in payload:
+            if not isinstance(child, Message):
+                raise UnsafeMail("invalid_mime_part")
+            parts.extend(_walk_parts(child, depth=depth + 1))
+            if len(parts) > MAX_MIME_PARTS:
+                raise UnsafeMail("too_many_mime_parts")
+    return parts
+
+
+def _validate_part_headers(part: Message) -> None:
+    headers = list(part.raw_items())
+    if len(headers) > MAX_PART_HEADER_COUNT:
+        raise UnsafeMail("too_many_part_headers")
+    for name in ("content-disposition", "content-transfer-encoding", "content-type"):
+        if len(part.get_all(name, [])) > 1:
+            raise UnsafeMail(f"duplicate_{name}")
+    for name, value in headers:
+        if len(name) > 78 or len(value) > MAX_PART_HEADER_VALUE_CHARS:
+            raise UnsafeMail("part_header_too_large")
+
+
+def inspect_untrusted_mime(raw_message: bytes) -> MimeInspection:
+    """Validate structure only; all accepted message content remains untrusted data."""
+
+    _header_block(raw_message)
+    message = BytesParser(policy=policy.default).parsebytes(raw_message)
+    if message.defects:
+        raise UnsafeMail("malformed_mime")
+    _validate_singleton_headers(message)
+    sender, sender_address = _sender(message)
     message_id = bounded_header(message.get("Message-ID"), limit=998)
-    normalized_message_id = (
-        message_id if message_id and MESSAGE_ID_PATTERN.fullmatch(message_id) else None
-    )
-    return RawMailHeaders(
-        sender=bounded_header(message.get("From"), limit=500),
-        subject=bounded_header(message.get("Subject"), limit=500),
-        message_id_hash=(
-            sha256(normalized_message_id.encode()).hexdigest()
-            if normalized_message_id is not None
-            else None
+    if message_id is not None and MESSAGE_ID_PATTERN.fullmatch(message_id) is None:
+        raise UnsafeMail("invalid_message_id")
+
+    parts = _walk_parts(message)
+    attachments = 0
+    content_types: set[str] = set()
+    for part in parts:
+        if part.defects:
+            raise UnsafeMail("malformed_mime")
+        _validate_part_headers(part)
+        content_type = part.get_content_type().casefold()
+        content_types.add(content_type)
+        if part.is_multipart():
+            if content_type not in ALLOWED_MULTIPART_TYPES:
+                raise UnsafeMail("unsupported_multipart_type")
+            continue
+        if content_type not in ALLOWED_LEAF_TYPES:
+            raise UnsafeMail("unsafe_or_unsupported_content_type")
+        transfer_encoding = (part.get("Content-Transfer-Encoding") or "7bit").strip().casefold()
+        if transfer_encoding not in ALLOWED_TRANSFER_ENCODINGS:
+            raise UnsafeMail("unsupported_transfer_encoding")
+        disposition = part.get_content_disposition()
+        if disposition not in (None, "attachment", "inline"):
+            raise UnsafeMail("invalid_content_disposition")
+        if disposition == "attachment":
+            attachments += 1
+            if attachments > MAX_ATTACHMENTS:
+                raise UnsafeMail("too_many_attachments")
+            payload = part.get_payload(decode=False)
+            encoded_size = len(payload) if isinstance(payload, (bytes, str)) else 0
+            if encoded_size > MAX_ATTACHMENT_ENCODED_BYTES:
+                raise UnsafeMail("attachment_too_large")
+        filename = part.get_filename()
+        if filename is not None and (
+            filename in (".", "..")
+            or len(filename) > 255
+            or any(c in filename for c in "\r\n\x00/\\")
+        ):
+            raise UnsafeMail("unsafe_attachment_name")
+
+    return MimeInspection(
+        headers=RawMailHeaders(
+            sender=sender,
+            sender_address=sender_address,
+            subject=bounded_header(message.get("Subject"), limit=500),
+            message_id_hash=(sha256(message_id.encode()).hexdigest() if message_id else None),
         ),
+        mime_part_count=len(parts),
+        attachment_count=attachments,
+        content_types=tuple(sorted(content_types)),
     )
 
 
@@ -101,6 +264,11 @@ class RawMailRecord:
     content_sha256: str
     size_bytes: int
     object_key: str
+    sender_address: str | None = None
+    trust_class: Literal["untrusted_external"] = "untrusted_external"
+    mime_part_count: int = 0
+    attachment_count: int = 0
+    content_types: tuple[str, ...] = field(default_factory=tuple)
     status: MailStatus = "reserved"
     publish_attempt_count: int = 0
     provider_message_id: str | None = None
@@ -115,6 +283,7 @@ class RawMailStoredEventV1:
     kind: Literal["raw_mail_stored"]
     account_id: str
     mail_id: str
+    trust_class: Literal["untrusted_external"] = "untrusted_external"
 
     def as_dict(self) -> dict[str, str | int]:
         return {
@@ -122,4 +291,5 @@ class RawMailStoredEventV1:
             "kind": self.kind,
             "account_id": self.account_id,
             "mail_id": self.mail_id,
+            "trust_class": self.trust_class,
         }

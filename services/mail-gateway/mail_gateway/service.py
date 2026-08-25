@@ -8,7 +8,7 @@ from .domain import (
     RawMailRecord,
     RawMailStoredEventV1,
     UnknownRecipient,
-    extract_bounded_headers,
+    inspect_untrusted_mime,
     normalize_domain,
     normalize_recipient,
     recipient_hash,
@@ -63,7 +63,8 @@ class MailGatewayService:
             raise UnknownRecipient
 
         content_hash = sha256(raw_message).hexdigest()
-        headers = extract_bounded_headers(raw_message)
+        inspection = inspect_untrusted_mime(raw_message)
+        headers = inspection.headers
         identity_hash = headers.message_id_hash or content_hash
         record = self._record(
             account_id=account_id,
@@ -73,7 +74,11 @@ class MailGatewayService:
             identity_hash=identity_hash,
             message_id_hash=headers.message_id_hash,
             sender=headers.sender,
+            sender_address=headers.sender_address,
             subject=headers.subject,
+            mime_part_count=inspection.mime_part_count,
+            attachment_count=inspection.attachment_count,
+            content_types=inspection.content_types,
         )
         try:
             record = self._repository.reserve(record)
@@ -88,7 +93,11 @@ class MailGatewayService:
                     identity_hash=collision_safe_hash,
                     message_id_hash=headers.message_id_hash,
                     sender=headers.sender,
+                    sender_address=headers.sender_address,
                     subject=headers.subject,
+                    mime_part_count=inspection.mime_part_count,
+                    attachment_count=inspection.attachment_count,
+                    content_types=inspection.content_types,
                 )
             )
 
@@ -122,7 +131,11 @@ class MailGatewayService:
         identity_hash: str,
         message_id_hash: str | None,
         sender: str | None,
+        sender_address: str,
         subject: str | None,
+        mime_part_count: int,
+        attachment_count: int,
+        content_types: tuple[str, ...],
     ) -> RawMailRecord:
         mail_id = sha256(f"{account_id}\0{identity_hash}".encode()).hexdigest()
         return RawMailRecord(
@@ -130,10 +143,14 @@ class MailGatewayService:
             account_id=account_id,
             recipient=recipient,
             sender=sender,
+            sender_address=sender_address,
             subject=subject,
             message_id_hash=message_id_hash,
             content_sha256=content_hash,
             size_bytes=len(raw_message),
             object_key=f"accounts/{account_id}/raw-mail/{mail_id}.eml",
+            mime_part_count=mime_part_count,
+            attachment_count=attachment_count,
+            content_types=content_types,
             created_at=utc_now(),
         )

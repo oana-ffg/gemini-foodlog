@@ -291,12 +291,19 @@ The mail gateway is deliberately thin:
 
 1. Receive the MIME message.
 2. Resolve the recipient to exactly one account.
-3. Store the original message in private Cloud Storage.
-4. create an idempotent ingestion record;
-5. publish a small processing event to Pub/Sub;
-6. let the normal backend worker parse and normalize the relevant order or invoice data.
+3. Validate the bounded passive MIME surface while treating all content as untrusted.
+4. Create an idempotent ingestion record.
+5. Store the original message in private Cloud Storage.
+6. Publish a small processing event to Pub/Sub.
+7. Let the normal backend worker parse and normalize the relevant order or invoice data.
 
 Inbound email is untrusted input. Parsing must enforce message-size limits, attachment limits, supported content types, sender/message checks appropriate to forwarded Nemlig mail, and idempotency. Email contents and attachments are never treated as agent instructions.
+The gateway accepts only bounded plain text, HTML, common inline image, and PDF parts;
+active/unknown types, malformed structures, unsafe filenames, and excessive depth,
+parts, headers, or attachments are discarded before persistence. Accepted raw bytes
+stay opaque in private storage. Only account/mail references plus an explicit
+`untrusted_external` trust class enter Pub/Sub; recognizing instruction-like prose is
+not used as a security control.
 
 ## 7. Agent reasoning workflow
 
