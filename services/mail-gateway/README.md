@@ -25,6 +25,12 @@ uv export --frozen --no-dev --no-hashes --no-header --no-emit-project \
 The Firestore transaction test runs when `FIRESTORE_EMULATOR_HOST` is present. The
 root Firebase emulator command can provide a fresh instance for it.
 
+`scripts/smoke_production.py` is an explicit-write operator check: it sends one
+clearly labelled benign synthetic MIME through the production adapters, verifies its
+exact retry and private bytes, then proves an executable attachment leaves no record
+or object. Run it only against the dedicated test account after reviewing `--help`;
+the generated Pub/Sub test event must be verified and acknowledged afterward.
+
 ## Production deployment
 
 `app.yaml` is deliberately the default service because App Engine delivers inbound
