@@ -1,4 +1,13 @@
 import asyncio
+from typing import Protocol
+
+
+class ObjectStore(Protocol):
+    async def put(self, key: str, content: bytes) -> None: ...
+
+    async def get(self, key: str) -> bytes: ...
+
+    async def delete(self, key: str) -> None: ...
 
 
 class InMemoryObjectStore:

@@ -32,10 +32,10 @@ from .models import (
     QuestionAnswerResult,
     QuestionStatus,
 )
-from .repository import InMemoryRepository
+from .repository import InMemoryRepository, Repository
 from .service import CaptureService
 from .settings import Settings
-from .storage import InMemoryObjectStore
+from .storage import InMemoryObjectStore, ObjectStore
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png"}
@@ -51,8 +51,8 @@ def detected_image_type(content: bytes) -> str | None:
 
 @dataclass
 class Container:
-    repository: InMemoryRepository
-    object_store: InMemoryObjectStore
+    repository: Repository
+    object_store: ObjectStore
     capture_service: CaptureService
 
 

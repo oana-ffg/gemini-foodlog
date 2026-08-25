@@ -3,16 +3,16 @@ from uuid import uuid4
 
 from .inference import InferenceEngine
 from .models import CaptureAccepted, MealEntry
-from .repository import InMemoryRepository
-from .storage import InMemoryObjectStore
+from .repository import Repository
+from .storage import ObjectStore
 
 
 class CaptureService:
     def __init__(
         self,
         *,
-        repository: InMemoryRepository,
-        object_store: InMemoryObjectStore,
+        repository: Repository,
+        object_store: ObjectStore,
         inference: InferenceEngine,
     ) -> None:
         self._repository = repository
@@ -35,6 +35,7 @@ class CaptureService:
         capture_id = str(uuid4())
         object_key = f"accounts/{account.id}/captures/{capture_id}.{extension}"
         capture, updated_account, created = await self._repository.reserve_capture(
+            capture_id=capture_id,
             account=account,
             camera=camera,
             idempotency_key=idempotency_key,

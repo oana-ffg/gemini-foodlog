@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Iterable
+from typing import Protocol
 from uuid import uuid4
 
 from .errors import (
@@ -36,6 +37,77 @@ from .models import (
     QuestionStatus,
     utc_now,
 )
+
+
+class Repository(Protocol):
+    async def provision_account(self, owner_user_id: str) -> Account: ...
+
+    async def account_for_owner(self, owner_user_id: str) -> Account: ...
+
+    async def create_browser_camera(self, owner_user_id: str, name: str) -> BrowserCamera: ...
+
+    async def camera_for_owner(
+        self, owner_user_id: str, camera_id: str
+    ) -> BrowserCamera: ...
+
+    async def reserve_capture(
+        self,
+        *,
+        capture_id: str,
+        account: Account,
+        camera: BrowserCamera,
+        idempotency_key: str,
+        content_type: str,
+        content_sha256: str,
+        object_key: str,
+    ) -> tuple[CaptureRecord, Account, bool]: ...
+
+    async def cancel_capture(self, capture: CaptureRecord) -> None: ...
+
+    async def mark_processed(self, capture_id: str) -> None: ...
+
+    async def save_meal(self, meal: MealEntry) -> MealEntry: ...
+
+    async def open_question(
+        self, *, meal: MealEntry, prompt: str, reason: str
+    ) -> ClarificationQuestion: ...
+
+    async def list_meals(self, owner_user_id: str) -> list[MealEntry]: ...
+
+    async def meal_for_owner(self, owner_user_id: str, meal_id: str) -> MealEntry: ...
+
+    async def list_meal_revisions(
+        self, owner_user_id: str, meal_id: str
+    ) -> list[MealRevision]: ...
+
+    async def record_meal_feedback(
+        self,
+        *,
+        owner_user_id: str,
+        meal_id: str,
+        request: MealFeedbackRequest,
+        idempotency_key: str,
+    ) -> MealFeedbackResult: ...
+
+    async def list_questions(
+        self,
+        owner_user_id: str,
+        *,
+        question_status: QuestionStatus | None = None,
+    ) -> list[ClarificationQuestion]: ...
+
+    async def answer_question(
+        self,
+        *,
+        owner_user_id: str,
+        question_id: str,
+        request: QuestionAnswerRequest,
+        idempotency_key: str,
+    ) -> QuestionAnswerResult: ...
+
+    async def capture_for_owner(
+        self, owner_user_id: str, capture_id: str
+    ) -> CaptureRecord: ...
 
 
 class InMemoryRepository:
@@ -107,6 +179,7 @@ class InMemoryRepository:
     async def reserve_capture(
         self,
         *,
+        capture_id: str,
         account: Account,
         camera: BrowserCamera,
         idempotency_key: str,
@@ -133,7 +206,7 @@ class InMemoryRepository:
             if stored_account.accepted_image_count >= stored_account.trial_image_limit:
                 raise TrialQuotaExhausted
             capture = CaptureRecord(
-                id=str(uuid4()),
+                id=capture_id,
                 account_id=account.id,
                 camera_id=camera.id,
                 idempotency_key=idempotency_key,
