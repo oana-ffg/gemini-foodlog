@@ -49,6 +49,21 @@ resource "google_storage_bucket_iam_policy" "retained" {
   policy_data = data.google_iam_policy.retained_bucket[each.key].policy_data
 }
 
+# App Engine's secure-by-default managed build uses the configured version identity
+# to read source and finish its GCS log object. Scope Google's required Object Admin
+# role to this platform staging bucket; it cannot modify bucket settings or IAM.
+resource "google_storage_bucket_iam_member" "app_engine_staging_objects" {
+  bucket = "staging.${var.project_id}.appspot.com"
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.runtime["mail"].email}"
+}
+
+resource "google_storage_bucket_iam_member" "app_engine_staging_bucket_reader" {
+  bucket = "staging.${var.project_id}.appspot.com"
+  role   = "roles/storage.legacyBucketReader"
+  member = "serviceAccount:${google_service_account.runtime["mail"].email}"
+}
+
 data "google_iam_policy" "retained_bucket" {
   for_each = local.retained_buckets
 

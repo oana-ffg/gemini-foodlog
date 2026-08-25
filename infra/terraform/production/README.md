@@ -73,20 +73,25 @@ gcloud app create \
 ```
 
 Terraform owns the required App Engine Admin API but deliberately does not attempt to
-recreate or relocate the application. No App Engine service or version is deployed by
-this bootstrap; the bounded default-service MIME gateway is added by its dedicated
-mail-ingestion task.
+recreate or relocate the application. The bounded default-service MIME gateway is
+deployed separately from `services/mail-gateway`.
 
 Initialization also created the platform-managed EU buckets
 `gemini-foodlog-2026.appspot.com` and `staging.gemini-foodlog-2026.appspot.com`.
 Neither policy contains a public principal. They retain the App Engine defaults for
 code and deployment staging only; raw inbound messages must use the separate private
 raw-mail bucket above. The staging bucket deletes live objects after fifteen days.
+App Engine runs its managed source build as the selected version service account, so
+Terraform grants `foodlog-mail` Object Admin plus legacy bucket-reader access on this
+staging bucket, Artifact Registry writer on only the platform-created `gae-standard`
+repository, and project log-writer. These are build-time grants: the identity cannot
+change the staging bucket or its IAM, write the Cloud Run repository, or administer
+builds.
 
 Google also created the unused App Engine default service account with project Editor.
 That automatic grant was removed immediately after verifying that the app-level
-default is `foodlog-mail`, no App Engine version exists, and the default account has no
-user-managed keys. The pre-existing Compute default account remains the identity used
+default is `foodlog-mail` and the default account has no user-managed keys. The
+pre-existing Compute default account remains the identity used
 by manual Cloud Build; replacing it is part of the repository-scoped Workload Identity
 Federation and CI deployment work, not this bootstrap.
 

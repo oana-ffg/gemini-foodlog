@@ -68,6 +68,23 @@ resource "google_project_iam_member" "datastore_runtime" {
   member  = "serviceAccount:${google_service_account.runtime[each.value].email}"
 }
 
+# App Engine uses the selected version identity for its managed Cloud Build. The
+# grant is limited to writing build logs and the platform-created App Engine image
+# repository; it cannot write the API's Cloud Run repository or administer builds.
+resource "google_project_iam_member" "mail_build_log_writer" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.runtime["mail"].email}"
+}
+
+resource "google_artifact_registry_repository_iam_member" "mail_app_engine_image_writer" {
+  project    = var.project_id
+  location   = var.region
+  repository = "gae-standard"
+  role       = "roles/artifactregistry.writer"
+  member     = "serviceAccount:${google_service_account.runtime["mail"].email}"
+}
+
 # The deploy identity may attach only the explicit runtime identities to Cloud Run.
 # Workload Identity Federation and the remaining deployment grants are intentionally
 # added with INF-015/INF-016, when their repository and resource scopes exist.
