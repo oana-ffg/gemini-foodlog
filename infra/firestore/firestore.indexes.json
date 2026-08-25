@@ -1,0 +1,99 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "cameras",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "last_seen_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "captures",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "camera_id", "order": "ASCENDING" },
+        { "fieldPath": "captured_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "captures",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "received_at", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "events",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "last_capture_at", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "meals",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "review_state", "order": "ASCENDING" },
+        { "fieldPath": "occurred_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "questions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "knowledge",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updated_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "available_at", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "outbox",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "available_at", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": [
+    { "collectionGroup": "captures", "fieldPath": "motion", "indexes": [] },
+    { "collectionGroup": "media", "fieldPath": "object_key", "indexes": [] },
+    { "collectionGroup": "meals", "fieldPath": "components", "indexes": [] },
+    { "collectionGroup": "meals", "fieldPath": "observations", "indexes": [] },
+    { "collectionGroup": "meals", "fieldPath": "alternatives", "indexes": [] },
+    { "collectionGroup": "meals", "fieldPath": "rationale", "indexes": [] },
+    { "collectionGroup": "revisions", "fieldPath": "inference", "indexes": [] },
+    { "collectionGroup": "questions", "fieldPath": "prompt", "indexes": [] },
+    { "collectionGroup": "questions", "fieldPath": "reason", "indexes": [] },
+    { "collectionGroup": "questions", "fieldPath": "evidence_refs", "indexes": [] },
+    { "collectionGroup": "questions", "fieldPath": "answer", "indexes": [] },
+    { "collectionGroup": "feedback", "fieldPath": "actual_value", "indexes": [] },
+    { "collectionGroup": "feedback", "fieldPath": "explanation", "indexes": [] },
+    { "collectionGroup": "knowledge", "fieldPath": "statement", "indexes": [] },
+    { "collectionGroup": "knowledge", "fieldPath": "evidence_refs", "indexes": [] },
+    { "collectionGroup": "items", "fieldPath": "source_text", "indexes": [] },
+    { "collectionGroup": "raw_mail", "fieldPath": "object_key", "indexes": [] },
+    { "collectionGroup": "traces", "fieldPath": "object_key", "indexes": [] },
+    { "collectionGroup": "jobs", "fieldPath": "payload", "indexes": [] },
+    { "collectionGroup": "exports", "fieldPath": "object_key", "indexes": [] },
+    { "collectionGroup": "outbox", "fieldPath": "payload", "indexes": [] }
+  ]
+}
