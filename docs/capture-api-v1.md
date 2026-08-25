@@ -1,9 +1,9 @@
 # Capture API v1
 
 This is the shared client contract for browser capture, the Python simulator, and
-the physical camera. The `CAP-002` implementation exposes it as one multipart
-`POST /v1/captures` request; it is not a live production endpoint until that ticket
-is deployed.
+the physical camera. Production exposes it at
+`https://foodlog-api-sptvo5nsga-ew.a.run.app/v1/captures` as one multipart `POST`
+request. The stable Cloud Run service URL stays the same across API revisions.
 
 ## Authentication
 
@@ -14,6 +14,18 @@ is deployed.
   as `Authorization: FoodLogCamera <credential>`.
 - Clients never send an account or owner identifier. The backend derives both from
   the verified user or camera credential and verifies that `camera_id` matches it.
+
+## Device provisioning and status
+
+An authenticated, email-verified Firebase owner provisions a device with
+`POST /v1/device-cameras` and a JSON body containing its name. The successful
+response contains the camera record plus one `flc_v1_` credential and uses
+`Cache-Control: no-store`; the plaintext credential cannot be retrieved again.
+
+The device can validate its current credential with `GET /v1/device/status`.
+The owner can independently revoke it with
+`POST /v1/device-cameras/{camera_id}/revoke`. A revoked credential receives `401`
+and must not be retried indefinitely.
 
 ## Request
 
