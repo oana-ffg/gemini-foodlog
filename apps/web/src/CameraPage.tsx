@@ -276,8 +276,8 @@ export default function CameraPage() {
           <p className="fine-print">
             Manual mode uploads only when you press Send snapshot. Motion mode compares
             tiny frames on this device, captures at most once per second during a
-            15-second burst, then once per minute while activity remains open. This
-            up to {MAX_MEMORY_QUEUE_DEPTH} pending frames persist on this device across
+            15-second burst, then once per minute while activity remains open. Up to{" "}
+            {MAX_MEMORY_QUEUE_DEPTH} pending frames persist on this device across
             temporary outages and page reloads, then retry oldest-first.
           </p>
         </div>
