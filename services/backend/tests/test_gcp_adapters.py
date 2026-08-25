@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from foodlog_backend.app import create_app
 from foodlog_backend.firestore_repository import FirestoreRepository
 from foodlog_backend.inference import FixtureInferenceEngine
+from foodlog_backend.models import EntitlementMode, utc_now
 from foodlog_backend.settings import Settings
 from foodlog_backend.storage import GCSObjectStore
 
@@ -73,6 +74,20 @@ class FakeStorageClient:
         return self.bucket_instance
 
 
+class FakeSnapshot:
+    def __init__(self, identifier: str, data: dict) -> None:
+        self.id = identifier
+        self._data = data
+
+    def get(self, field: str):
+        if field not in self._data:
+            raise KeyError(field)
+        return self._data[field]
+
+    def to_dict(self) -> dict:
+        return dict(self._data)
+
+
 def test_firestore_paths_are_account_scoped() -> None:
     repository = FirestoreRepository(
         project_id="test-project",
@@ -83,6 +98,31 @@ def test_firestore_paths_are_account_scoped() -> None:
 
     assert repository._collection("account-a", "captures").path == ("accounts/account-a/captures")
     assert repository._entitlement("account-a").path == ("accounts/account-a/entitlements/current")
+
+
+def test_legacy_trial_entitlement_without_mode_remains_readable() -> None:
+    created_at = utc_now()
+    account = FirestoreRepository._account_from_snapshots(
+        FakeSnapshot(
+            "legacy-account",
+            {
+                "owner_user_id": "legacy-owner",
+                "status": "active",
+                "created_at": created_at,
+            },
+        ),
+        FakeSnapshot(
+            "current",
+            {
+                "accepted_image_count": 1,
+                "trial_image_limit": 200,
+            },
+        ),
+    )
+
+    assert account.entitlement_mode == EntitlementMode.TRIAL
+    assert account.trial_image_limit == 200
+    assert account.accepted_image_count == 1
 
 
 def test_gcs_adapter_writes_once_and_round_trips_private_bytes() -> None:

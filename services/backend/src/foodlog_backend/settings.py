@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     allowed_origins: list[str] = Field(default_factory=lambda: ["http://127.0.0.1:5173"])
     trial_image_limit: int = Field(default=200, ge=1)
     public_account_limit: int = Field(default=25, ge=1)
+    unlimited_owner_user_ids: set[str] = Field(default_factory=set)
     preview_shared_secret: str | None = Field(default=None, min_length=32)
     gcp_project_id: str | None = None
     firebase_project_id: str | None = None

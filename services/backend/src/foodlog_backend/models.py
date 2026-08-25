@@ -41,12 +41,29 @@ class CaptureStatus(StrEnum):
     PROCESSED = "processed"
 
 
+class EntitlementMode(StrEnum):
+    TRIAL = "trial"
+    UNLIMITED = "unlimited"
+
+
 class Account(BaseModel):
     id: str
     owner_user_id: str
-    trial_image_limit: int = Field(ge=1)
+    entitlement_mode: EntitlementMode = EntitlementMode.TRIAL
+    trial_image_limit: int | None = Field(default=None, ge=1)
     accepted_image_count: int = Field(default=0, ge=0)
     created_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def entitlement_fields_are_consistent(self) -> "Account":
+        if self.entitlement_mode == EntitlementMode.TRIAL and self.trial_image_limit is None:
+            raise ValueError("Trial accounts require an image limit")
+        if (
+            self.entitlement_mode == EntitlementMode.UNLIMITED
+            and self.trial_image_limit is not None
+        ):
+            raise ValueError("Unlimited accounts cannot have a trial image limit")
+        return self
 
 
 class BrowserCameraCreate(BaseModel):
@@ -197,5 +214,6 @@ class QuestionAnswerResult(BaseModel):
 class CaptureAccepted(BaseModel):
     capture_id: str
     accepted_image_count: int
-    trial_image_limit: int
+    entitlement_mode: EntitlementMode
+    trial_image_limit: int | None
     duplicate: bool

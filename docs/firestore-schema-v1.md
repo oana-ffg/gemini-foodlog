@@ -27,8 +27,8 @@ cameras.
 
 | Path | Purpose | Required fields and bounds |
 | --- | --- | --- |
-| `system/public_capacity` | Atomic 25-account admission counter | `active_account_count`, `account_limit`, `waitlist_open`; one low-write transaction document is acceptable at MVP scale. |
-| `identities/{firebase_uid}` | Login-to-account lookup | `account_id`, `email_normalized`, `email_verified`, `mailing_list_opt_in`, `status`; one document per Firebase UID. |
+| `system/public_capacity` | Atomic 25-public-account admission counter | `active_account_count`, `account_limit`, `waitlist_open`; explicit internal/judge unlimited accounts never consume public slots; one low-write transaction document is acceptable at MVP scale. |
+| `identities/{firebase_uid}` | Login-to-account lookup | `account_id`, `account_class` (`public` or explicitly configured `internal`), `email_normalized`, `email_verified`, `mailing_list_opt_in`, `status`; one document per Firebase UID. |
 | `device_credentials/{sha256_token}` | Camera-token lookup | `account_id`, `camera_id`, `token_version`, `status`, `last_used_at`, `expires_at`; never stores the token. |
 | `waitlist/{sha256_email}` | Capacity overflow and product-interest list | `email_normalized`, `firebase_uid`, `reason`, `mailing_list_opt_in`; one document per normalized email. |
 
@@ -39,8 +39,9 @@ cameras.
 subcollections.
 
 `accounts/{account_id}/entitlements/current` stores the trial contract:
-`accepted_image_count`, `trial_image_limit` (initially 200), `model_spend_reserved`,
-and `model_spend_limit`. Capture acceptance updates this document transactionally
+`entitlement_mode` (`trial` or `unlimited`), `accepted_image_count`, nullable
+`trial_image_limit` (200 for public trials and null only for explicitly configured
+internal/judge accounts), `model_spend_reserved`, and `model_spend_limit`. Capture acceptance updates this document transactionally
 with the idempotency record. The 25-account/200-image prototype limits make the
 single entitlement counter safe; sharded counters are deferred until demonstrated
 write contention exists.

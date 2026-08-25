@@ -403,7 +403,11 @@ function App() {
         </p>
         <div className="usage">
           <span>Local vertical slice</span>
-          <strong>{account?.accepted_image_count ?? 0} / {account?.trial_image_limit ?? 200} images</strong>
+          <strong>
+            {account?.accepted_image_count ?? 0} / {account?.entitlement_mode === "unlimited"
+              ? "Unlimited"
+              : account?.trial_image_limit ?? 200} images
+          </strong>
         </div>
       </header>
 

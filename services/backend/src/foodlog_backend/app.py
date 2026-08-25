@@ -91,6 +91,7 @@ def create_app(
             project_id=active_settings.gcp_project_id,
             public_account_limit=active_settings.public_account_limit,
             trial_image_limit=active_settings.trial_image_limit,
+            unlimited_owner_user_ids=active_settings.unlimited_owner_user_ids,
         )
         object_store: ObjectStore = GCSObjectStore(
             project_id=active_settings.gcp_project_id,
@@ -100,6 +101,7 @@ def create_app(
         repository = InMemoryRepository(
             public_account_limit=active_settings.public_account_limit,
             trial_image_limit=active_settings.trial_image_limit,
+            unlimited_owner_user_ids=active_settings.unlimited_owner_user_ids,
         )
         object_store = InMemoryObjectStore()
     container = Container(

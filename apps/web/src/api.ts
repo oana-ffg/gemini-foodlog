@@ -6,7 +6,8 @@ export type MealRevisionSource = "inference" | "user_feedback";
 export interface Account {
   id: string;
   owner_user_id: string;
-  trial_image_limit: number;
+  entitlement_mode: "trial" | "unlimited";
+  trial_image_limit: number | null;
   accepted_image_count: number;
 }
 
@@ -89,7 +90,8 @@ export interface QuestionAnswerResult {
 export interface CaptureAccepted {
   capture_id: string;
   accepted_image_count: number;
-  trial_image_limit: number;
+  entitlement_mode: "trial" | "unlimited";
+  trial_image_limit: number | null;
   duplicate: boolean;
 }
 

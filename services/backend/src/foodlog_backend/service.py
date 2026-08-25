@@ -71,6 +71,7 @@ class CaptureService:
         return CaptureAccepted(
             capture_id=capture.id,
             accepted_image_count=updated_account.accepted_image_count,
+            entitlement_mode=updated_account.entitlement_mode,
             trial_image_limit=updated_account.trial_image_limit,
             duplicate=not created,
         )

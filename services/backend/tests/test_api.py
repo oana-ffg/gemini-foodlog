@@ -77,6 +77,87 @@ def test_capacity_response_is_stable_and_admitted_user_remains_idempotent() -> N
     assert overflow.json() == {"detail": "signup_capacity_exhausted"}
 
 
+def test_public_accounts_receive_the_configured_trial_and_exhaust_it() -> None:
+    app = create_app(Settings(environment="test", trial_image_limit=1))
+    with TestClient(app) as client:
+        account, camera = provision(client, "public-trial-owner")
+        image = (FIXTURES / "synthetic-leftover-pasta.png").read_bytes()
+        first = client.post(
+            f"/v1/browser-cameras/{camera['id']}/captures",
+            headers={
+                "X-FoodLog-Local-User": "public-trial-owner",
+                "Idempotency-Key": "public-trial-capture-0001",
+            },
+            files={"image": ("capture.png", image, "image/png")},
+        )
+        exhausted = client.post(
+            f"/v1/browser-cameras/{camera['id']}/captures",
+            headers={
+                "X-FoodLog-Local-User": "public-trial-owner",
+                "Idempotency-Key": "public-trial-capture-0002",
+            },
+            files={"image": ("capture.png", image, "image/png")},
+        )
+
+    assert account["entitlement_mode"] == "trial"
+    assert account["trial_image_limit"] == 1
+    assert first.status_code == 202
+    assert first.json()["entitlement_mode"] == "trial"
+    assert first.json()["trial_image_limit"] == 1
+    assert exhausted.status_code == 429
+    assert exhausted.json() == {"detail": "trial_image_quota_exhausted"}
+
+
+def test_new_public_account_defaults_to_200_images() -> None:
+    with build_client() as client:
+        account = client.post("/v1/accounts", headers=USER_HEADER)
+
+    assert account.status_code == 200
+    assert account.json()["entitlement_mode"] == "trial"
+    assert account.json()["trial_image_limit"] == 200
+
+
+def test_explicit_unlimited_account_has_no_fake_limit_or_public_slot() -> None:
+    settings = Settings(
+        environment="test",
+        public_account_limit=1,
+        trial_image_limit=1,
+        unlimited_owner_user_ids={"internal-owner"},
+    )
+    app = create_app(settings)
+    with TestClient(app) as client:
+        public_account = client.post(
+            "/v1/accounts",
+            headers={"X-FoodLog-Local-User": "public-owner"},
+        )
+        internal_account, camera = provision(client, "internal-owner")
+        overflow = client.post(
+            "/v1/accounts",
+            headers={"X-FoodLog-Local-User": "overflow-owner"},
+        )
+        image = (FIXTURES / "synthetic-steak-airfryer.png").read_bytes()
+        captures = [
+            client.post(
+                f"/v1/browser-cameras/{camera['id']}/captures",
+                headers={
+                    "X-FoodLog-Local-User": "internal-owner",
+                    "Idempotency-Key": f"unlimited-capture-{index:04d}",
+                },
+                files={"image": ("capture.png", image, "image/png")},
+            )
+            for index in range(2)
+        ]
+
+    assert public_account.status_code == 200
+    assert internal_account["entitlement_mode"] == "unlimited"
+    assert internal_account["trial_image_limit"] is None
+    assert overflow.status_code == 409
+    assert [capture.status_code for capture in captures] == [202, 202]
+    assert captures[-1].json()["accepted_image_count"] == 2
+    assert captures[-1].json()["entitlement_mode"] == "unlimited"
+    assert captures[-1].json()["trial_image_limit"] is None
+
+
 def test_preview_requires_both_iam_defense_and_shared_secret() -> None:
     settings = Settings(
         environment="preview",

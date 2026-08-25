@@ -22,6 +22,7 @@ from .models import (
     CaptureStatus,
     ClarificationQuestion,
     Confidence,
+    EntitlementMode,
     MealComponent,
     MealEntry,
     MealFeedback,
@@ -107,9 +108,16 @@ class Repository(Protocol):
 class InMemoryRepository:
     """Concurrency-safe local adapter mirroring the required Firestore invariants."""
 
-    def __init__(self, *, public_account_limit: int, trial_image_limit: int) -> None:
+    def __init__(
+        self,
+        *,
+        public_account_limit: int,
+        trial_image_limit: int,
+        unlimited_owner_user_ids: set[str] | None = None,
+    ) -> None:
         self._public_account_limit = public_account_limit
         self._trial_image_limit = trial_image_limit
+        self._unlimited_owner_user_ids = frozenset(unlimited_owner_user_ids or set())
         self._accounts: dict[str, Account] = {}
         self._account_by_owner: dict[str, str] = {}
         self._cameras: dict[str, BrowserCamera] = {}
@@ -131,12 +139,29 @@ class InMemoryRepository:
             existing_id = self._account_by_owner.get(owner_user_id)
             if existing_id:
                 return self._accounts[existing_id].model_copy(deep=True)
-            if len(self._accounts) >= self._public_account_limit:
+            entitlement_mode = (
+                EntitlementMode.UNLIMITED
+                if owner_user_id in self._unlimited_owner_user_ids
+                else EntitlementMode.TRIAL
+            )
+            public_account_count = sum(
+                account.entitlement_mode == EntitlementMode.TRIAL
+                for account in self._accounts.values()
+            )
+            if (
+                entitlement_mode == EntitlementMode.TRIAL
+                and public_account_count >= self._public_account_limit
+            ):
                 raise AccountCapacityReached
             account = Account(
                 id=str(uuid4()),
                 owner_user_id=owner_user_id,
-                trial_image_limit=self._trial_image_limit,
+                entitlement_mode=entitlement_mode,
+                trial_image_limit=(
+                    self._trial_image_limit
+                    if entitlement_mode == EntitlementMode.TRIAL
+                    else None
+                ),
             )
             self._accounts[account.id] = account
             self._account_by_owner[owner_user_id] = account.id
@@ -197,7 +222,11 @@ class InMemoryRepository:
                     False,
                 )
             stored_account = self._accounts[account.id]
-            if stored_account.accepted_image_count >= stored_account.trial_image_limit:
+            if (
+                stored_account.entitlement_mode == EntitlementMode.TRIAL
+                and stored_account.trial_image_limit is not None
+                and stored_account.accepted_image_count >= stored_account.trial_image_limit
+            ):
                 raise TrialQuotaExhausted
             capture = CaptureRecord(
                 id=capture_id,

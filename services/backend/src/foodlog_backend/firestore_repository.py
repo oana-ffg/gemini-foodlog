@@ -26,6 +26,7 @@ from .models import (
     CaptureRecord,
     CaptureStatus,
     ClarificationQuestion,
+    EntitlementMode,
     MealEntry,
     MealFeedback,
     MealFeedbackKind,
@@ -39,6 +40,8 @@ from .models import (
     utc_now,
 )
 from .repository import inference_from_meal, revised_inference
+
+ENTITLEMENT_MODE_VALUES = frozenset(item.value for item in EntitlementMode)
 
 
 def _document(model: BaseModel, *, exclude: set[str] | None = None) -> dict[str, Any]:
@@ -65,11 +68,13 @@ class FirestoreRepository:
         project_id: str,
         public_account_limit: int,
         trial_image_limit: int,
+        unlimited_owner_user_ids: set[str] | None = None,
         client: AsyncClient | None = None,
     ) -> None:
         self._client = client or AsyncClient(project=project_id)
         self._public_account_limit = public_account_limit
         self._trial_image_limit = trial_image_limit
+        self._unlimited_owner_user_ids = frozenset(unlimited_owner_user_ids or set())
 
     def _identity(self, owner_user_id: str):
         return self._client.collection("identities").document(owner_user_id)
@@ -86,6 +91,14 @@ class FirestoreRepository:
     async def provision_account(self, owner_user_id: str) -> Account:
         account_id = str(uuid4())
         created_at = utc_now()
+        entitlement_mode = (
+            EntitlementMode.UNLIMITED
+            if owner_user_id in self._unlimited_owner_user_ids
+            else EntitlementMode.TRIAL
+        )
+        trial_image_limit = (
+            self._trial_image_limit if entitlement_mode == EntitlementMode.TRIAL else None
+        )
         transaction = self._client.transaction()
 
         @firestore.async_transactional
@@ -103,27 +116,33 @@ class FirestoreRepository:
                     expected_owner_user_id=owner_user_id,
                 )
 
-            capacity = await capacity_ref.get(transaction=transaction)
-            count = capacity.get("active_account_count") if capacity.exists else 0
-            stored_limit = (
-                capacity.get("account_limit") if capacity.exists else self._public_account_limit
-            )
-            if not isinstance(count, int) or isinstance(count, bool) or count < 0:
-                raise ValueError("Public account capacity count is invalid")
-            if (
-                not isinstance(stored_limit, int)
-                or isinstance(stored_limit, bool)
-                or stored_limit < 1
-            ):
-                raise ValueError("Public account capacity limit is invalid")
-            limit = min(stored_limit, self._public_account_limit)
-            if count >= limit:
-                raise AccountCapacityReached
+            count = 0
+            limit = self._public_account_limit
+            if entitlement_mode == EntitlementMode.TRIAL:
+                capacity = await capacity_ref.get(transaction=transaction)
+                count = capacity.get("active_account_count") if capacity.exists else 0
+                stored_limit = (
+                    capacity.get("account_limit")
+                    if capacity.exists
+                    else self._public_account_limit
+                )
+                if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+                    raise ValueError("Public account capacity count is invalid")
+                if (
+                    not isinstance(stored_limit, int)
+                    or isinstance(stored_limit, bool)
+                    or stored_limit < 1
+                ):
+                    raise ValueError("Public account capacity limit is invalid")
+                limit = min(stored_limit, self._public_account_limit)
+                if count >= limit:
+                    raise AccountCapacityReached
 
             account = Account(
                 id=account_id,
                 owner_user_id=owner_user_id,
-                trial_image_limit=self._trial_image_limit,
+                entitlement_mode=entitlement_mode,
+                trial_image_limit=trial_image_limit,
                 created_at=created_at,
             )
             transaction.create(
@@ -132,6 +151,7 @@ class FirestoreRepository:
                     "schema_version": 1,
                     "id": account_id,
                     "owner_user_id": owner_user_id,
+                    "entitlement_mode": entitlement_mode.value,
                     "status": "active",
                     "created_at": created_at,
                     "updated_at": created_at,
@@ -142,7 +162,8 @@ class FirestoreRepository:
                 {
                     "schema_version": 1,
                     "accepted_image_count": 0,
-                    "trial_image_limit": self._trial_image_limit,
+                    "entitlement_mode": entitlement_mode.value,
+                    "trial_image_limit": trial_image_limit,
                     "created_at": created_at,
                     "updated_at": created_at,
                 },
@@ -152,21 +173,25 @@ class FirestoreRepository:
                 {
                     "schema_version": 1,
                     "account_id": account_id,
+                    "account_class": (
+                        "public" if entitlement_mode == EntitlementMode.TRIAL else "internal"
+                    ),
                     "status": "active",
                     "created_at": created_at,
                     "updated_at": created_at,
                 },
             )
-            transaction.set(
-                capacity_ref,
-                {
-                    "schema_version": 1,
-                    "active_account_count": count + 1,
-                    "account_limit": limit,
-                    "waitlist_open": count + 1 >= limit,
-                    "updated_at": created_at,
-                },
-            )
+            if entitlement_mode == EntitlementMode.TRIAL:
+                transaction.set(
+                    capacity_ref,
+                    {
+                        "schema_version": 1,
+                        "active_account_count": count + 1,
+                        "account_limit": limit,
+                        "waitlist_open": count + 1 >= limit,
+                        "updated_at": created_at,
+                    },
+                )
             return account
 
         return await provision(transaction)
@@ -202,11 +227,14 @@ class FirestoreRepository:
 
     @staticmethod
     def _account_from_snapshots(account, entitlement) -> Account:
+        entitlement_data = entitlement.to_dict() or {}
         return Account(
             id=account.id,
             owner_user_id=account.get("owner_user_id"),
-            trial_image_limit=entitlement.get("trial_image_limit"),
-            accepted_image_count=entitlement.get("accepted_image_count"),
+            entitlement_mode=entitlement_data.get("entitlement_mode")
+            or EntitlementMode.TRIAL,
+            trial_image_limit=entitlement_data.get("trial_image_limit"),
+            accepted_image_count=entitlement_data.get("accepted_image_count"),
             created_at=account.get("created_at"),
         )
 
@@ -289,6 +317,7 @@ class FirestoreRepository:
             entitlement = await entitlement_ref.get(transaction=transaction)
             if not entitlement.exists:
                 raise AccountNotProvisioned
+            entitlement_data = entitlement.to_dict() or {}
             if duplicate.exists:
                 existing = (
                     await self._collection(account.id, "captures")
@@ -306,9 +335,20 @@ class FirestoreRepository:
                     raise IdempotencyConflict
                 return record, self._account_with_entitlement(account, entitlement), False
 
-            count = entitlement.get("accepted_image_count")
-            limit = entitlement.get("trial_image_limit")
-            if count >= limit:
+            count = entitlement_data.get("accepted_image_count")
+            mode = entitlement_data.get("entitlement_mode") or EntitlementMode.TRIAL.value
+            limit = entitlement_data.get("trial_image_limit")
+            if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+                raise ValueError("Accepted image count is invalid")
+            if mode not in ENTITLEMENT_MODE_VALUES:
+                raise ValueError("Entitlement mode is invalid")
+            if mode == EntitlementMode.TRIAL.value and (
+                not isinstance(limit, int)
+                or isinstance(limit, bool)
+                or limit < 1
+            ):
+                raise ValueError("Trial image limit is invalid")
+            if mode == EntitlementMode.TRIAL.value and count >= limit:
                 raise TrialQuotaExhausted
             transaction.create(
                 capture_ref,
@@ -656,9 +696,13 @@ class FirestoreRepository:
 
     @staticmethod
     def _account_with_entitlement(account: Account, entitlement) -> Account:
+        entitlement_data = entitlement.to_dict() or {}
         return account.model_copy(
             update={
-                "trial_image_limit": entitlement.get("trial_image_limit"),
-                "accepted_image_count": entitlement.get("accepted_image_count"),
+                "trial_image_limit": entitlement_data.get("trial_image_limit"),
+                "entitlement_mode": EntitlementMode(
+                    entitlement_data.get("entitlement_mode") or EntitlementMode.TRIAL
+                ),
+                "accepted_image_count": entitlement_data.get("accepted_image_count"),
             }
         )
