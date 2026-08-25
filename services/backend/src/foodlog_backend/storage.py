@@ -1,7 +1,7 @@
 import asyncio
 from typing import Protocol
 
-from google.api_core.exceptions import NotFound, PreconditionFailed
+from google.api_core.exceptions import PreconditionFailed
 from google.cloud import storage
 
 
@@ -9,8 +9,6 @@ class ObjectStore(Protocol):
     async def put(self, key: str, content: bytes, content_type: str) -> bool: ...
 
     async def get(self, key: str) -> bytes: ...
-
-    async def delete(self, key: str) -> None: ...
 
 
 class InMemoryObjectStore:
@@ -33,10 +31,6 @@ class InMemoryObjectStore:
     async def get(self, key: str) -> bytes:
         async with self._lock:
             return self._objects[key][0]
-
-    async def delete(self, key: str) -> None:
-        async with self._lock:
-            self._objects.pop(key, None)
 
 
 class GCSObjectStore:
@@ -71,9 +65,3 @@ class GCSObjectStore:
 
     async def get(self, key: str) -> bytes:
         return await asyncio.to_thread(self._bucket.blob(key).download_as_bytes)
-
-    async def delete(self, key: str) -> None:
-        try:
-            await asyncio.to_thread(self._bucket.blob(key).delete)
-        except NotFound:
-            return

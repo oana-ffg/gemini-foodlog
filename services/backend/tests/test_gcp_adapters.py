@@ -58,9 +58,6 @@ class FakeBlob:
     def download_as_bytes(self) -> bytes:
         return self.objects[self.key][0]
 
-    def delete(self) -> None:
-        self.objects.pop(self.key, None)
-
 
 class FakeBucket:
     def __init__(self) -> None:
@@ -148,8 +145,6 @@ def test_gcs_adapter_writes_once_and_round_trips_private_bytes() -> None:
     assert duplicate is False
     assert asyncio.run(store.get(key)) == b"image-bytes"
     assert client.bucket_instance.objects[key][1] == "image/jpeg"
-    asyncio.run(store.delete(key))
-    assert key not in client.bucket_instance.objects
 
 
 def test_gcs_adapter_never_accepts_different_bytes_for_an_existing_key() -> None:

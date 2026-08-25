@@ -6,6 +6,7 @@ from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -348,13 +349,9 @@ def test_shared_ingestion_recovers_an_interrupted_reserved_capture() -> None:
         envelope = CaptureEnvelopeV1.model_validate(metadata)
         repository = client.app.state.container.repository
         stored_account = asyncio.run(repository.account_for_owner("owner-a"))
-        stored_camera = asyncio.run(
-            repository.camera_for_owner("owner-a", camera["id"])
-        )
+        stored_camera = asyncio.run(repository.camera_for_owner("owner-a", camera["id"]))
         interrupted_capture_id = "interrupted-reservation-capture"
-        interrupted_object_key = (
-            f"accounts/{account['id']}/captures/{interrupted_capture_id}.png"
-        )
+        interrupted_object_key = f"accounts/{account['id']}/captures/{interrupted_capture_id}.png"
         reserved, _, created = asyncio.run(
             repository.reserve_capture(
                 capture_id=interrupted_capture_id,
@@ -392,6 +389,61 @@ def test_shared_ingestion_recovers_an_interrupted_reserved_capture() -> None:
     assert recovered.json()["accepted_image_count"] == 1
     assert stored_image.content == image
     assert repository._captures[interrupted_capture_id].status == "stored"
+
+
+def test_shared_ingestion_retains_an_uploaded_object_for_finalize_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = create_app(Settings(environment="test"))
+    with TestClient(app) as client:
+        account, camera_response = provision(client)
+
+    repository = app.state.container.repository
+    object_store = app.state.container.object_store
+    service = app.state.container.capture_service
+    camera = asyncio.run(repository.camera_for_owner("owner-a", camera_response["id"]))
+    image = (FIXTURES / "synthetic-steak-airfryer.png").read_bytes()
+    metadata = CaptureEnvelopeV1.model_validate(capture_metadata(camera.id, image))
+    original_mark_stored = repository.mark_stored
+    finalize_attempts = 0
+
+    async def fail_first_finalize(
+        capture_id: str,
+        account_id: str | None = None,
+    ) -> None:
+        nonlocal finalize_attempts
+        finalize_attempts += 1
+        if finalize_attempts == 1:
+            raise RuntimeError("simulated Firestore finalization failure")
+        await original_mark_stored(capture_id, account_id)
+
+    monkeypatch.setattr(repository, "mark_stored", fail_first_finalize)
+    request = {
+        "owner_user_id": "owner-a",
+        "camera": camera,
+        "idempotency_key": "finalize-retry-capture-0001",
+        "content_type": "image/png",
+        "image": image,
+        "metadata": metadata,
+    }
+
+    with pytest.raises(RuntimeError, match="finalization failure"):
+        asyncio.run(service.accept_capture(**request))
+
+    captures = list(repository._captures.values())
+    assert len(captures) == 1
+    reserved = captures[0]
+    assert reserved.status == "accepted"
+    assert asyncio.run(object_store.get(reserved.object_key)) == image
+    assert repository._accounts[account["id"]].accepted_image_count == 1
+
+    recovered = asyncio.run(service.accept_capture(**request))
+
+    assert recovered.capture_id == reserved.id
+    assert recovered.duplicate is True
+    assert recovered.accepted_image_count == 1
+    assert repository._captures[reserved.id].status == "stored"
+    assert asyncio.run(object_store.get(reserved.object_key)) == image
 
 
 def test_shared_device_ingestion_uses_credential_scope_and_honors_revocation() -> None:

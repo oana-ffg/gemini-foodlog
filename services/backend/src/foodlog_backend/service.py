@@ -59,12 +59,10 @@ class CaptureService:
             await self._repository.mark_stored(capture.id, capture.account_id)
         except Exception as error:
             cleanup_errors: list[Exception] = []
-            if object_created:
-                try:
-                    await self._object_store.delete(capture.object_key)
-                except Exception as cleanup_error:
-                    cleanup_errors.append(cleanup_error)
-            if created:
+            # A successfully created object is immutable evidence. Keep its
+            # reservation so the same idempotent retry can finish Firestore
+            # finalization without requiring broad object-delete permission.
+            if created and not object_created:
                 try:
                     await self._repository.cancel_capture(capture)
                 except Exception as cleanup_error:
