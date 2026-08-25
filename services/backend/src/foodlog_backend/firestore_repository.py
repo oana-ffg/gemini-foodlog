@@ -804,7 +804,30 @@ class FirestoreRepository:
         account = await self.account_for_owner(owner_user_id)
         account_ref = self._account(account.id)
         instance_hash = sha256(client_instance_id.encode()).hexdigest()
-        camera_id = f"browser-{instance_hash}"
+        deterministic_camera_id = f"browser-{instance_hash}"
+        matching_cameras = [
+            snapshot
+            async for snapshot in self._collection(account.id, "cameras")
+            .where(filter=FieldFilter("client_instance_id_hash", "==", instance_hash))
+            .limit(5)
+            .stream()
+        ]
+        matching_cameras.sort(
+            key=lambda snapshot: (snapshot.id != deterministic_camera_id, snapshot.id)
+        )
+        camera_id = matching_cameras[0].id if matching_cameras else deterministic_camera_id
+        if not matching_cameras:
+            account_snapshot = await account_ref.get()
+            account_data = account_snapshot.to_dict() or {}
+            legacy_camera_id = account_data.get("primary_browser_camera_id")
+            if isinstance(legacy_camera_id, str) and legacy_camera_id != camera_id:
+                legacy_camera = (
+                    await self._collection(account.id, "cameras").document(legacy_camera_id).get()
+                )
+                if legacy_camera.exists and _legacy_browser_camera_is_migratable(
+                    legacy_camera.to_dict()
+                ):
+                    camera_id = legacy_camera.id
         camera_ref = self._collection(account.id, "cameras").document(camera_id)
         created_at = utc_now()
         transaction = self._client.transaction()
@@ -813,18 +836,6 @@ class FirestoreRepository:
         async def create(transaction):
             account_snapshot = await account_ref.get(transaction=transaction)
             existing = await camera_ref.get(transaction=transaction)
-            account_data = account_snapshot.to_dict() or {}
-            legacy_camera_id = account_data.get("primary_browser_camera_id")
-            legacy_camera = None
-            if isinstance(legacy_camera_id, str) and legacy_camera_id != camera_id:
-                legacy_camera = (
-                    await self._collection(
-                        account.id,
-                        "cameras",
-                    )
-                    .document(legacy_camera_id)
-                    .get(transaction=transaction)
-                )
             if (
                 not account_snapshot.exists
                 or account_snapshot.get("owner_user_id") != owner_user_id
@@ -833,33 +844,18 @@ class FirestoreRepository:
                 raise AccountNotProvisioned
             if existing.exists:
                 camera = _model(existing, BrowserCamera)
+                model_updates: dict[str, Any] = {}
+                if camera.client_instance_id_hash is None:
+                    model_updates["client_instance_id_hash"] = instance_hash
                 if camera.status == CameraStatus.ACTIVE and camera.name != name:
-                    transaction.update(camera_ref, {"name": name, "updated_at": created_at})
-                    camera = camera.model_copy(update={"name": name}, deep=True)
+                    model_updates["name"] = name
+                if model_updates:
+                    transaction.update(
+                        camera_ref,
+                        {**model_updates, "updated_at": created_at},
+                    )
+                    camera = camera.model_copy(update=model_updates, deep=True)
                 return camera
-            legacy_camera_data = legacy_camera.to_dict() if legacy_camera is not None else None
-            if (
-                legacy_camera is not None
-                and legacy_camera.exists
-                and _legacy_browser_camera_is_migratable(legacy_camera_data)
-            ):
-                legacy = _model(legacy_camera, BrowserCamera).model_copy(
-                    update={
-                        "name": name,
-                        "client_instance_id_hash": instance_hash,
-                    },
-                    deep=True,
-                )
-                transaction.update(
-                    legacy_camera.reference,
-                    {
-                        "name": name,
-                        "client_instance_id_hash": instance_hash,
-                        "status": CameraStatus.ACTIVE.value,
-                        "updated_at": created_at,
-                    },
-                )
-                return legacy
             camera = BrowserCamera(
                 id=camera_id,
                 account_id=account.id,
