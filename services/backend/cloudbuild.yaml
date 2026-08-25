@@ -1,0 +1,44 @@
+substitutions:
+  _IMAGE: europe-west1-docker.pkg.dev/gemini-foodlog-2026/cloud-run-source-deploy/foodlog-api:manual
+
+steps:
+  - id: build-locked-image
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag
+      - ${_IMAGE}
+      - .
+
+  - id: verify-runtime
+    name: gcr.io/cloud-builders/docker
+    args:
+      - run
+      - --rm
+      - ${_IMAGE}
+      - python
+      - -c
+      - |
+        import hashlib
+        from importlib import metadata
+
+        import foodlog_backend
+        import foodlog_backend.main
+        import foodlog_backend.notification_app
+
+        manifest = "\n".join(
+            sorted(
+                f"{distribution.metadata['Name']}=={distribution.version}"
+                for distribution in metadata.distributions()
+            )
+        )
+        digest = hashlib.sha256(manifest.encode()).hexdigest()
+        print(f"locked-manifest-sha256={digest}")
+
+images:
+  - ${_IMAGE}
+
+options:
+  machineType: E2_STANDARD_2
+
+timeout: 900s

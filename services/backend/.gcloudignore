@@ -3,6 +3,7 @@
 # becoming upload context or billable build input.
 **
 !.gcloudignore
+!cloudbuild.yaml
 !Dockerfile
 !pyproject.toml
 !uv.lock
