@@ -488,6 +488,9 @@ def test_fixture_capture_creates_explainable_journal_entry() -> None:
         assert image_response.status_code == 200
         assert image_response.content == image
         assert image_response.headers["cache-control"] == "private, no-store"
+        assert image_response.headers["content-disposition"] == "inline"
+        assert image_response.headers["x-content-type-options"] == "nosniff"
+        assert image_response.headers["content-type"] == "image/png"
 
 
 def test_idempotent_retry_does_not_consume_quota_or_duplicate_meal() -> None:
