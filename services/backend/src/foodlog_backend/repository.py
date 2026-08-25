@@ -22,9 +22,18 @@ from .errors import (
     TrialQuotaExhausted,
     WaitlistUnavailable,
 )
+from .grouping import (
+    CaptureGroupingResult,
+    GroupingPolicy,
+    capture_activity_time,
+    segment_identity,
+)
 from .models import (
     Account,
     AccountCreatedOutbox,
+    ActivityEvent,
+    ActivityEventStatus,
+    ActivitySegment,
     BrowserCamera,
     CaptureEnvelopeV1,
     CaptureRecord,
@@ -57,6 +66,7 @@ from .models import (
     VerifiedDeviceIdentity,
     WaitlistEntry,
     capture_grouping_job_id,
+    event_inference_job_id,
     utc_now,
 )
 
@@ -230,6 +240,16 @@ class Repository(Protocol):
         error_message: str,
     ) -> bool: ...
 
+    async def group_capture(
+        self,
+        *,
+        account_id: str,
+        capture_id: str,
+        lease_id: str,
+        lease_owner: str,
+        policy: GroupingPolicy,
+    ) -> CaptureGroupingResult | None: ...
+
     async def save_meal(self, meal: MealEntry) -> MealEntry: ...
 
     async def open_question(
@@ -295,6 +315,9 @@ class InMemoryRepository:
         self._captures: dict[str, CaptureRecord] = {}
         self._capture_by_idempotency: dict[tuple[str, str], str] = {}
         self._jobs: dict[tuple[str, str], DurableJob] = {}
+        self._events: dict[tuple[str, str], ActivityEvent] = {}
+        self._segments: dict[tuple[str, str], ActivitySegment] = {}
+        self._event_head_by_camera: dict[tuple[str, str], str] = {}
         self._meals: dict[str, MealEntry] = {}
         self._meal_by_capture: dict[str, str] = {}
         self._meal_revisions: dict[str, list[MealRevision]] = {}
@@ -876,16 +899,15 @@ class InMemoryRepository:
             key = (account_id, job_id)
             job = self._jobs.get(key)
             now = utc_now()
-            if (
-                job is None
-                or job.status != JobStatus.LEASED
-                or job.subject_revision != expected_subject_revision
-                or job.lease_id != lease_id
-                or job.lease_owner != lease_owner
-                or job.lease_expires_at is None
-                or job.lease_expires_at <= now
+            if not self._job_has_active_lease(
+                job,
+                expected_subject_revision=expected_subject_revision,
+                lease_id=lease_id,
+                lease_owner=lease_owner,
+                now=now,
             ):
                 return False
+            assert job is not None
             self._jobs[key] = self._updated_job(
                 job,
                 status=JobStatus.COMPLETED,
@@ -914,16 +936,15 @@ class InMemoryRepository:
             key = (account_id, job_id)
             job = self._jobs.get(key)
             now = utc_now()
-            if (
-                job is None
-                or job.status != JobStatus.LEASED
-                or job.subject_revision != expected_subject_revision
-                or job.lease_id != lease_id
-                or job.lease_owner != lease_owner
-                or job.lease_expires_at is None
-                or job.lease_expires_at <= now
+            if not self._job_has_active_lease(
+                job,
+                expected_subject_revision=expected_subject_revision,
+                lease_id=lease_id,
+                lease_owner=lease_owner,
+                now=now,
             ):
                 return False
+            assert job is not None
             self._jobs[key] = self._updated_job(
                 job,
                 status=JobStatus.PENDING,
@@ -935,6 +956,167 @@ class InMemoryRepository:
                 last_error_message=error_message,
             )
             return True
+
+    @staticmethod
+    def _job_has_active_lease(
+        job: DurableJob | None,
+        *,
+        expected_subject_revision: int,
+        lease_id: str,
+        lease_owner: str,
+        now: datetime,
+    ) -> bool:
+        return bool(
+            job is not None
+            and job.status == JobStatus.LEASED
+            and job.subject_revision == expected_subject_revision
+            and job.lease_id == lease_id
+            and job.lease_owner == lease_owner
+            and job.lease_expires_at is not None
+            and job.lease_expires_at > now
+        )
+
+    async def group_capture(
+        self,
+        *,
+        account_id: str,
+        capture_id: str,
+        lease_id: str,
+        lease_owner: str,
+        policy: GroupingPolicy,
+    ) -> CaptureGroupingResult | None:
+        async with self._lock:
+            now = utc_now()
+            grouping_job_key = (account_id, capture_grouping_job_id(capture_id))
+            grouping_job = self._jobs.get(grouping_job_key)
+            if not self._job_has_active_lease(
+                grouping_job,
+                expected_subject_revision=1,
+                lease_id=lease_id,
+                lease_owner=lease_owner,
+                now=now,
+            ):
+                return None
+            capture = self._captures.get(capture_id)
+            if (
+                capture is None
+                or capture.account_id != account_id
+                or capture.status != CaptureStatus.STORED
+            ):
+                return None
+            assert grouping_job is not None
+            activity_at = capture_activity_time(capture)
+            segment_id, source_key = segment_identity(capture)
+            segment_key = (account_id, segment_id)
+            segment = self._segments.get(segment_key)
+            event_created = False
+            segment_created = segment is None
+
+            event: ActivityEvent | None = None
+            if segment is not None:
+                event = self._events.get((account_id, segment.event_id))
+            if event is None:
+                head_id = self._event_head_by_camera.get((account_id, capture.camera_id))
+                head = self._events.get((account_id, head_id)) if head_id is not None else None
+                if head is not None and (
+                    head.first_capture_at - policy.reopen_window
+                    <= activity_at
+                    <= head.last_capture_at + policy.reopen_window
+                ):
+                    event = head
+                else:
+                    event_created = True
+                    event = ActivityEvent(
+                        id=str(uuid4()),
+                        account_id=account_id,
+                        camera_ids=[capture.camera_id],
+                        first_capture_at=activity_at,
+                        last_capture_at=activity_at,
+                        capture_count=1,
+                        grouping_policy_version=policy.version,
+                        created_at=now,
+                        updated_at=now,
+                    )
+
+            if not event_created:
+                camera_ids = list(event.camera_ids)
+                if capture.camera_id not in camera_ids:
+                    camera_ids.append(capture.camera_id)
+                event = ActivityEvent.model_validate(
+                    {
+                        **event.model_dump(mode="python"),
+                        "status": ActivityEventStatus.OPEN,
+                        "current_revision": event.current_revision + 1,
+                        "camera_ids": camera_ids,
+                        "first_capture_at": min(event.first_capture_at, activity_at),
+                        "last_capture_at": max(event.last_capture_at, activity_at),
+                        "capture_count": event.capture_count + 1,
+                        "updated_at": now,
+                    }
+                )
+            self._events[(account_id, event.id)] = event
+
+            if segment is None:
+                segment = ActivitySegment(
+                    id=segment_id,
+                    account_id=account_id,
+                    event_id=event.id,
+                    camera_id=capture.camera_id,
+                    source_key=source_key,
+                    first_capture_at=activity_at,
+                    last_capture_at=activity_at,
+                    capture_count=1,
+                    created_at=now,
+                )
+            else:
+                segment = ActivitySegment.model_validate(
+                    {
+                        **segment.model_dump(mode="python"),
+                        "first_capture_at": min(segment.first_capture_at, activity_at),
+                        "last_capture_at": max(segment.last_capture_at, activity_at),
+                        "capture_count": segment.capture_count + 1,
+                    }
+                )
+            self._segments[segment_key] = segment
+            current_head_id = self._event_head_by_camera.get((account_id, capture.camera_id))
+            current_head = (
+                self._events.get((account_id, current_head_id))
+                if current_head_id is not None
+                else None
+            )
+            if current_head is None or event.last_capture_at >= current_head.last_capture_at:
+                self._event_head_by_camera[(account_id, capture.camera_id)] = event.id
+
+            self._captures[capture.id] = capture.model_copy(
+                update={"segment_id": segment.id, "event_id": event.id},
+                deep=True,
+            )
+            inference_job = self._enqueue_job_locked(
+                DurableJob(
+                    id=event_inference_job_id(event.id),
+                    account_id=account_id,
+                    kind=JobKind.EVENT_INFERENCE,
+                    subject_id=event.id,
+                    subject_revision=event.current_revision,
+                    available_at=event.last_capture_at + policy.quiet_after,
+                    created_at=now,
+                )
+            )
+            self._jobs[grouping_job_key] = self._updated_job(
+                grouping_job,
+                status=JobStatus.COMPLETED,
+                lease_id=None,
+                lease_owner=None,
+                lease_expires_at=None,
+                completed_at=now,
+            )
+            return CaptureGroupingResult(
+                event=event.model_copy(deep=True),
+                segment=segment.model_copy(deep=True),
+                inference_job=inference_job,
+                event_created=event_created,
+                segment_created=segment_created,
+            )
 
     async def save_meal(self, meal: MealEntry) -> MealEntry:
         async with self._lock:

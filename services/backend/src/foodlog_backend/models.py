@@ -57,12 +57,18 @@ class CaptureStatus(StrEnum):
 
 class JobKind(StrEnum):
     CAPTURE_GROUPING = "capture_grouping"
+    EVENT_INFERENCE = "event_inference"
 
 
 class JobStatus(StrEnum):
     PENDING = "pending"
     LEASED = "leased"
     COMPLETED = "completed"
+
+
+class ActivityEventStatus(StrEnum):
+    OPEN = "open"
+    INFERRED = "inferred"
 
 
 class EntitlementMode(StrEnum):
@@ -285,12 +291,18 @@ class CaptureRecord(BaseModel):
     content_sha256: str
     object_key: str
     metadata: CaptureEnvelopeV1 | None = None
+    segment_id: str | None = Field(default=None, min_length=1, max_length=160)
+    event_id: str | None = Field(default=None, min_length=1, max_length=160)
     status: CaptureStatus = CaptureStatus.ACCEPTED
     created_at: datetime = Field(default_factory=utc_now)
 
 
 def capture_grouping_job_id(capture_id: str) -> str:
     return f"capture-grouping-{capture_id}"
+
+
+def event_inference_job_id(event_id: str) -> str:
+    return f"event-inference-{event_id}"
 
 
 class DurableJob(BaseModel):
@@ -327,6 +339,58 @@ class DurableJob(BaseModel):
             raise ValueError("Only leased jobs may retain lease fields")
         if (self.status == JobStatus.COMPLETED) != (self.completed_at is not None):
             raise ValueError("Completed jobs require completed_at and other jobs forbid it")
+        return self
+
+
+class ActivitySegment(BaseModel):
+    id: str = Field(min_length=1, max_length=160)
+    account_id: str = Field(min_length=1, max_length=128)
+    event_id: str = Field(min_length=1, max_length=160)
+    camera_id: str = Field(min_length=1, max_length=128)
+    source_key: str = Field(min_length=1, max_length=256)
+    first_capture_at: datetime
+    last_capture_at: datetime
+    capture_count: int = Field(ge=1)
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def segment_times_are_consistent(self) -> "ActivitySegment":
+        for value in (self.first_capture_at, self.last_capture_at, self.created_at):
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError("segment timestamps must include a UTC offset")
+        if self.last_capture_at < self.first_capture_at:
+            raise ValueError("segment last_capture_at cannot precede first_capture_at")
+        return self
+
+
+class ActivityEvent(BaseModel):
+    id: str = Field(min_length=1, max_length=160)
+    account_id: str = Field(min_length=1, max_length=128)
+    status: ActivityEventStatus = ActivityEventStatus.OPEN
+    current_revision: int = Field(default=1, ge=1)
+    camera_ids: list[str] = Field(min_length=1, max_length=8)
+    first_capture_at: datetime
+    last_capture_at: datetime
+    capture_count: int = Field(ge=1)
+    grouping_policy_version: str = Field(min_length=1, max_length=80)
+    meal_id: str | None = Field(default=None, min_length=1, max_length=160)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def event_times_are_consistent(self) -> "ActivityEvent":
+        for value in (
+            self.first_capture_at,
+            self.last_capture_at,
+            self.created_at,
+            self.updated_at,
+        ):
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError("event timestamps must include a UTC offset")
+        if self.last_capture_at < self.first_capture_at:
+            raise ValueError("event last_capture_at cannot precede first_capture_at")
+        if len(set(self.camera_ids)) != len(self.camera_ids):
+            raise ValueError("event camera IDs must be unique")
         return self
 
 
