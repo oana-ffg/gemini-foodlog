@@ -44,8 +44,12 @@ locals {
     "artifactregistry.googleapis.com",
     "cloudbuild.googleapis.com",
     "firestore.googleapis.com",
+    "firebase.googleapis.com",
+    "firebaseappcheck.googleapis.com",
+    "firebasehosting.googleapis.com",
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
+    "identitytoolkit.googleapis.com",
     "logging.googleapis.com",
     "monitoring.googleapis.com",
     "pubsub.googleapis.com",
@@ -57,6 +61,15 @@ locals {
 }
 
 provider "google" {
-  project = var.project_id
-  region  = var.region
+  project               = var.project_id
+  region                = var.region
+  billing_project       = var.project_id
+  user_project_override = true
+}
+
+provider "google-beta" {
+  project               = var.project_id
+  region                = var.region
+  billing_project       = var.project_id
+  user_project_override = true
 }

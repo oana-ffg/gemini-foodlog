@@ -78,3 +78,13 @@ user access, while bucket roles are assigned per data flow in `storage.tf`. Terr
 does not create service-account keys. The CI identities remain unusable from GitHub
 until repository-scoped Workload Identity Federation and deployment resources are
 defined by their dependent backlog tasks.
+
+## Firebase foundation
+
+`firebase.tf` adds Firebase to the existing `gemini-foodlog-2026` Google Cloud
+project; it never creates a second project. Firebase Management, Hosting, App Check,
+and Identity Toolkit APIs are explicit Terraform-owned services. Identity Platform
+enables email/password sign-in, forbids duplicate emails, disables anonymous and
+phone sign-in, and authorizes only localhost plus the project's Firebase domains.
+The web app, restricted browser API key, Hosting release, and App Check enforcement
+are created by their dedicated authentication and UI tasks.
