@@ -84,11 +84,11 @@ See [AGENTS.md](./AGENTS.md) for the complete project contract and the hackathon
 
 ## Status
 
-**Concept and architecture defined; the first zero-cost local browser-to-journal slice is runnable.**
+**Concept and architecture defined; the first zero-cost browser-to-journal slice is runnable locally and its backend has a private Cloud Run smoke preview.**
 
-The current slice provisions an ephemeral local account and browser camera, accepts authenticated JPEG or PNG captures with idempotency and quota enforcement, stores them in memory, and shows an uncertainty-aware journal in the React UI. Users can confirm or correct an inference, inspect its immutable revision history, and answer focused clarification questions that revise the same meal. Three immutable synthetic images have deterministic local results; unknown images remain explicitly uncertain. **Local mode never calls Gemini, no cloud workload is deployed, and this is not an accuracy claim.**
+The current slice provisions an ephemeral account and browser camera, accepts authenticated JPEG or PNG captures with idempotency and quota enforcement, stores them in memory, and shows an uncertainty-aware journal in the React UI. Users can confirm or correct an inference, inspect its immutable revision history, and answer focused clarification questions that revise the same meal. Three immutable synthetic images have deterministic local results; unknown images remain explicitly uncertain. **Neither local mode nor the private preview calls Gemini, and this is not an accuracy claim.**
 
-Google ADK is installed and the FoodLog agent definition is import-tested without invoking a model. Production configuration fails closed until the private GCS, Firestore, real authentication, and asynchronous worker adapters exist. See the working [MVP architecture and decision record](./docs/mvp-architecture.md) for the selected system shape and remaining work. The original proposal is preserved verbatim in [CORE_IDEA.md](./CORE_IDEA.md).
+Google ADK is installed and the FoodLog agent definition is import-tested without invoking a model. The backend commit has been deployed privately to Cloud Run with IAM plus an application secret, scale-to-zero, a one-instance maximum, and a DKK 35 gross-spend budget alert. An authenticated live test created an ephemeral account, accepted two synthetic captures, reconstructed both expected meals, and returned the private image bytes exactly. The web UI is not hosted yet. Production configuration still fails closed until the private GCS, Firestore, real authentication, and asynchronous worker adapters exist. See the working [MVP architecture and decision record](./docs/mvp-architecture.md) and the [verified preview record](./infra/preview/README.md). The original proposal is preserved verbatim in [CORE_IDEA.md](./CORE_IDEA.md).
 
 ## Run the local slice
 

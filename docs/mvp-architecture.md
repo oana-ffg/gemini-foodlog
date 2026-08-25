@@ -40,9 +40,9 @@ The smallest convincing end-to-end story is:
 8. The meal and household knowledge are revised without erasing the original evidence or feedback.
 9. A later similar event benefits from that learning.
 
-### 1.3 First implementation slice
+### 1.3 Planned production slice
 
-The first deployed vertical slice is browser-to-journal:
+The first durable production vertical slice is browser-to-journal:
 
 1. A verified owner signs in to a real application account with its trial entitlement.
 2. The browser obtains webcam permission and creates an account-scoped browser-camera session.
@@ -54,10 +54,10 @@ This slice uses the production contracts and tenant boundary. It is not a throwa
 
 ### 1.4 Current implementation checkpoint
 
-As of 2026-08-25, the repository has a deliberately zero-cost local checkpoint:
+As of 2026-08-25, the repository has a deliberately zero-model-cost local checkpoint and private backend smoke preview:
 
 - a React/Vite browser-camera UI with manual frame analysis and journal display;
-- a FastAPI ingestion API with local-only header authentication, a 25-account cap, a 200-image trial quota, idempotent capture acceptance, content validation, and authorization-checked image access;
+- a FastAPI ingestion API with non-production header authentication, a 25-account cap, a 200-image trial quota, idempotent capture acceptance, content validation, and authorization-checked image access;
 - concurrency-safe in-memory repository and object-store adapters;
 - immutable meal revisions, raw idempotent confirmation/correction records, and tenant-scoped clarification questions whose answers revise the original meal instead of creating a duplicate;
 - a clarification inbox, meal feedback controls, and revision history in the web application;
@@ -65,9 +65,11 @@ As of 2026-08-25, the repository has a deliberately zero-cost local checkpoint:
 - a Google ADK `Agent` and `App` definition that is imported in tests without calling a model;
 - three immutable synthetic still-image fixtures generated with OpenAI image generation, not Veo.
 
-Known fixture hashes produce deterministic local journal results. Unknown valid images are marked uncertain. Local mode never calls Gemini, and production startup fails closed because the GCP storage, identity, and worker adapters are not implemented. Nothing is deployed yet.
+Known fixture hashes produce deterministic local journal results. Unknown valid images are marked uncertain. Local and preview modes never call Gemini, and production startup fails closed because the GCP storage, identity, and worker adapters are not implemented.
 
-The dedicated Google Cloud project `gemini-foodlog-2026` also exists. It is the only project linked to the dedicated `Gemini FoodLog Hackathon` billing account. The $150 hackathon promotion was redeemed on 2026-08-25 and Google currently reports that the credit is being processed and will be available soon. No application workload or model call has been deployed, and the unrelated local gcloud default remains `ffutils`.
+Commit `ada2235` is deployed as the private Cloud Run service `foodlog-preview-api` in `europe-west1`. It uses IAM plus a Secret Manager application secret, a dedicated runtime identity, zero minimum instances, and a one-instance maximum. The authenticated smoke test created one ephemeral test account and camera, accepted two OpenAI-generated synthetic fixtures, produced the expected confident steak and chicken journal entries, and returned the stored private image bytes exactly. Cloud Logging showed no server errors. The React UI is not hosted, all preview state is in memory, and this is explicitly not the durable production slice.
+
+The dedicated Google Cloud project `gemini-foodlog-2026` is the only project linked to the dedicated `Gemini FoodLog Hackathon` billing account. The promotion is active with DKK 984.25 remaining and expires on 2026-09-24. A DKK 35 monthly gross-spend budget alerts at 50%, 90%, and 100%; it excludes credits when measuring spend so the warning still works while the promotion pays the bill. No model call has been made, and the unrelated local gcloud default remains `ffutils`. Exact live identifiers and evidence are recorded in `infra/preview/README.md`.
 
 ## 2. System shape
 
@@ -528,7 +530,9 @@ An image ceiling alone does not cap Gemini spending because costs depend on even
 
 Internal and judge test accounts can use unlimited entitlements, but they remain subject to the global safety controls.
 
-The $150 hackathon promotion was redeemed into the dedicated FoodLog billing account on 2026-08-25. Google currently reports that it is being processed and will be available soon; the exact live balance and expiry must be recorded once it appears. The global alert thresholds and hard-stop amount remain intentionally unset until the final pre-deployment architecture step: re-estimate expected traffic and measured per-event cost, confirm the live credit balance and expiry, then ask Oana to choose the dollar amounts before public signup or model processing is enabled. The application must not silently invent a default dollar limit.
+The hackathon promotion was redeemed into the dedicated FoodLog billing account on 2026-08-25. It is active with DKK 984.25 remaining and expires on 2026-09-24. The private no-model preview has a DKK 35 monthly gross-spend budget with current-spend notifications at 50%, 90%, and 100%. The budget excludes credits when measuring spend, so an alert is not hidden merely because the promotion covers the invoice.
+
+This budget is an alert, not a hard stop. Public signup and model processing remain disabled. Before either is enabled, re-estimate expected traffic and measured per-event cost, then ask Oana again whether to keep or change the DKK 35 amount and choose the separate model-spend kill-switch threshold. The application must not silently invent those limits.
 
 ### 11.3 Working cost estimate
 
@@ -739,7 +743,7 @@ The following details remain intentionally unresolved:
 - local motion/change-detection algorithm;
 - calibrated inactivity threshold, reopen window, and segment-affinity rules;
 - exact persistent queue capacity supported by the selected device;
-- global Gemini alert thresholds and hard-stop amount, to be chosen as the final pre-deployment decision after credits and measured costs are verified;
+- public-launch budget amount and global Gemini hard-stop amount, to be chosen after measured costs are available and explicitly re-confirmed with Oana;
 - precise Firestore document paths, composite indexes, and data-evolution sequence;
 - the final Sunday demo scenario and fallback evidence, selected from what the implemented system can honestly demonstrate.
 
