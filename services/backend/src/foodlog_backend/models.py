@@ -2,7 +2,14 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 CameraName = Annotated[
     str,
@@ -164,6 +171,61 @@ class VerifiedDeviceIdentity(BaseModel):
 class DeviceSession(BaseModel):
     camera_id: str
     status: Literal["active"] = "active"
+
+
+class MotionMetadataV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    detected: bool
+    algorithm: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=80),
+    ]
+    score: float | None = Field(default=None, ge=0, le=1)
+    changed_pixel_ratio: float | None = Field(default=None, ge=0, le=1)
+    threshold: float | None = Field(default=None, ge=0, le=1)
+
+
+class CaptureEnvelopeV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    camera_id: str = Field(min_length=1, max_length=128)
+    captured_at: datetime
+    client_kind: Literal["browser", "simulator", "physical"]
+    client_version: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=80),
+    ]
+    sequence_id: str = Field(
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    sequence_number: int = Field(ge=0, le=2_147_483_647)
+    burst_id: str | None = Field(
+        default=None,
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    burst_frame_index: int | None = Field(default=None, ge=0, le=2_147_483_647)
+    width: int = Field(ge=1, le=8_192)
+    height: int = Field(ge=1, le=8_192)
+    motion: MotionMetadataV1 | None = None
+
+    @field_validator("captured_at")
+    @classmethod
+    def captured_at_has_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("captured_at must include a UTC offset")
+        return value
+
+    @model_validator(mode="after")
+    def burst_fields_are_consistent(self) -> "CaptureEnvelopeV1":
+        if (self.burst_id is None) != (self.burst_frame_index is None):
+            raise ValueError("burst_id and burst_frame_index must be provided together")
+        return self
 
 
 class CaptureRecord(BaseModel):

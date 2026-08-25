@@ -1,0 +1,179 @@
+{
+  "$defs": {
+    "MotionMetadataV1": {
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Algorithm",
+          "type": "string"
+        },
+        "changed_pixel_ratio": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Changed Pixel Ratio"
+        },
+        "detected": {
+          "title": "Detected",
+          "type": "boolean"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        },
+        "threshold": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Threshold"
+        }
+      },
+      "required": [
+        "detected",
+        "algorithm"
+      ],
+      "title": "MotionMetadataV1",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "burst_frame_index": {
+      "anyOf": [
+        {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Burst Frame Index"
+    },
+    "burst_id": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "minLength": 8,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Burst Id"
+    },
+    "camera_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Camera Id",
+      "type": "string"
+    },
+    "captured_at": {
+      "format": "date-time",
+      "title": "Captured At",
+      "type": "string"
+    },
+    "client_kind": {
+      "enum": [
+        "browser",
+        "simulator",
+        "physical"
+      ],
+      "title": "Client Kind",
+      "type": "string"
+    },
+    "client_version": {
+      "maxLength": 80,
+      "minLength": 1,
+      "title": "Client Version",
+      "type": "string"
+    },
+    "height": {
+      "maximum": 8192,
+      "minimum": 1,
+      "title": "Height",
+      "type": "integer"
+    },
+    "motion": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MotionMetadataV1"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "sequence_id": {
+      "maxLength": 128,
+      "minLength": 8,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Sequence Id",
+      "type": "string"
+    },
+    "sequence_number": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "title": "Sequence Number",
+      "type": "integer"
+    },
+    "width": {
+      "maximum": 8192,
+      "minimum": 1,
+      "title": "Width",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "camera_id",
+    "captured_at",
+    "client_kind",
+    "client_version",
+    "sequence_id",
+    "sequence_number",
+    "width",
+    "height"
+  ],
+  "title": "CaptureEnvelopeV1",
+  "type": "object"
+}

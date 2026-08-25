@@ -148,35 +148,36 @@ def create_app(
         allow_headers=allowed_headers,
     )
 
-    async def request_identity(
+    async def firebase_request_identity(
         authorization: str | None = Header(default=None),
+    ) -> VerifiedIdentity:
+        parts = authorization.split() if authorization else []
+        if len(parts) != 2 or parts[0].lower() != "bearer" or len(parts[1]) > 8192:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="A valid bearer token is required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        assert active_token_verifier is not None
+        try:
+            identity = await active_token_verifier.verify(parts[1])
+        except InvalidAuthenticationToken as error:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="A valid bearer token is required",
+                headers={"WWW-Authenticate": "Bearer"},
+            ) from error
+        if not identity.email_verified:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="email_verification_required",
+            )
+        return identity
+
+    async def local_request_identity(
         x_foodlog_local_user: str | None = Header(default=None),
         x_foodlog_preview_secret: str | None = Header(default=None),
     ) -> VerifiedIdentity:
-        if active_settings.auth_backend == "firebase":
-            parts = authorization.split() if authorization else []
-            if len(parts) != 2 or parts[0].lower() != "bearer" or len(parts[1]) > 8192:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="A valid bearer token is required",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-            assert active_token_verifier is not None
-            try:
-                identity = await active_token_verifier.verify(parts[1])
-            except InvalidAuthenticationToken as error:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="A valid bearer token is required",
-                    headers={"WWW-Authenticate": "Bearer"},
-                ) from error
-            if not identity.email_verified:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="email_verification_required",
-                )
-            return identity
-
         if active_settings.environment == "preview" and (
             x_foodlog_preview_secret is None
             or active_settings.preview_shared_secret is None
@@ -192,6 +193,12 @@ def create_app(
                 detail="Local user header is required",
             )
         return VerifiedIdentity(uid=x_foodlog_local_user, email_verified=True)
+
+    request_identity = (
+        firebase_request_identity
+        if active_settings.auth_backend == "firebase"
+        else local_request_identity
+    )
 
     async def request_user_id(
         identity: Annotated[VerifiedIdentity, Depends(request_identity)],
