@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     trial_image_limit: int = Field(default=200, ge=1)
     public_account_limit: int = Field(default=25, ge=1)
     preview_shared_secret: str | None = Field(default=None, min_length=32)
+    gcp_project_id: str | None = None
+    media_bucket: str | None = None
 
     @model_validator(mode="after")
     def reject_memory_in_production(self) -> "Settings":
@@ -20,8 +22,8 @@ class Settings(BaseSettings):
             raise ValueError("Preview requires a shared secret in addition to Cloud Run IAM")
         if self.environment == "production" and self.storage_backend == "memory":
             raise ValueError("Production cannot start with the in-memory storage adapter")
-        if self.storage_backend == "gcp":
-            raise ValueError(
-                "GCP adapters are not implemented yet; refusing partial production startup"
-            )
+        if self.storage_backend == "gcp" and (
+            self.gcp_project_id is None or self.media_bucket is None
+        ):
+            raise ValueError("GCP storage requires gcp_project_id and media_bucket")
         return self

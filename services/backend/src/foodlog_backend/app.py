@@ -17,6 +17,7 @@ from .errors import (
     QuestionNotFound,
     TrialQuotaExhausted,
 )
+from .firestore_repository import FirestoreRepository
 from .inference import FixtureInferenceEngine, InferenceEngine
 from .models import (
     Account,
@@ -35,7 +36,7 @@ from .models import (
 from .repository import InMemoryRepository, Repository
 from .service import CaptureService
 from .settings import Settings
-from .storage import InMemoryObjectStore, ObjectStore
+from .storage import GCSObjectStore, InMemoryObjectStore, ObjectStore
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png"}
@@ -62,11 +63,30 @@ def create_app(
     inference_engine: InferenceEngine | None = None,
 ) -> FastAPI:
     active_settings = settings or Settings()
-    repository = InMemoryRepository(
-        public_account_limit=active_settings.public_account_limit,
-        trial_image_limit=active_settings.trial_image_limit,
-    )
-    object_store = InMemoryObjectStore()
+    if active_settings.environment == "production" and (
+        inference_engine is None or isinstance(inference_engine, FixtureInferenceEngine)
+    ):
+        raise ValueError(
+            "Production requires an explicitly configured non-fixture inference engine"
+        )
+    if active_settings.storage_backend == "gcp":
+        assert active_settings.gcp_project_id is not None
+        assert active_settings.media_bucket is not None
+        repository: Repository = FirestoreRepository(
+            project_id=active_settings.gcp_project_id,
+            public_account_limit=active_settings.public_account_limit,
+            trial_image_limit=active_settings.trial_image_limit,
+        )
+        object_store: ObjectStore = GCSObjectStore(
+            project_id=active_settings.gcp_project_id,
+            bucket_name=active_settings.media_bucket,
+        )
+    else:
+        repository = InMemoryRepository(
+            public_account_limit=active_settings.public_account_limit,
+            trial_image_limit=active_settings.trial_image_limit,
+        )
+        object_store = InMemoryObjectStore()
     container = Container(
         repository=repository,
         object_store=object_store,

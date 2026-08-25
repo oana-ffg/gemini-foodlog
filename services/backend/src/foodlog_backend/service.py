@@ -45,21 +45,23 @@ class CaptureService:
         )
         if created:
             try:
-                await self._object_store.put(capture.object_key, image)
+                await self._object_store.put(capture.object_key, image, content_type)
                 inference = await self._inference.infer(image, content_type)
-                meal = await self._repository.save_meal(MealEntry(
-                    **inference.model_dump(),
-                    id=str(uuid4()),
-                    account_id=account.id,
-                    capture_id=capture.id,
-                ))
+                meal = await self._repository.save_meal(
+                    MealEntry(
+                        **inference.model_dump(),
+                        id=str(uuid4()),
+                        account_id=account.id,
+                        capture_id=capture.id,
+                    )
+                )
                 if inference.clarification_question and inference.clarification_reason:
                     await self._repository.open_question(
                         meal=meal,
                         prompt=inference.clarification_question,
                         reason=inference.clarification_reason,
                     )
-                await self._repository.mark_processed(capture.id)
+                await self._repository.mark_processed(capture.id, capture.account_id)
             except Exception:
                 try:
                     await self._object_store.delete(capture.object_key)

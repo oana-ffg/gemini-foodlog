@@ -46,9 +46,7 @@ class Repository(Protocol):
 
     async def create_browser_camera(self, owner_user_id: str, name: str) -> BrowserCamera: ...
 
-    async def camera_for_owner(
-        self, owner_user_id: str, camera_id: str
-    ) -> BrowserCamera: ...
+    async def camera_for_owner(self, owner_user_id: str, camera_id: str) -> BrowserCamera: ...
 
     async def reserve_capture(
         self,
@@ -64,7 +62,7 @@ class Repository(Protocol):
 
     async def cancel_capture(self, capture: CaptureRecord) -> None: ...
 
-    async def mark_processed(self, capture_id: str) -> None: ...
+    async def mark_processed(self, capture_id: str, account_id: str | None = None) -> None: ...
 
     async def save_meal(self, meal: MealEntry) -> MealEntry: ...
 
@@ -76,9 +74,7 @@ class Repository(Protocol):
 
     async def meal_for_owner(self, owner_user_id: str, meal_id: str) -> MealEntry: ...
 
-    async def list_meal_revisions(
-        self, owner_user_id: str, meal_id: str
-    ) -> list[MealRevision]: ...
+    async def list_meal_revisions(self, owner_user_id: str, meal_id: str) -> list[MealRevision]: ...
 
     async def record_meal_feedback(
         self,
@@ -105,9 +101,7 @@ class Repository(Protocol):
         idempotency_key: str,
     ) -> QuestionAnswerResult: ...
 
-    async def capture_for_owner(
-        self, owner_user_id: str, capture_id: str
-    ) -> CaptureRecord: ...
+    async def capture_for_owner(self, owner_user_id: str, capture_id: str) -> CaptureRecord: ...
 
 
 class InMemoryRepository:
@@ -246,7 +240,7 @@ class InMemoryRepository:
             account = self._accounts[stored.account_id]
             account.accepted_image_count -= 1
 
-    async def mark_processed(self, capture_id: str) -> None:
+    async def mark_processed(self, capture_id: str, account_id: str | None = None) -> None:
         async with self._lock:
             capture = self._captures.get(capture_id)
             if not capture:
@@ -302,9 +296,10 @@ class InMemoryRepository:
             meals: Iterable[MealEntry] = (
                 meal for meal in self._meals.values() if meal.account_id == account.id
             )
-            return [meal.model_copy(deep=True) for meal in sorted(
-                meals, key=lambda item: item.created_at, reverse=True
-            )]
+            return [
+                meal.model_copy(deep=True)
+                for meal in sorted(meals, key=lambda item: item.created_at, reverse=True)
+            ]
 
     async def meal_for_owner(self, owner_user_id: str, meal_id: str) -> MealEntry:
         account = await self.account_for_owner(owner_user_id)
@@ -323,10 +318,7 @@ class InMemoryRepository:
     ) -> list[MealRevision]:
         await self.meal_for_owner(owner_user_id, meal_id)
         async with self._lock:
-            return [
-                revision.model_copy(deep=True)
-                for revision in self._meal_revisions[meal_id]
-            ]
+            return [revision.model_copy(deep=True) for revision in self._meal_revisions[meal_id]]
 
     async def record_meal_feedback(
         self,
@@ -390,9 +382,7 @@ class InMemoryRepository:
                 actual_meal=request.answer,
                 explanation=request.learning_tip,
             )
-            duplicate_id = self._feedback_by_idempotency.get(
-                (account.id, idempotency_key)
-            )
+            duplicate_id = self._feedback_by_idempotency.get((account.id, idempotency_key))
             if question.status == QuestionStatus.ANSWERED and duplicate_id is None:
                 raise QuestionAlreadyAnswered
 
@@ -500,7 +490,7 @@ class InMemoryRepository:
 
     @staticmethod
     def _inference_from_meal(meal: MealEntry) -> MealInference:
-        return MealInference(**meal.model_dump(include=set(MealInference.model_fields)))
+        return inference_from_meal(meal)
 
     @classmethod
     def _revised_inference(
@@ -508,51 +498,62 @@ class InMemoryRepository:
         meal: MealEntry,
         request: MealFeedbackRequest,
     ) -> tuple[MealInference, MealStatus]:
-        if request.kind == MealFeedbackKind.CONFIRM:
-            return cls._inference_from_meal(meal), MealStatus.CONFIRMED
+        return revised_inference(meal, request)
 
-        alternatives = list(dict.fromkeys([meal.title, *meal.alternatives]))
-        if request.actual_meal:
-            rationale = (
-                f"User correction: {request.explanation}"
-                if request.explanation
-                else f"The account owner identified this meal as {request.actual_meal}."
-            )
-            return (
-                MealInference(
-                    title=request.actual_meal,
-                    confidence=Confidence.CONFIDENT,
-                    components=[
-                        MealComponent(
-                            name=request.actual_meal,
-                            ingredients=[],
-                            preparation_methods=[],
-                        )
-                    ],
-                    observations=meal.observations,
-                    alternatives=[
-                        alternative
-                        for alternative in alternatives
-                        if alternative != request.actual_meal
-                    ],
-                    rationale=rationale,
-                ),
-                MealStatus.CORRECTED,
-            )
 
+def inference_from_meal(meal: MealEntry) -> MealInference:
+    return MealInference(**meal.model_dump(include=set(MealInference.model_fields)))
+
+
+def revised_inference(
+    meal: MealEntry,
+    request: MealFeedbackRequest,
+) -> tuple[MealInference, MealStatus]:
+    if request.kind == MealFeedbackKind.CONFIRM:
+        return inference_from_meal(meal), MealStatus.CONFIRMED
+
+    alternatives = list(dict.fromkeys([meal.title, *meal.alternatives]))
+    if request.actual_meal:
+        rationale = (
+            f"User correction: {request.explanation}"
+            if request.explanation
+            else f"The account owner identified this meal as {request.actual_meal}."
+        )
         return (
             MealInference(
-                title="Unresolved meal",
-                confidence=Confidence.UNCERTAIN,
-                components=[],
+                title=request.actual_meal,
+                confidence=Confidence.CONFIDENT,
+                components=[
+                    MealComponent(
+                        name=request.actual_meal,
+                        ingredients=[],
+                        preparation_methods=[],
+                    )
+                ],
                 observations=meal.observations,
-                alternatives=alternatives,
-                rationale=(
-                    f"User correction: {request.explanation}"
-                    if request.explanation
-                    else "The account owner marked the inference as wrong without "
-                    "providing a replacement."
-                ),
+                alternatives=[
+                    alternative
+                    for alternative in alternatives
+                    if alternative != request.actual_meal
+                ],
+                rationale=rationale,
             ),
-            MealStatus.CONTRADICTED,
+            MealStatus.CORRECTED,
         )
+
+    return (
+        MealInference(
+            title="Unresolved meal",
+            confidence=Confidence.UNCERTAIN,
+            components=[],
+            observations=meal.observations,
+            alternatives=alternatives,
+            rationale=(
+                f"User correction: {request.explanation}"
+                if request.explanation
+                else "The account owner marked the inference as wrong without providing a "
+                "replacement."
+            ),
+        ),
+        MealStatus.CONTRADICTED,
+    )
