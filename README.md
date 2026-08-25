@@ -72,7 +72,7 @@ That is a continuous observation, memory, decision, and action loop—not a chat
 
 ## Hackathon fit
 
-The project is expected to target the **Taskmaster** track because it handles a personal, messy, multi-step workflow in the background and produces a maintained journal rather than merely generating text. Final track selection and architecture are still open decisions.
+The MVP targets the **Taskmaster** track because it handles a personal, messy, multi-step workflow in the background and produces a maintained journal rather than merely generating text.
 
 The official rules require every project to use:
 
@@ -84,11 +84,42 @@ See [AGENTS.md](./AGENTS.md) for the complete project contract and the hackathon
 
 ## Status
 
-**Concept and constraints defined; architecture not yet selected.**
+**Concept and architecture defined; the first zero-cost local browser-to-journal slice is runnable.**
 
-This first commit intentionally contains no implementation and makes no deployment, integration, or accuracy claims. The next step is an explicit architecture discussion covering the camera-to-cloud boundary, event model, agent framework, persistence and memory, clarification channel, privacy policy, evaluation harness, and the smallest convincing end-to-end demo.
+The current slice provisions an ephemeral local account and browser camera, accepts authenticated JPEG or PNG captures with idempotency and quota enforcement, stores them in memory, and shows an uncertainty-aware journal in the React UI. Users can confirm or correct an inference, inspect its immutable revision history, and answer focused clarification questions that revise the same meal. Three immutable synthetic images have deterministic local results; unknown images remain explicitly uncertain. **Local mode never calls Gemini, no cloud workload is deployed, and this is not an accuracy claim.**
 
-Reproducible setup instructions will be added with the first runnable implementation. Until then, there is nothing to install or run.
+Google ADK is installed and the FoodLog agent definition is import-tested without invoking a model. Production configuration fails closed until the private GCS, Firestore, real authentication, and asynchronous worker adapters exist. See the working [MVP architecture and decision record](./docs/mvp-architecture.md) for the selected system shape and remaining work. The original proposal is preserved verbatim in [CORE_IDEA.md](./CORE_IDEA.md).
+
+## Run the local slice
+
+Requirements: Node.js 24+, npm, Python 3.12+, and [uv](https://docs.astral.sh/uv/).
+
+```bash
+npm install
+
+cd services/backend
+uv sync --all-groups
+uv run uvicorn foodlog_backend.main:app --port 8080
+```
+
+In another terminal, from the repository root:
+
+```bash
+npm run dev:web
+```
+
+Open `http://127.0.0.1:5173`, grant webcam permission, and use **Analyze current frame**. The physical unattended camera, motion bursts, Gemini processing, purchase email, household-wiki updates, and durable cloud adapters remain to be implemented.
+
+## Verify
+
+```bash
+npm run typecheck
+npm run build
+
+cd services/backend
+uv run ruff check .
+uv run pytest
+```
 
 ## Success looks like
 

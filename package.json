@@ -1,0 +1,15 @@
+{
+  "name": "gemini-foodlog",
+  "private": true,
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @foodlog/web",
+    "dev:web": "npm run dev --workspace @foodlog/web",
+    "typecheck": "npm run typecheck --workspace @foodlog/web"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

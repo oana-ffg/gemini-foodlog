@@ -1,0 +1,145 @@
+:root {
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #1f2521;
+  background: #f4f1e8;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+button { font: inherit; }
+
+.app-shell {
+  width: min(1120px, calc(100% - 36px));
+  margin: 0 auto;
+  padding: 72px 0 96px;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: 1fr minmax(260px, 360px);
+  gap: 24px 64px;
+  align-items: end;
+  padding-bottom: 56px;
+}
+
+.eyebrow, .section-kicker {
+  margin: 0 0 12px;
+  color: #d95d39;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.hero .eyebrow, .hero h1 { grid-column: 1; }
+h1, h2, h3 { font-family: inherit; }
+h1 {
+  margin: 0;
+  max-width: 760px;
+  font-size: clamp(3rem, 7vw, 6.5rem);
+  line-height: 0.94;
+  letter-spacing: -0.065em;
+}
+
+.hero__copy { margin: 0; font-size: 1.14rem; line-height: 1.65; }
+.usage {
+  grid-column: 2;
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding-top: 18px;
+  border-top: 1px solid #c8c4b8;
+  color: #5e655f;
+}
+.usage strong { color: #1f2521; }
+
+.capture-panel {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.82fr) minmax(340px, 1.18fr);
+  gap: 48px;
+  padding: 52px;
+  border-radius: 28px;
+  color: #f7f5ee;
+  background: #24352c;
+  box-shadow: 0 24px 70px rgba(31, 37, 33, 0.14);
+}
+
+.capture-panel h2, .questions h2, .journal h2 { margin: 0 0 14px; font-size: clamp(2rem, 4vw, 3.4rem); line-height: 1.05; letter-spacing: -0.04em; }
+.capture-panel p:not(.section-kicker) { color: #cdd6d0; line-height: 1.6; }
+.button-row { display: flex; flex-wrap: wrap; gap: 12px; margin: 28px 0 0; }
+button {
+  min-height: 46px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 999px;
+  color: #142119;
+  background: #f0bb5c;
+  font-weight: 700;
+  cursor: pointer;
+}
+button:disabled { cursor: not-allowed; opacity: 0.46; }
+.button--quiet { color: inherit; background: transparent; box-shadow: inset 0 0 0 1px currentColor; }
+.fine-print { margin-top: 24px; font-size: 0.82rem; }
+
+.camera-frame {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border-radius: 18px;
+  background: #16231c;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1);
+}
+.camera-frame video { width: 100%; height: 100%; object-fit: cover; }
+.camera-frame > span { position: absolute; inset: 0; display: grid; place-items: center; color: #839189; }
+.camera-frame--active::after { content: "LIVE"; position: absolute; top: 14px; right: 14px; padding: 5px 8px; border-radius: 6px; background: #d95d39; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; }
+
+.questions, .journal { padding-top: 80px; }
+.section-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 32px; }
+.empty-state { padding: 42px; border: 1px dashed #aaa99f; border-radius: 18px; color: #686d69; text-align: center; }
+.question-count { padding: 8px 12px; border-radius: 999px; color: #7b392c; background: #f2d9d2; font-size: 0.84rem; font-weight: 700; }
+.question-card { display: grid; grid-template-columns: 0.8fr 1.2fr; gap: 48px; margin-bottom: 20px; padding: 34px; border-radius: 22px; background: #fffdf8; box-shadow: 0 12px 36px rgba(31, 37, 33, 0.08); }
+.question-card h3 { margin: 0 0 12px; font-size: 1.65rem; letter-spacing: -0.025em; }
+.question-card p { color: #555d57; line-height: 1.55; }
+.question-form, .feedback-form { display: grid; gap: 16px; }
+.question-form label, .feedback-form label { display: grid; gap: 8px; color: #3e4640; font-size: 0.88rem; font-weight: 700; }
+input, textarea { width: 100%; padding: 12px 14px; border: 1px solid #c8c4b8; border-radius: 10px; color: #1f2521; background: #fff; font: inherit; font-weight: 400; }
+textarea { resize: vertical; }
+input:focus, textarea:focus { outline: 3px solid rgba(240, 187, 92, 0.35); border-color: #9a762e; }
+.form-message { margin: 0; color: #5d645f; font-size: 0.85rem; line-height: 1.5; }
+.journal-card { display: grid; grid-template-columns: minmax(260px, 0.8fr) 1.2fr; overflow: hidden; margin-bottom: 24px; border-radius: 22px; background: #fffdf8; box-shadow: 0 12px 36px rgba(31, 37, 33, 0.08); }
+.journal-card > img { width: 100%; height: 100%; min-height: 330px; object-fit: cover; }
+.journal-card__body { padding: 36px; }
+.journal-card h3 { margin: 16px 0 12px; font-size: 2rem; letter-spacing: -0.035em; }
+.journal-card p, .journal-card li { line-height: 1.6; color: #555d57; }
+.entry-meta { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: #777d78; font-size: 0.82rem; }
+.badge-row { display: flex; flex-wrap: wrap; gap: 7px; }
+.confidence { padding: 6px 10px; border-radius: 999px; font-weight: 700; text-transform: capitalize; }
+.confidence--confident { color: #1f5f3f; background: #dcecdf; }
+.confidence--likely { color: #715112; background: #f5e7bd; }
+.confidence--uncertain { color: #7b392c; background: #f2d9d2; }
+.status { padding: 6px 10px; border-radius: 999px; color: #4d5650; background: #e9e8e2; font-weight: 700; text-transform: capitalize; }
+.status--confirmed { color: #1f5f3f; background: #dcecdf; }
+.status--corrected { color: #345f75; background: #dceaf0; }
+.status--contradicted { color: #7b392c; background: #f2d9d2; }
+details { margin-top: 24px; border-top: 1px solid #e0ddd4; padding-top: 18px; }
+summary { cursor: pointer; font-weight: 700; }
+.feedback-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
+.feedback-form { margin-top: 20px; padding: 22px; border-radius: 16px; background: #f4f1e8; }
+.feedback-form > p { margin: 0; font-size: 0.9rem; }
+.button-row--compact { margin-top: 0; }
+.revision-history { margin-top: 20px; padding-top: 18px; border-top: 1px solid #e0ddd4; }
+.text-button { min-height: 0; padding: 0; border-radius: 0; color: #3f654e; background: transparent; text-decoration: underline; text-underline-offset: 3px; }
+.revision-list { display: grid; gap: 12px; margin-top: 16px; }
+.revision { padding: 16px; border: 1px solid #e0ddd4; border-radius: 12px; background: #fff; }
+.revision h4 { margin: 12px 0 6px; }
+.revision p { margin: 0; font-size: 0.88rem; }
+
+@media (max-width: 800px) {
+  .app-shell { padding-top: 36px; }
+  .hero, .capture-panel, .question-card, .journal-card { grid-template-columns: 1fr; }
+  .hero__copy, .usage { grid-column: 1; }
+  .capture-panel { padding: 28px; }
+  .journal-card > img { min-height: 240px; max-height: 380px; }
+}

@@ -1,0 +1,5 @@
+name: gemini-foodlog-agent
+agent_directory: foodlog_agent
+create_params:
+  deployment_target: none
+  session_type: in_memory
