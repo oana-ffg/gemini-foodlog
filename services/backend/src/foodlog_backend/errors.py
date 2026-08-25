@@ -46,6 +46,10 @@ class IdempotencyConflict(FoodLogError):
     pass
 
 
+class JobIdentityConflict(FoodLogError):
+    pass
+
+
 class MealNotFound(FoodLogError):
     pass
 

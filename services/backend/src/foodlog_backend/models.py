@@ -55,6 +55,16 @@ class CaptureStatus(StrEnum):
     PROCESSED = "processed"
 
 
+class JobKind(StrEnum):
+    CAPTURE_GROUPING = "capture_grouping"
+
+
+class JobStatus(StrEnum):
+    PENDING = "pending"
+    LEASED = "leased"
+    COMPLETED = "completed"
+
+
 class EntitlementMode(StrEnum):
     TRIAL = "trial"
     UNLIMITED = "unlimited"
@@ -277,6 +287,47 @@ class CaptureRecord(BaseModel):
     metadata: CaptureEnvelopeV1 | None = None
     status: CaptureStatus = CaptureStatus.ACCEPTED
     created_at: datetime = Field(default_factory=utc_now)
+
+
+def capture_grouping_job_id(capture_id: str) -> str:
+    return f"capture-grouping-{capture_id}"
+
+
+class DurableJob(BaseModel):
+    id: str = Field(min_length=1, max_length=160)
+    account_id: str = Field(min_length=1, max_length=128)
+    kind: JobKind
+    subject_id: str = Field(min_length=1, max_length=160)
+    subject_revision: int = Field(ge=1)
+    status: JobStatus = JobStatus.PENDING
+    attempt_count: int = Field(default=0, ge=0)
+    available_at: datetime = Field(default_factory=utc_now)
+    lease_id: str | None = Field(default=None, min_length=1, max_length=128)
+    lease_owner: str | None = Field(default=None, min_length=1, max_length=128)
+    lease_expires_at: datetime | None = None
+    last_error_code: str | None = Field(default=None, min_length=1, max_length=120)
+    last_error_message: str | None = Field(default=None, min_length=1, max_length=2_000)
+    created_at: datetime = Field(default_factory=utc_now)
+    completed_at: datetime | None = None
+
+    @field_validator("available_at", "lease_expires_at", "created_at", "completed_at")
+    @classmethod
+    def job_timestamps_have_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("job timestamps must include a UTC offset")
+        return value
+
+    @model_validator(mode="after")
+    def lease_and_completion_fields_are_consistent(self) -> "DurableJob":
+        lease_fields = (self.lease_id, self.lease_owner, self.lease_expires_at)
+        if self.status == JobStatus.LEASED:
+            if any(value is None for value in lease_fields):
+                raise ValueError("Leased jobs require a complete lease")
+        elif any(value is not None for value in lease_fields):
+            raise ValueError("Only leased jobs may retain lease fields")
+        if (self.status == JobStatus.COMPLETED) != (self.completed_at is not None):
+            raise ValueError("Completed jobs require completed_at and other jobs forbid it")
+        return self
 
 
 class MealComponent(BaseModel):

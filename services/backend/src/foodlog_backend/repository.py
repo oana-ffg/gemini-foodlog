@@ -15,6 +15,7 @@ from .errors import (
     DeviceCredentialCollision,
     IdempotencyConflict,
     InvalidDeviceCredential,
+    JobIdentityConflict,
     MealNotFound,
     QuestionAlreadyAnswered,
     QuestionNotFound,
@@ -34,7 +35,10 @@ from .models import (
     DeviceCameraStatus,
     DeviceCredentialRecord,
     DeviceCredentialStatus,
+    DurableJob,
     EntitlementMode,
+    JobKind,
+    JobStatus,
     LaunchMailConsent,
     MealComponent,
     MealEntry,
@@ -52,8 +56,19 @@ from .models import (
     QuestionStatus,
     VerifiedDeviceIdentity,
     WaitlistEntry,
+    capture_grouping_job_id,
     utc_now,
 )
+
+
+def validate_enqueueable_job(job: DurableJob) -> None:
+    if (
+        job.status != JobStatus.PENDING
+        or job.attempt_count != 0
+        or job.last_error_code is not None
+        or job.last_error_message is not None
+    ):
+        raise ValueError("New job revisions must start as clean pending work")
 
 
 class Repository(Protocol):
@@ -177,6 +192,44 @@ class Repository(Protocol):
 
     async def mark_processed(self, capture_id: str, account_id: str | None = None) -> None: ...
 
+    async def enqueue_job(self, job: DurableJob) -> DurableJob: ...
+
+    async def job_for_account(self, account_id: str, job_id: str) -> DurableJob | None: ...
+
+    async def claim_job(
+        self,
+        *,
+        account_id: str,
+        job_id: str,
+        expected_subject_revision: int,
+        lease_id: str,
+        lease_owner: str,
+        lease_expires_at: datetime,
+    ) -> DurableJob | None: ...
+
+    async def complete_job(
+        self,
+        *,
+        account_id: str,
+        job_id: str,
+        expected_subject_revision: int,
+        lease_id: str,
+        lease_owner: str,
+    ) -> bool: ...
+
+    async def release_job(
+        self,
+        *,
+        account_id: str,
+        job_id: str,
+        expected_subject_revision: int,
+        lease_id: str,
+        lease_owner: str,
+        available_at: datetime,
+        error_code: str,
+        error_message: str,
+    ) -> bool: ...
+
     async def save_meal(self, meal: MealEntry) -> MealEntry: ...
 
     async def open_question(
@@ -241,6 +294,7 @@ class InMemoryRepository:
         self._browser_camera_by_account: dict[str, str] = {}
         self._captures: dict[str, CaptureRecord] = {}
         self._capture_by_idempotency: dict[tuple[str, str], str] = {}
+        self._jobs: dict[tuple[str, str], DurableJob] = {}
         self._meals: dict[str, MealEntry] = {}
         self._meal_by_capture: dict[str, str] = {}
         self._meal_revisions: dict[str, list[MealRevision]] = {}
@@ -723,6 +777,15 @@ class InMemoryRepository:
                 raise CaptureNotFound
             if capture.status == CaptureStatus.ACCEPTED:
                 capture.status = CaptureStatus.STORED
+                self._enqueue_job_locked(
+                    DurableJob(
+                        id=capture_grouping_job_id(capture.id),
+                        account_id=capture.account_id,
+                        kind=JobKind.CAPTURE_GROUPING,
+                        subject_id=capture.id,
+                        subject_revision=1,
+                    )
+                )
 
     async def mark_processed(self, capture_id: str, account_id: str | None = None) -> None:
         async with self._lock:
@@ -730,6 +793,148 @@ class InMemoryRepository:
             if not capture:
                 raise CaptureNotFound
             capture.status = CaptureStatus.PROCESSED
+
+    @staticmethod
+    def _updated_job(job: DurableJob, **updates: object) -> DurableJob:
+        return DurableJob.model_validate({**job.model_dump(mode="python"), **updates})
+
+    def _enqueue_job_locked(self, job: DurableJob) -> DurableJob:
+        validate_enqueueable_job(job)
+        key = (job.account_id, job.id)
+        existing = self._jobs.get(key)
+        if existing is None:
+            self._jobs[key] = job.model_copy(deep=True)
+            return job.model_copy(deep=True)
+        if existing.kind != job.kind or existing.subject_id != job.subject_id:
+            raise JobIdentityConflict
+        if job.subject_revision <= existing.subject_revision:
+            return existing.model_copy(deep=True)
+        replacement = job.model_copy(update={"created_at": existing.created_at}, deep=True)
+        self._jobs[key] = replacement
+        return replacement.model_copy(deep=True)
+
+    async def enqueue_job(self, job: DurableJob) -> DurableJob:
+        async with self._lock:
+            return self._enqueue_job_locked(job)
+
+    async def job_for_account(self, account_id: str, job_id: str) -> DurableJob | None:
+        async with self._lock:
+            job = self._jobs.get((account_id, job_id))
+            return job.model_copy(deep=True) if job is not None else None
+
+    async def claim_job(
+        self,
+        *,
+        account_id: str,
+        job_id: str,
+        expected_subject_revision: int,
+        lease_id: str,
+        lease_owner: str,
+        lease_expires_at: datetime,
+    ) -> DurableJob | None:
+        async with self._lock:
+            now = utc_now()
+            if lease_expires_at <= now:
+                raise ValueError("Job leases must expire in the future")
+            key = (account_id, job_id)
+            job = self._jobs.get(key)
+            if job is None or job.subject_revision != expected_subject_revision:
+                return None
+            if job.status == JobStatus.COMPLETED:
+                return None
+            if job.status == JobStatus.PENDING and job.available_at > now:
+                return None
+            if (
+                job.status == JobStatus.LEASED
+                and job.lease_expires_at is not None
+                and job.lease_expires_at > now
+            ):
+                return None
+            claimed = self._updated_job(
+                job,
+                status=JobStatus.LEASED,
+                attempt_count=job.attempt_count + 1,
+                lease_id=lease_id,
+                lease_owner=lease_owner,
+                lease_expires_at=lease_expires_at,
+                last_error_code=None,
+                last_error_message=None,
+            )
+            self._jobs[key] = claimed
+            return claimed.model_copy(deep=True)
+
+    async def complete_job(
+        self,
+        *,
+        account_id: str,
+        job_id: str,
+        expected_subject_revision: int,
+        lease_id: str,
+        lease_owner: str,
+    ) -> bool:
+        async with self._lock:
+            key = (account_id, job_id)
+            job = self._jobs.get(key)
+            now = utc_now()
+            if (
+                job is None
+                or job.status != JobStatus.LEASED
+                or job.subject_revision != expected_subject_revision
+                or job.lease_id != lease_id
+                or job.lease_owner != lease_owner
+                or job.lease_expires_at is None
+                or job.lease_expires_at <= now
+            ):
+                return False
+            self._jobs[key] = self._updated_job(
+                job,
+                status=JobStatus.COMPLETED,
+                lease_id=None,
+                lease_owner=None,
+                lease_expires_at=None,
+                last_error_code=None,
+                last_error_message=None,
+                completed_at=now,
+            )
+            return True
+
+    async def release_job(
+        self,
+        *,
+        account_id: str,
+        job_id: str,
+        expected_subject_revision: int,
+        lease_id: str,
+        lease_owner: str,
+        available_at: datetime,
+        error_code: str,
+        error_message: str,
+    ) -> bool:
+        async with self._lock:
+            key = (account_id, job_id)
+            job = self._jobs.get(key)
+            now = utc_now()
+            if (
+                job is None
+                or job.status != JobStatus.LEASED
+                or job.subject_revision != expected_subject_revision
+                or job.lease_id != lease_id
+                or job.lease_owner != lease_owner
+                or job.lease_expires_at is None
+                or job.lease_expires_at <= now
+            ):
+                return False
+            self._jobs[key] = self._updated_job(
+                job,
+                status=JobStatus.PENDING,
+                available_at=available_at,
+                lease_id=None,
+                lease_owner=None,
+                lease_expires_at=None,
+                last_error_code=error_code,
+                last_error_message=error_message,
+            )
+            return True
 
     async def save_meal(self, meal: MealEntry) -> MealEntry:
         async with self._lock:

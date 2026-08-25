@@ -19,6 +19,7 @@ from .errors import (
     DeviceCredentialCollision,
     IdempotencyConflict,
     InvalidDeviceCredential,
+    JobIdentityConflict,
     MealNotFound,
     QuestionAlreadyAnswered,
     QuestionNotFound,
@@ -37,7 +38,10 @@ from .models import (
     DeviceCameraStatus,
     DeviceCredentialRecord,
     DeviceCredentialStatus,
+    DurableJob,
     EntitlementMode,
+    JobKind,
+    JobStatus,
     LaunchMailConsent,
     MealEntry,
     MealFeedback,
@@ -52,9 +56,10 @@ from .models import (
     QuestionStatus,
     VerifiedDeviceIdentity,
     WaitlistEntry,
+    capture_grouping_job_id,
     utc_now,
 )
-from .repository import inference_from_meal, revised_inference
+from .repository import inference_from_meal, revised_inference, validate_enqueueable_job
 
 ENTITLEMENT_MODE_VALUES = frozenset(item.value for item in EntitlementMode)
 
@@ -905,6 +910,15 @@ class FirestoreRepository:
                 return
             key_hash = snapshot.get("idempotency_hash")
             now = utc_now()
+            job = DurableJob(
+                id=capture_grouping_job_id(capture_id),
+                account_id=account_id,
+                kind=JobKind.CAPTURE_GROUPING,
+                subject_id=capture_id,
+                subject_revision=1,
+                available_at=now,
+                created_at=now,
+            )
             transaction.update(
                 capture_ref,
                 {"status": CaptureStatus.STORED.value, "updated_at": now},
@@ -912,6 +926,10 @@ class FirestoreRepository:
             transaction.update(
                 self._collection(account_id, "capture_idempotency").document(key_hash),
                 {"state": "stored", "updated_at": now},
+            )
+            transaction.create(
+                self._collection(account_id, "jobs").document(job.id),
+                _document(job),
             )
 
         await store(transaction)
@@ -931,6 +949,177 @@ class FirestoreRepository:
             {"state": "processed"},
         )
         await batch.commit()
+
+    async def enqueue_job(self, job: DurableJob) -> DurableJob:
+        validate_enqueueable_job(job)
+        job_ref = self._collection(job.account_id, "jobs").document(job.id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def enqueue(transaction):
+            snapshot = await job_ref.get(transaction=transaction)
+            if not snapshot.exists:
+                transaction.create(job_ref, _document(job))
+                return job
+            existing = _model(snapshot, DurableJob)
+            if existing.kind != job.kind or existing.subject_id != job.subject_id:
+                raise JobIdentityConflict
+            if job.subject_revision <= existing.subject_revision:
+                return existing
+            replacement = job.model_copy(update={"created_at": existing.created_at}, deep=True)
+            transaction.set(job_ref, _document(replacement))
+            return replacement
+
+        return await enqueue(transaction)
+
+    async def job_for_account(self, account_id: str, job_id: str) -> DurableJob | None:
+        snapshot = await self._collection(account_id, "jobs").document(job_id).get()
+        return _model(snapshot, DurableJob) if snapshot.exists else None
+
+    async def claim_job(
+        self,
+        *,
+        account_id: str,
+        job_id: str,
+        expected_subject_revision: int,
+        lease_id: str,
+        lease_owner: str,
+        lease_expires_at: datetime,
+    ) -> DurableJob | None:
+        job_ref = self._collection(account_id, "jobs").document(job_id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def claim(transaction):
+            snapshot = await job_ref.get(transaction=transaction)
+            if not snapshot.exists:
+                return None
+            job = _model(snapshot, DurableJob)
+            now = utc_now()
+            if lease_expires_at <= now:
+                raise ValueError("Job leases must expire in the future")
+            if job.subject_revision != expected_subject_revision:
+                return None
+            if job.status == JobStatus.COMPLETED:
+                return None
+            if job.status == JobStatus.PENDING and job.available_at > now:
+                return None
+            if (
+                job.status == JobStatus.LEASED
+                and job.lease_expires_at is not None
+                and job.lease_expires_at > now
+            ):
+                return None
+            claimed = DurableJob.model_validate(
+                {
+                    **job.model_dump(mode="python"),
+                    "status": JobStatus.LEASED,
+                    "attempt_count": job.attempt_count + 1,
+                    "lease_id": lease_id,
+                    "lease_owner": lease_owner,
+                    "lease_expires_at": lease_expires_at,
+                    "last_error_code": None,
+                    "last_error_message": None,
+                }
+            )
+            transaction.set(job_ref, _document(claimed))
+            return claimed
+
+        return await claim(transaction)
+
+    async def _transition_job(
+        self,
+        *,
+        account_id: str,
+        job_id: str,
+        expected_subject_revision: int,
+        lease_id: str,
+        lease_owner: str,
+        updates: dict[str, Any],
+    ) -> bool:
+        job_ref = self._collection(account_id, "jobs").document(job_id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def transition(transaction):
+            snapshot = await job_ref.get(transaction=transaction)
+            if not snapshot.exists:
+                return False
+            job = _model(snapshot, DurableJob)
+            now = utc_now()
+            if (
+                job.status != JobStatus.LEASED
+                or job.subject_revision != expected_subject_revision
+                or job.lease_id != lease_id
+                or job.lease_owner != lease_owner
+                or job.lease_expires_at is None
+                or job.lease_expires_at <= now
+            ):
+                return False
+            transitioned = DurableJob.model_validate(
+                {
+                    **job.model_dump(mode="python"),
+                    "lease_id": None,
+                    "lease_owner": None,
+                    "lease_expires_at": None,
+                    **updates,
+                }
+            )
+            transaction.set(job_ref, _document(transitioned))
+            return True
+
+        return await transition(transaction)
+
+    async def complete_job(
+        self,
+        *,
+        account_id: str,
+        job_id: str,
+        expected_subject_revision: int,
+        lease_id: str,
+        lease_owner: str,
+    ) -> bool:
+        now = utc_now()
+        return await self._transition_job(
+            account_id=account_id,
+            job_id=job_id,
+            expected_subject_revision=expected_subject_revision,
+            lease_id=lease_id,
+            lease_owner=lease_owner,
+            updates={
+                "status": JobStatus.COMPLETED,
+                "last_error_code": None,
+                "last_error_message": None,
+                "completed_at": now,
+            },
+        )
+
+    async def release_job(
+        self,
+        *,
+        account_id: str,
+        job_id: str,
+        expected_subject_revision: int,
+        lease_id: str,
+        lease_owner: str,
+        available_at: datetime,
+        error_code: str,
+        error_message: str,
+    ) -> bool:
+        return await self._transition_job(
+            account_id=account_id,
+            job_id=job_id,
+            expected_subject_revision=expected_subject_revision,
+            lease_id=lease_id,
+            lease_owner=lease_owner,
+            updates={
+                "status": JobStatus.PENDING,
+                "available_at": available_at,
+                "last_error_code": error_code,
+                "last_error_message": error_message,
+                "completed_at": None,
+            },
+        )
 
     async def save_meal(self, meal: MealEntry) -> MealEntry:
         meal_ref = self._collection(meal.account_id, "meals").document(meal.id)
