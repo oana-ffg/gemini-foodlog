@@ -111,8 +111,10 @@ def test_production_cannot_select_partial_or_volatile_storage() -> None:
 
     settings = Settings(
         environment="production",
+        auth_backend="firebase",
         storage_backend="gcp",
         gcp_project_id="gemini-foodlog-2026",
+        firebase_project_id="gemini-foodlog-2026",
         media_bucket="gemini-foodlog-2026-media-163029863855",
     )
     assert settings.storage_backend == "gcp"
@@ -121,8 +123,10 @@ def test_production_cannot_select_partial_or_volatile_storage() -> None:
 def test_production_requires_explicit_non_fixture_inference() -> None:
     settings = Settings(
         environment="production",
+        auth_backend="firebase",
         storage_backend="gcp",
         gcp_project_id="gemini-foodlog-2026",
+        firebase_project_id="gemini-foodlog-2026",
         media_bucket="gemini-foodlog-2026-media-163029863855",
     )
     with pytest.raises(ValueError, match="Production requires"):

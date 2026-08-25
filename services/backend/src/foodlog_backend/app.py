@@ -5,6 +5,11 @@ from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
+from .auth import (
+    FirebaseIdentityTokenVerifier,
+    IdentityTokenVerifier,
+    InvalidAuthenticationToken,
+)
 from .errors import (
     AccountCapacityReached,
     AccountNotProvisioned,
@@ -61,6 +66,7 @@ def create_app(
     settings: Settings | None = None,
     *,
     inference_engine: InferenceEngine | None = None,
+    token_verifier: IdentityTokenVerifier | None = None,
 ) -> FastAPI:
     active_settings = settings or Settings()
     if active_settings.environment == "production" and (
@@ -69,6 +75,15 @@ def create_app(
         raise ValueError(
             "Production requires an explicitly configured non-fixture inference engine"
         )
+    if active_settings.auth_backend == "firebase":
+        assert active_settings.firebase_project_id is not None
+        active_token_verifier = token_verifier or FirebaseIdentityTokenVerifier(
+            active_settings.firebase_project_id
+        )
+    else:
+        if token_verifier is not None:
+            raise ValueError("A token verifier cannot be configured with local authentication")
+        active_token_verifier = None
     if active_settings.storage_backend == "gcp":
         assert active_settings.gcp_project_id is not None
         assert active_settings.media_bucket is not None
@@ -98,25 +113,44 @@ def create_app(
     )
     app = FastAPI(title="Gemini FoodLog API", version="0.1.0")
     app.state.container = container
+    allowed_headers = ["Content-Type", "Idempotency-Key"]
+    if active_settings.auth_backend == "firebase":
+        allowed_headers.append("Authorization")
+    else:
+        allowed_headers.extend(
+            ["X-FoodLog-Local-User", "X-FoodLog-Preview-Secret"]
+        )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=active_settings.allowed_origins,
         allow_credentials=False,
         allow_methods=["GET", "POST"],
-        allow_headers=[
-            "Content-Type",
-            "Idempotency-Key",
-            "X-FoodLog-Local-User",
-            "X-FoodLog-Preview-Secret",
-        ],
+        allow_headers=allowed_headers,
     )
 
-    async def local_user_id(
+    async def request_user_id(
+        authorization: str | None = Header(default=None),
         x_foodlog_local_user: str | None = Header(default=None),
         x_foodlog_preview_secret: str | None = Header(default=None),
     ) -> str:
-        if active_settings.environment not in {"local", "test", "preview"}:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+        if active_settings.auth_backend == "firebase":
+            parts = authorization.split() if authorization else []
+            if len(parts) != 2 or parts[0].lower() != "bearer" or len(parts[1]) > 8192:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="A valid bearer token is required",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            assert active_token_verifier is not None
+            try:
+                return await active_token_verifier.verify(parts[1])
+            except InvalidAuthenticationToken as error:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="A valid bearer token is required",
+                    headers={"WWW-Authenticate": "Bearer"},
+                ) from error
+
         if active_settings.environment == "preview" and (
             x_foodlog_preview_secret is None
             or active_settings.preview_shared_secret is None
@@ -186,13 +220,13 @@ def create_app(
         return {"status": "ok", "mode": active_settings.environment}
 
     @app.post("/v1/accounts", response_model=Account)
-    async def provision_account(user_id: str = Depends(local_user_id)) -> Account:
+    async def provision_account(user_id: str = Depends(request_user_id)) -> Account:
         return await container.repository.provision_account(user_id)
 
     @app.post("/v1/browser-cameras", response_model=BrowserCamera)
     async def create_browser_camera(
         request: BrowserCameraCreate,
-        user_id: str = Depends(local_user_id),
+        user_id: str = Depends(request_user_id),
     ) -> BrowserCamera:
         return await container.repository.create_browser_camera(user_id, request.name)
 
@@ -205,7 +239,7 @@ def create_app(
         camera_id: str,
         image: UploadFile,
         idempotency_key: str = Header(min_length=8, max_length=128),
-        user_id: str = Depends(local_user_id),
+        user_id: str = Depends(request_user_id),
     ) -> CaptureAccepted:
         if image.content_type not in SUPPORTED_IMAGE_TYPES:
             raise HTTPException(status_code=415, detail="Only JPEG and PNG images are accepted")
@@ -223,13 +257,13 @@ def create_app(
         )
 
     @app.get("/v1/journal", response_model=list[MealEntry])
-    async def list_journal(user_id: str = Depends(local_user_id)) -> list[MealEntry]:
+    async def list_journal(user_id: str = Depends(request_user_id)) -> list[MealEntry]:
         return await container.repository.list_meals(user_id)
 
     @app.get("/v1/meals/{meal_id}/revisions", response_model=list[MealRevision])
     async def list_meal_revisions(
         meal_id: str,
-        user_id: str = Depends(local_user_id),
+        user_id: str = Depends(request_user_id),
     ) -> list[MealRevision]:
         return await container.repository.list_meal_revisions(user_id, meal_id)
 
@@ -241,7 +275,7 @@ def create_app(
         meal_id: str,
         request: MealFeedbackRequest,
         idempotency_key: str = Header(min_length=8, max_length=128),
-        user_id: str = Depends(local_user_id),
+        user_id: str = Depends(request_user_id),
     ) -> MealFeedbackResult:
         return await container.repository.record_meal_feedback(
             owner_user_id=user_id,
@@ -253,7 +287,7 @@ def create_app(
     @app.get("/v1/questions", response_model=list[ClarificationQuestion])
     async def list_questions(
         question_status: QuestionStatus | None = QuestionStatus.OPEN,
-        user_id: str = Depends(local_user_id),
+        user_id: str = Depends(request_user_id),
     ) -> list[ClarificationQuestion]:
         return await container.repository.list_questions(
             user_id,
@@ -268,7 +302,7 @@ def create_app(
         question_id: str,
         request: QuestionAnswerRequest,
         idempotency_key: str = Header(min_length=8, max_length=128),
-        user_id: str = Depends(local_user_id),
+        user_id: str = Depends(request_user_id),
     ) -> QuestionAnswerResult:
         return await container.repository.answer_question(
             owner_user_id=user_id,
@@ -280,7 +314,7 @@ def create_app(
     @app.get("/v1/captures/{capture_id}/image")
     async def get_capture_image(
         capture_id: str,
-        user_id: str = Depends(local_user_id),
+        user_id: str = Depends(request_user_id),
     ) -> Response:
         capture = await container.repository.capture_for_owner(user_id, capture_id)
         content = await container.object_store.get(capture.object_key)

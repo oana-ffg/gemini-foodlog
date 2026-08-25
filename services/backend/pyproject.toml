@@ -5,6 +5,7 @@ description = "Gemini FoodLog ingestion API and agent worker"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.116,<1",
+  "firebase-admin>=7.5,<8",
   "google-adk[gcp]>=2,<3",
   # 2.35.0 percent-encodes Firestore's (default) database ID in gRPC resource names.
   "google-api-core[grpc]>=2.34,<2.35",
