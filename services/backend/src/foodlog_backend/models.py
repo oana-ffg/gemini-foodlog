@@ -1,8 +1,13 @@
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
+
+CameraName = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=80),
+]
 
 
 def utc_now() -> datetime:
@@ -45,6 +50,16 @@ class CaptureStatus(StrEnum):
 class EntitlementMode(StrEnum):
     TRIAL = "trial"
     UNLIMITED = "unlimited"
+
+
+class DeviceCameraStatus(StrEnum):
+    ACTIVE = "active"
+    REVOKED = "revoked"
+
+
+class DeviceCredentialStatus(StrEnum):
+    ACTIVE = "active"
+    REVOKED = "revoked"
 
 
 class Account(BaseModel):
@@ -98,7 +113,7 @@ class WaitlistEntry(BaseModel):
 
 
 class BrowserCameraCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=80)
+    name: CameraName
 
 
 class BrowserCamera(BaseModel):
@@ -107,6 +122,48 @@ class BrowserCamera(BaseModel):
     name: str
     kind: str = "browser"
     created_at: datetime = Field(default_factory=utc_now)
+
+
+class DeviceCameraCreate(BaseModel):
+    name: CameraName
+
+
+class DeviceCamera(BaseModel):
+    id: str
+    account_id: str
+    name: str
+    kind: Literal["device"] = "device"
+    status: DeviceCameraStatus = DeviceCameraStatus.ACTIVE
+    created_at: datetime = Field(default_factory=utc_now)
+    revoked_at: datetime | None = None
+
+
+class DeviceCredentialRecord(BaseModel):
+    credential_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    account_id: str
+    camera_id: str
+    token_version: int = Field(ge=1)
+    status: DeviceCredentialStatus = DeviceCredentialStatus.ACTIVE
+    issued_at: datetime = Field(default_factory=utc_now)
+    last_used_at: datetime | None = None
+    expires_at: datetime | None = None
+    revoked_at: datetime | None = None
+
+
+class DeviceCameraCredentialIssue(BaseModel):
+    camera: DeviceCamera
+    credential: str
+
+
+class VerifiedDeviceIdentity(BaseModel):
+    owner_user_id: str
+    account_id: str
+    camera_id: str
+
+
+class DeviceSession(BaseModel):
+    camera_id: str
+    status: Literal["active"] = "active"
 
 
 class CaptureRecord(BaseModel):

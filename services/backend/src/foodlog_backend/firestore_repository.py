@@ -15,7 +15,9 @@ from .errors import (
     CameraNotFound,
     CaptureNotFound,
     CrossAccountAccess,
+    DeviceCredentialCollision,
     IdempotencyConflict,
+    InvalidDeviceCredential,
     MealNotFound,
     QuestionAlreadyAnswered,
     QuestionNotFound,
@@ -28,6 +30,10 @@ from .models import (
     CaptureRecord,
     CaptureStatus,
     ClarificationQuestion,
+    DeviceCamera,
+    DeviceCameraStatus,
+    DeviceCredentialRecord,
+    DeviceCredentialStatus,
     EntitlementMode,
     LaunchMailConsent,
     MealEntry,
@@ -40,6 +46,7 @@ from .models import (
     QuestionAnswerRequest,
     QuestionAnswerResult,
     QuestionStatus,
+    VerifiedDeviceIdentity,
     WaitlistEntry,
     utc_now,
 )
@@ -314,6 +321,164 @@ class FirestoreRepository:
 
         return await join(transaction)
 
+    async def issue_device_camera(
+        self,
+        *,
+        owner_user_id: str,
+        name: str,
+        credential_hash: str,
+        token_version: int,
+    ) -> DeviceCamera:
+        account = await self.account_for_owner(owner_user_id)
+        camera = DeviceCamera(
+            id=str(uuid4()),
+            account_id=account.id,
+            name=name,
+        )
+        account_ref = self._account(account.id)
+        camera_ref = self._collection(account.id, "cameras").document(camera.id)
+        credential_ref = self._client.collection("device_credentials").document(
+            credential_hash
+        )
+        credential = DeviceCredentialRecord(
+            credential_hash=credential_hash,
+            account_id=account.id,
+            camera_id=camera.id,
+            token_version=token_version,
+        )
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def issue(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
+            existing_credential = await credential_ref.get(transaction=transaction)
+            if (
+                not account_snapshot.exists
+                or account_snapshot.get("status") != "active"
+                or account_snapshot.get("owner_user_id") != owner_user_id
+            ):
+                raise AccountNotProvisioned
+            if existing_credential.exists:
+                raise DeviceCredentialCollision
+            transaction.create(camera_ref, _document(camera))
+            transaction.create(credential_ref, _document(credential))
+            return camera
+
+        return await issue(transaction)
+
+    async def authenticate_device(
+        self,
+        credential_hash: str,
+    ) -> VerifiedDeviceIdentity:
+        credential_ref = self._client.collection("device_credentials").document(
+            credential_hash
+        )
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def authenticate(transaction):
+            credential_snapshot = await credential_ref.get(transaction=transaction)
+            if not credential_snapshot.exists:
+                raise InvalidDeviceCredential
+            credential = _model(credential_snapshot, DeviceCredentialRecord)
+            now = utc_now()
+            if credential.status != DeviceCredentialStatus.ACTIVE or (
+                credential.expires_at is not None and credential.expires_at <= now
+            ):
+                raise InvalidDeviceCredential
+            account_ref = self._account(credential.account_id)
+            camera_ref = self._collection(
+                credential.account_id,
+                "cameras",
+            ).document(credential.camera_id)
+            account_snapshot = await account_ref.get(transaction=transaction)
+            camera_snapshot = await camera_ref.get(transaction=transaction)
+            if (
+                not account_snapshot.exists
+                or account_snapshot.get("status") != "active"
+                or not camera_snapshot.exists
+                or camera_snapshot.get("kind") != "device"
+                or camera_snapshot.get("status") != DeviceCameraStatus.ACTIVE.value
+            ):
+                raise InvalidDeviceCredential
+            owner_user_id = account_snapshot.get("owner_user_id")
+            if not isinstance(owner_user_id, str) or not owner_user_id:
+                raise InvalidDeviceCredential
+            transaction.update(
+                credential_ref,
+                {"last_used_at": now, "updated_at": now},
+            )
+            return VerifiedDeviceIdentity(
+                owner_user_id=owner_user_id,
+                account_id=credential.account_id,
+                camera_id=credential.camera_id,
+            )
+
+        return await authenticate(transaction)
+
+    async def revoke_device_camera(
+        self,
+        *,
+        owner_user_id: str,
+        camera_id: str,
+    ) -> DeviceCamera:
+        account = await self.account_for_owner(owner_user_id)
+        camera_ref = self._collection(account.id, "cameras").document(camera_id)
+        credential_query = self._client.collection("device_credentials").where(
+            filter=FieldFilter("camera_id", "==", camera_id)
+        )
+        credential_refs = [snapshot.reference async for snapshot in credential_query.stream()]
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def revoke(transaction):
+            camera_snapshot = await camera_ref.get(transaction=transaction)
+            credential_snapshots = [
+                await credential_ref.get(transaction=transaction)
+                for credential_ref in credential_refs
+            ]
+            if (
+                not camera_snapshot.exists
+                or camera_snapshot.get("account_id") != account.id
+                or camera_snapshot.get("kind") != "device"
+            ):
+                raise CameraNotFound
+            camera = _model(camera_snapshot, DeviceCamera)
+            if camera.status == DeviceCameraStatus.REVOKED:
+                return camera
+            now = utc_now()
+            revoked = camera.model_copy(
+                update={
+                    "status": DeviceCameraStatus.REVOKED,
+                    "revoked_at": now,
+                }
+            )
+            transaction.update(
+                camera_ref,
+                {
+                    "status": DeviceCameraStatus.REVOKED.value,
+                    "revoked_at": now,
+                    "updated_at": now,
+                },
+            )
+            for snapshot in credential_snapshots:
+                if (
+                    snapshot.exists
+                    and snapshot.get("account_id") == account.id
+                    and snapshot.get("camera_id") == camera_id
+                ):
+                    transaction.update(
+                        snapshot.reference,
+                        {
+                            "status": DeviceCredentialStatus.REVOKED.value,
+                            "revoked_at": now,
+                            "updated_at": now,
+                        },
+                    )
+            return revoked
+
+        return await revoke(transaction)
+
     async def _account_in_transaction(
         self,
         transaction,
@@ -383,7 +548,7 @@ class FirestoreRepository:
     async def camera_for_owner(self, owner_user_id: str, camera_id: str) -> BrowserCamera:
         account = await self.account_for_owner(owner_user_id)
         snapshot = await self._collection(account.id, "cameras").document(camera_id).get()
-        if not snapshot.exists:
+        if not snapshot.exists or snapshot.get("kind") != "browser":
             raise CameraNotFound
         camera = _model(snapshot, BrowserCamera)
         if camera.account_id != account.id:

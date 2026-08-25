@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Callable
+from hashlib import sha256
 from typing import Any, cast
 
 import pytest
@@ -8,6 +9,7 @@ from firebase_admin import App
 from firebase_admin import auth as firebase_auth
 from pydantic import ValidationError
 
+import foodlog_backend.app as app_module
 from foodlog_backend.app import create_app
 from foodlog_backend.auth import (
     FirebaseIdentityTokenVerifier,
@@ -365,3 +367,142 @@ def test_waitlist_requires_full_capacity_and_explicit_affirmative_join() -> None
     assert joined.json()["policy_version"] == "capacity-waitlist-v1"
     assert admitted_cannot_join.status_code == 409
     assert admitted_cannot_join.json() == {"detail": "account_already_provisioned"}
+
+
+def test_camera_credentials_are_one_time_hashed_scoped_and_independently_revocable() -> None:
+    verifier = MappingTokenVerifier(
+        {
+            "owner-token": VerifiedIdentity(
+                uid="camera-owner",
+                email_verified=True,
+                email="camera-owner@example.test",
+            ),
+            "other-token": VerifiedIdentity(
+                uid="other-owner",
+                email_verified=True,
+                email="other-owner@example.test",
+            ),
+        }
+    )
+    owner_headers = {"Authorization": "Bearer owner-token"}
+    other_headers = {"Authorization": "Bearer other-token"}
+    with firebase_test_client(verifier) as client:
+        assert client.post("/v1/accounts", headers=owner_headers).status_code == 200
+        assert client.post("/v1/accounts", headers=other_headers).status_code == 200
+        first_issue = client.post(
+            "/v1/device-cameras",
+            headers=owner_headers,
+            json={"name": "Kitchen ESP32"},
+        )
+        second_issue = client.post(
+            "/v1/device-cameras",
+            headers=owner_headers,
+            json={"name": "Kitchen simulator"},
+        )
+
+        assert first_issue.status_code == second_issue.status_code == 200
+        assert first_issue.headers["cache-control"] == "no-store"
+        first = first_issue.json()
+        second = second_issue.json()
+        first_credential = first["credential"]
+        second_credential = second["credential"]
+        assert first_credential.startswith("flc_v1_")
+        assert len(first_credential) >= 50
+        assert first_credential != second_credential
+        assert "credential" not in first["camera"]
+
+        repository = client.app.state.container.repository
+        verifier_hash = sha256(first_credential.encode()).hexdigest()
+        assert verifier_hash in repository._device_credentials
+        assert first_credential not in repr(repository._device_credentials)
+
+        active = client.get(
+            "/v1/device/status",
+            headers={"Authorization": f"FoodLogCamera {first_credential}"},
+        )
+        camera_token_is_not_a_user_token = client.get(
+            "/v1/journal",
+            headers={"Authorization": f"Bearer {first_credential}"},
+        )
+        cross_account_revoke = client.post(
+            f"/v1/device-cameras/{first['camera']['id']}/revoke",
+            headers=other_headers,
+        )
+        revoked = client.post(
+            f"/v1/device-cameras/{first['camera']['id']}/revoke",
+            headers=owner_headers,
+        )
+        revoked_retry = client.post(
+            f"/v1/device-cameras/{first['camera']['id']}/revoke",
+            headers=owner_headers,
+        )
+        rejected_after_revoke = client.get(
+            "/v1/device/status",
+            headers={"Authorization": f"FoodLogCamera {first_credential}"},
+        )
+        second_remains_active = client.get(
+            "/v1/device/status",
+            headers={"Authorization": f"FoodLogCamera {second_credential}"},
+        )
+
+    assert active.status_code == 200
+    assert active.json() == {"camera_id": first["camera"]["id"], "status": "active"}
+    assert camera_token_is_not_a_user_token.status_code == 401
+    assert cross_account_revoke.status_code == 404
+    assert revoked.status_code == revoked_retry.status_code == 200
+    assert revoked.json()["status"] == "revoked"
+    assert revoked.json()["revoked_at"] is not None
+    assert revoked_retry.json() == revoked.json()
+    assert rejected_after_revoke.status_code == 401
+    assert rejected_after_revoke.headers["www-authenticate"] == "FoodLogCamera"
+    assert second_remains_active.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "authorization",
+    [
+        None,
+        "",
+        "Bearer flc_v1_not-a-camera-scheme",
+        "FoodLogCamera",
+        "FoodLogCamera token with spaces",
+        f"FoodLogCamera flc_v1_{'x' * 257}",
+    ],
+)
+def test_camera_authentication_rejects_missing_or_malformed_credentials(
+    authorization: str | None,
+) -> None:
+    headers = {"Authorization": authorization} if authorization is not None else {}
+    with firebase_test_client(AcceptingTokenVerifier()) as client:
+        response = client.get("/v1/device/status", headers=headers)
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "A valid camera credential is required"}
+    assert response.headers["www-authenticate"] == "FoodLogCamera"
+
+
+def test_camera_credential_collision_never_overwrites_an_existing_verifier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app_module, "token_urlsafe", lambda _bytes: "fixed-camera-token")
+    headers = {"Authorization": "Bearer valid-id-token"}
+    with firebase_test_client(AcceptingTokenVerifier()) as client:
+        assert client.post("/v1/accounts", headers=headers).status_code == 200
+        first = client.post(
+            "/v1/device-cameras",
+            headers=headers,
+            json={"name": "First camera"},
+        )
+        collision = client.post(
+            "/v1/device-cameras",
+            headers=headers,
+            json={"name": "Must not be created"},
+        )
+
+        repository = client.app.state.container.repository
+        assert len(repository._device_cameras) == 1
+        assert len(repository._device_credentials) == 1
+
+    assert first.status_code == 200
+    assert collision.status_code == 503
+    assert collision.json() == {"detail": "credential_generation_failed"}

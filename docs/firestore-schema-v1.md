@@ -29,7 +29,7 @@ cameras.
 | --- | --- | --- |
 | `system/public_capacity` | Atomic 25-public-account admission counter | `active_account_count`, `account_limit`, `waitlist_open`; explicit internal/judge unlimited accounts never consume public slots; one low-write transaction document is acceptable at MVP scale. |
 | `identities/{firebase_uid}` | Login-to-account lookup | `account_id`, `account_class` (`public` or explicitly configured `internal`), `email_normalized`, `email_verified`, `mailing_list_opt_in`, `status`; one document per Firebase UID. |
-| `device_credentials/{sha256_token}` | Camera-token lookup | `account_id`, `camera_id`, `token_version`, `status`, `last_used_at`, `expires_at`; never stores the token. |
+| `device_credentials/{sha256_token}` | Camera-token lookup | `account_id`, `camera_id`, `token_version`, `status` (`active` or `revoked`), `issued_at`, nullable `last_used_at`, nullable `expires_at`, nullable `revoked_at`; the raw token is returned only by the issuance response and is never stored. |
 | `waitlist/{sha256_email}` | Capacity overflow and product-interest list | `email_normalized`, `firebase_uid`, `reason` (`capacity`), `mailing_list_opt_in` (`true`), `policy_version`, `status` (`active`); one document per normalized verified email and accepted only while public capacity is full. |
 
 ## Account root and bounded counters

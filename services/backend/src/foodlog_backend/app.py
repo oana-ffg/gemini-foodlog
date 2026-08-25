@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from secrets import compare_digest
+from hashlib import sha256
+from secrets import compare_digest, token_urlsafe
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, status
@@ -19,7 +20,9 @@ from .errors import (
     CameraNotFound,
     CaptureNotFound,
     CrossAccountAccess,
+    DeviceCredentialCollision,
     IdempotencyConflict,
+    InvalidDeviceCredential,
     MealNotFound,
     QuestionAlreadyAnswered,
     QuestionNotFound,
@@ -34,6 +37,10 @@ from .models import (
     BrowserCameraCreate,
     CaptureAccepted,
     ClarificationQuestion,
+    DeviceCamera,
+    DeviceCameraCreate,
+    DeviceCameraCredentialIssue,
+    DeviceSession,
     LaunchMailConsent,
     LaunchMailConsentRequest,
     MealEntry,
@@ -43,6 +50,7 @@ from .models import (
     QuestionAnswerRequest,
     QuestionAnswerResult,
     QuestionStatus,
+    VerifiedDeviceIdentity,
     WaitlistEntry,
     WaitlistJoinRequest,
 )
@@ -53,6 +61,8 @@ from .storage import GCSObjectStore, InMemoryObjectStore, ObjectStore
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png"}
+DEVICE_TOKEN_PREFIX = "flc_v1_"
+DEVICE_TOKEN_VERSION = 1
 
 
 def detected_image_type(content: bytes) -> str | None:
@@ -196,6 +206,33 @@ def create_app(
             )
         return identity.email
 
+    async def request_device_identity(
+        authorization: str | None = Header(default=None),
+    ) -> VerifiedDeviceIdentity:
+        parts = authorization.split() if authorization else []
+        token = parts[1] if len(parts) == 2 else ""
+        if (
+            len(parts) != 2
+            or parts[0].casefold() != "foodlogcamera"
+            or not token.startswith(DEVICE_TOKEN_PREFIX)
+            or len(token) > 256
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="A valid camera credential is required",
+                headers={"WWW-Authenticate": "FoodLogCamera"},
+            )
+        try:
+            return await container.repository.authenticate_device(
+                sha256(token.encode()).hexdigest()
+            )
+        except InvalidDeviceCredential as error:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="A valid camera credential is required",
+                headers={"WWW-Authenticate": "FoodLogCamera"},
+            ) from error
+
     @app.exception_handler(AccountCapacityReached)
     async def account_capacity_handler(*_: object) -> Response:
         return Response(
@@ -297,6 +334,52 @@ def create_app(
         user_id: str = Depends(request_user_id),
     ) -> BrowserCamera:
         return await container.repository.create_browser_camera(user_id, request.name)
+
+    @app.post("/v1/device-cameras", response_model=DeviceCameraCredentialIssue)
+    async def issue_device_camera(
+        request: DeviceCameraCreate,
+        response: Response,
+        user_id: str = Depends(request_user_id),
+    ) -> DeviceCameraCredentialIssue:
+        for _ in range(3):
+            credential = f"{DEVICE_TOKEN_PREFIX}{token_urlsafe(32)}"
+            try:
+                camera = await container.repository.issue_device_camera(
+                    owner_user_id=user_id,
+                    name=request.name,
+                    credential_hash=sha256(credential.encode()).hexdigest(),
+                    token_version=DEVICE_TOKEN_VERSION,
+                )
+                response.headers["Cache-Control"] = "no-store"
+                return DeviceCameraCredentialIssue(
+                    camera=camera,
+                    credential=credential,
+                )
+            except DeviceCredentialCollision:
+                continue
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="credential_generation_failed",
+        )
+
+    @app.post("/v1/device-cameras/{camera_id}/revoke", response_model=DeviceCamera)
+    async def revoke_device_camera(
+        camera_id: str,
+        user_id: str = Depends(request_user_id),
+    ) -> DeviceCamera:
+        return await container.repository.revoke_device_camera(
+            owner_user_id=user_id,
+            camera_id=camera_id,
+        )
+
+    @app.get("/v1/device/status", response_model=DeviceSession)
+    async def device_status(
+        identity: Annotated[
+            VerifiedDeviceIdentity,
+            Depends(request_device_identity),
+        ],
+    ) -> DeviceSession:
+        return DeviceSession(camera_id=identity.camera_id)
 
     @app.post(
         "/v1/browser-cameras/{camera_id}/captures",

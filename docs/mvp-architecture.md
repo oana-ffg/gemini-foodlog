@@ -198,6 +198,11 @@ Each upload includes server-verifiable device identity plus capture metadata suc
 
 The client does not submit a trusted account or user identifier. The backend derives the account from the authenticated camera credential or verified browser user.
 
+Device provisioning returns one high-entropy `flc_v1_` credential exactly once. The
+client sends it with the distinct `Authorization: FoodLogCamera <credential>` scheme;
+the backend stores only the SHA-256 verifier and can revoke each device camera without
+affecting other cameras or the owner's Firebase session.
+
 ### 4.2 Offline delivery
 
 Clients keep a bounded persistent queue of captures that have not received a backend acknowledgment. They retry oldest-first with exponential backoff and remove an item only after acknowledgment. Permanent responses such as exhausted trial quota or a revoked credential are not retried indefinitely. If the queue fills, the client records and reports dropped-frame counts rather than hiding data loss.

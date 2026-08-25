@@ -11,7 +11,9 @@ from .errors import (
     CameraNotFound,
     CaptureNotFound,
     CrossAccountAccess,
+    DeviceCredentialCollision,
     IdempotencyConflict,
+    InvalidDeviceCredential,
     MealNotFound,
     QuestionAlreadyAnswered,
     QuestionNotFound,
@@ -25,6 +27,10 @@ from .models import (
     CaptureStatus,
     ClarificationQuestion,
     Confidence,
+    DeviceCamera,
+    DeviceCameraStatus,
+    DeviceCredentialRecord,
+    DeviceCredentialStatus,
     EntitlementMode,
     LaunchMailConsent,
     MealComponent,
@@ -40,6 +46,7 @@ from .models import (
     QuestionAnswerRequest,
     QuestionAnswerResult,
     QuestionStatus,
+    VerifiedDeviceIdentity,
     WaitlistEntry,
     utc_now,
 )
@@ -66,6 +73,27 @@ class Repository(Protocol):
         email_normalized: str,
         policy_version: str,
     ) -> WaitlistEntry: ...
+
+    async def issue_device_camera(
+        self,
+        *,
+        owner_user_id: str,
+        name: str,
+        credential_hash: str,
+        token_version: int,
+    ) -> DeviceCamera: ...
+
+    async def authenticate_device(
+        self,
+        credential_hash: str,
+    ) -> VerifiedDeviceIdentity: ...
+
+    async def revoke_device_camera(
+        self,
+        *,
+        owner_user_id: str,
+        camera_id: str,
+    ) -> DeviceCamera: ...
 
     async def create_browser_camera(self, owner_user_id: str, name: str) -> BrowserCamera: ...
 
@@ -144,6 +172,8 @@ class InMemoryRepository:
         self._account_by_owner: dict[str, str] = {}
         self._launch_consents: dict[str, LaunchMailConsent] = {}
         self._waitlist_by_email_hash: dict[str, WaitlistEntry] = {}
+        self._device_cameras: dict[str, DeviceCamera] = {}
+        self._device_credentials: dict[str, DeviceCredentialRecord] = {}
         self._cameras: dict[str, BrowserCamera] = {}
         self._browser_camera_by_account: dict[str, str] = {}
         self._captures: dict[str, CaptureRecord] = {}
@@ -255,6 +285,98 @@ class InMemoryRepository:
             )
             self._waitlist_by_email_hash[email_hash] = entry
             return entry.model_copy(deep=True)
+
+    async def issue_device_camera(
+        self,
+        *,
+        owner_user_id: str,
+        name: str,
+        credential_hash: str,
+        token_version: int,
+    ) -> DeviceCamera:
+        account = await self.account_for_owner(owner_user_id)
+        async with self._lock:
+            if credential_hash in self._device_credentials:
+                raise DeviceCredentialCollision
+            camera = DeviceCamera(
+                id=str(uuid4()),
+                account_id=account.id,
+                name=name,
+            )
+            credential = DeviceCredentialRecord(
+                credential_hash=credential_hash,
+                account_id=account.id,
+                camera_id=camera.id,
+                token_version=token_version,
+            )
+            self._device_cameras[camera.id] = camera
+            self._device_credentials[credential_hash] = credential
+            return camera.model_copy(deep=True)
+
+    async def authenticate_device(
+        self,
+        credential_hash: str,
+    ) -> VerifiedDeviceIdentity:
+        now = utc_now()
+        async with self._lock:
+            credential = self._device_credentials.get(credential_hash)
+            if (
+                credential is None
+                or credential.status != DeviceCredentialStatus.ACTIVE
+                or (
+                    credential.expires_at is not None
+                    and credential.expires_at <= now
+                )
+            ):
+                raise InvalidDeviceCredential
+            camera = self._device_cameras.get(credential.camera_id)
+            account = self._accounts.get(credential.account_id)
+            if (
+                camera is None
+                or camera.account_id != credential.account_id
+                or camera.status != DeviceCameraStatus.ACTIVE
+                or account is None
+            ):
+                raise InvalidDeviceCredential
+            self._device_credentials[credential_hash] = credential.model_copy(
+                update={"last_used_at": now}
+            )
+            return VerifiedDeviceIdentity(
+                owner_user_id=account.owner_user_id,
+                account_id=account.id,
+                camera_id=camera.id,
+            )
+
+    async def revoke_device_camera(
+        self,
+        *,
+        owner_user_id: str,
+        camera_id: str,
+    ) -> DeviceCamera:
+        account = await self.account_for_owner(owner_user_id)
+        now = utc_now()
+        async with self._lock:
+            camera = self._device_cameras.get(camera_id)
+            if camera is None or camera.account_id != account.id:
+                raise CameraNotFound
+            if camera.status == DeviceCameraStatus.REVOKED:
+                return camera.model_copy(deep=True)
+            revoked_camera = camera.model_copy(
+                update={
+                    "status": DeviceCameraStatus.REVOKED,
+                    "revoked_at": now,
+                }
+            )
+            self._device_cameras[camera_id] = revoked_camera
+            for credential_hash, credential in self._device_credentials.items():
+                if credential.camera_id == camera_id:
+                    self._device_credentials[credential_hash] = credential.model_copy(
+                        update={
+                            "status": DeviceCredentialStatus.REVOKED,
+                            "revoked_at": now,
+                        }
+                    )
+            return revoked_camera.model_copy(deep=True)
 
     async def create_browser_camera(self, owner_user_id: str, name: str) -> BrowserCamera:
         account = await self.account_for_owner(owner_user_id)

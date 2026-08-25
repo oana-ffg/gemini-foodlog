@@ -18,6 +18,14 @@ class WaitlistUnavailable(FoodLogError):
     pass
 
 
+class DeviceCredentialCollision(FoodLogError):
+    pass
+
+
+class InvalidDeviceCredential(FoodLogError):
+    pass
+
+
 class CameraNotFound(FoodLogError):
     pass
 
