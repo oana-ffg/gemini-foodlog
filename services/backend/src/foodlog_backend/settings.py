@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     unlimited_owner_user_ids: set[str] = Field(default_factory=set)
     launch_consent_policy_version: str = Field(default="launch-interest-v1", min_length=1)
     waitlist_policy_version: str = Field(default="capacity-waitlist-v1", min_length=1)
+    grouping_policy_version: str = Field(default="temporal-v1", min_length=1, max_length=80)
+    grouping_quiet_seconds: int = Field(default=30, ge=1, le=3_600)
+    grouping_reopen_seconds: int = Field(default=7_200, ge=1, le=86_400)
     preview_shared_secret: str | None = Field(default=None, min_length=32)
     gcp_project_id: str | None = None
     firebase_project_id: str | None = None
@@ -24,6 +27,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def reject_memory_in_production(self) -> "Settings":
+        if self.grouping_reopen_seconds < self.grouping_quiet_seconds:
+            raise ValueError(
+                "grouping_reopen_seconds must not be shorter than grouping_quiet_seconds"
+            )
         if self.environment == "preview" and self.preview_shared_secret is None:
             raise ValueError("Preview requires a shared secret in addition to Cloud Run IAM")
         if self.environment == "preview" and self.auth_backend != "local":

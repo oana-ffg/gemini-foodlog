@@ -217,3 +217,23 @@ def test_production_cannot_select_partial_or_volatile_storage() -> None:
         notification_topic=("projects/gemini-foodlog-2026/topics/foodlog-notification-events"),
     )
     assert settings.storage_backend == "gcp"
+
+
+def test_grouping_policy_settings_are_typed_and_deployment_configurable() -> None:
+    settings = Settings(
+        environment="test",
+        grouping_policy_version="temporal-v2",
+        grouping_quiet_seconds=45,
+        grouping_reopen_seconds=5_400,
+    )
+
+    assert settings.grouping_policy_version == "temporal-v2"
+    assert settings.grouping_quiet_seconds == 45
+    assert settings.grouping_reopen_seconds == 5_400
+
+    with pytest.raises(ValidationError, match="must not be shorter"):
+        Settings(
+            environment="test",
+            grouping_quiet_seconds=60,
+            grouping_reopen_seconds=30,
+        )

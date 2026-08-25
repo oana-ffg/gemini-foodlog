@@ -21,6 +21,9 @@ locals {
     FOODLOG_ENVIRONMENT                   = var.environment
     FOODLOG_FIREBASE_PROJECT_ID           = var.project_id
     FOODLOG_GCP_PROJECT_ID                = var.project_id
+    FOODLOG_GROUPING_POLICY_VERSION       = "temporal-v1"
+    FOODLOG_GROUPING_QUIET_SECONDS        = "30"
+    FOODLOG_GROUPING_REOPEN_SECONDS       = "7200"
     FOODLOG_LAUNCH_CONSENT_POLICY_VERSION = "launch-interest-v1"
     FOODLOG_MEDIA_BUCKET                  = google_storage_bucket.retained["media"].name
     FOODLOG_NOTIFICATION_TOPIC            = google_pubsub_topic.events["notification"].id
