@@ -103,3 +103,12 @@ a 60-second timeout, and no model configuration.
 The deploy input in `production.auto.tfvars` must be an Artifact Registry image pinned
 by sha256 digest. Release work updates that one reviewed value after tests and the
 remote image build succeed; mutable tags are never deployed.
+
+## Runtime secrets
+
+`secrets.tf` owns protected, regional Secret Manager metadata and narrow accessor IAM;
+it never owns secret payloads. Pushover values are streamed from gopass directly to
+`gcloud secrets versions add --data-file=-`, so they never appear in source, process
+arguments, environment files, Terraform plans, or Terraform state. Only the dedicated
+notification service account can read these two secrets. A deployed worker must pin
+an explicit enabled version rather than resolving `latest` at runtime.
