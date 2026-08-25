@@ -1,11 +1,12 @@
 import asyncio
+from datetime import timedelta
 
 import pytest
 from google.api_core.exceptions import PreconditionFailed
 from pydantic import ValidationError
 
-from foodlog_backend.firestore_repository import FirestoreRepository
-from foodlog_backend.models import EntitlementMode, utc_now
+from foodlog_backend.firestore_repository import FirestoreRepository, _model
+from foodlog_backend.models import ActivityEvent, EntitlementMode, utc_now
 from foodlog_backend.settings import Settings
 from foodlog_backend.storage import GCSObjectStore
 
@@ -101,6 +102,34 @@ def test_firestore_paths_are_account_scoped() -> None:
 
     assert repository._collection("account-a", "captures").path == ("accounts/account-a/captures")
     assert repository._entitlement("account-a").path == ("accounts/account-a/entitlements/current")
+
+
+def test_firestore_activity_event_preserves_its_materialized_update_time() -> None:
+    created_at = utc_now()
+    updated_at = created_at + timedelta(minutes=1)
+    event = _model(
+        FakeSnapshot(
+            "event-a",
+            {
+                "schema_version": 1,
+                "id": "event-a",
+                "account_id": "account-a",
+                "status": "open",
+                "current_revision": 1,
+                "camera_ids": ["camera-a"],
+                "first_capture_at": created_at,
+                "last_capture_at": updated_at,
+                "capture_count": 2,
+                "grouping_policy_version": "temporal-v1",
+                "meal_id": None,
+                "created_at": created_at,
+                "updated_at": updated_at,
+            },
+        ),
+        ActivityEvent,
+    )
+
+    assert event.updated_at == updated_at
 
 
 def test_legacy_trial_entitlement_without_mode_remains_readable() -> None:

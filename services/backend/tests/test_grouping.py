@@ -5,7 +5,7 @@ from hashlib import sha256
 import pytest
 
 import foodlog_backend.repository as repository_module
-from foodlog_backend.grouping import GroupingPolicy
+from foodlog_backend.grouping import CaptureGroupingService, GroupingPolicy
 from foodlog_backend.models import (
     ActivityEventStatus,
     CaptureEnvelopeV1,
@@ -399,3 +399,83 @@ def test_grouping_rejects_wrong_or_expired_lease(
     wrong, expired = asyncio.run(scenario())
     assert wrong is None
     assert expired is None
+
+
+def test_grouping_service_claims_once_and_duplicate_delivery_is_a_noop() -> None:
+    repository = build_repository()
+
+    async def scenario():
+        account = await repository.provision_account("service-owner")
+        camera = await repository.create_browser_camera("service-owner", "Service camera")
+        await add_capture(
+            repository,
+            account=account,
+            camera=camera,
+            capture_id="service-capture-1",
+            captured_at=utc_now(),
+            burst_id="service-burst-0001",
+            burst_index=0,
+        )
+        service = CaptureGroupingService(
+            repository=repository,
+            policy=GroupingPolicy(),
+        )
+        first = await service.process(
+            account_id=account.id,
+            capture_id="service-capture-1",
+            worker_id="service-worker",
+        )
+        duplicate = await service.process(
+            account_id=account.id,
+            capture_id="service-capture-1",
+            worker_id="service-worker",
+        )
+        return first, duplicate
+
+    first, duplicate = asyncio.run(scenario())
+    assert first is not None
+    assert duplicate is None
+
+
+def test_grouping_service_releases_failures_for_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = build_repository()
+
+    async def scenario():
+        account = await repository.provision_account("failure-owner")
+        camera = await repository.create_browser_camera("failure-owner", "Failure camera")
+        await add_capture(
+            repository,
+            account=account,
+            camera=camera,
+            capture_id="failure-capture-1",
+            captured_at=utc_now(),
+            burst_id=None,
+            burst_index=None,
+        )
+
+        async def fail_grouping(**_):
+            raise RuntimeError("simulated grouping failure")
+
+        monkeypatch.setattr(repository, "group_capture", fail_grouping)
+        service = CaptureGroupingService(
+            repository=repository,
+            policy=GroupingPolicy(),
+        )
+        with pytest.raises(RuntimeError, match="simulated grouping failure"):
+            await service.process(
+                account_id=account.id,
+                capture_id="failure-capture-1",
+                worker_id="service-worker",
+            )
+        return account
+
+    account = asyncio.run(scenario())
+    job = repository._jobs[
+        (account.id, capture_grouping_job_id("failure-capture-1"))
+    ]
+    assert job.status == JobStatus.PENDING
+    assert job.attempt_count == 1
+    assert job.last_error_code == "RuntimeError"
+    assert job.last_error_message == "simulated grouping failure"

@@ -26,9 +26,18 @@ from .errors import (
     TrialQuotaExhausted,
     WaitlistUnavailable,
 )
+from .grouping import (
+    CaptureGroupingResult,
+    GroupingPolicy,
+    capture_activity_time,
+    segment_identity,
+)
 from .models import (
     Account,
     AccountCreatedOutbox,
+    ActivityEvent,
+    ActivityEventStatus,
+    ActivitySegment,
     BrowserCamera,
     CaptureEnvelopeV1,
     CaptureRecord,
@@ -57,6 +66,7 @@ from .models import (
     VerifiedDeviceIdentity,
     WaitlistEntry,
     capture_grouping_job_id,
+    event_inference_job_id,
     utc_now,
 )
 from .repository import inference_from_meal, revised_inference, validate_enqueueable_job
@@ -75,7 +85,8 @@ def _model[ModelT: BaseModel](snapshot: DocumentSnapshot, model_type: type[Model
     if data is None:
         raise ValueError(f"Document {snapshot.reference.path} has no data")
     data.pop("schema_version", None)
-    data.pop("updated_at", None)
+    if "updated_at" not in model_type.model_fields:
+        data.pop("updated_at", None)
     return model_type.model_validate(data)
 
 
@@ -1120,6 +1131,208 @@ class FirestoreRepository:
                 "completed_at": None,
             },
         )
+
+    async def group_capture(
+        self,
+        *,
+        account_id: str,
+        capture_id: str,
+        lease_id: str,
+        lease_owner: str,
+        policy: GroupingPolicy,
+    ) -> CaptureGroupingResult | None:
+        candidate_event_id = str(uuid4())
+        capture_ref = self._collection(account_id, "captures").document(capture_id)
+        grouping_job_ref = self._collection(account_id, "jobs").document(
+            capture_grouping_job_id(capture_id)
+        )
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def group(transaction):
+            capture_snapshot = await capture_ref.get(transaction=transaction)
+            grouping_job_snapshot = await grouping_job_ref.get(transaction=transaction)
+            if not capture_snapshot.exists or not grouping_job_snapshot.exists:
+                return None
+            capture = self._capture_from_snapshot(capture_snapshot, "internal-grouping")
+            grouping_job = _model(grouping_job_snapshot, DurableJob)
+            now = utc_now()
+            if (
+                capture.account_id != account_id
+                or capture.status != CaptureStatus.STORED
+                or grouping_job.status != JobStatus.LEASED
+                or grouping_job.subject_revision != 1
+                or grouping_job.lease_id != lease_id
+                or grouping_job.lease_owner != lease_owner
+                or grouping_job.lease_expires_at is None
+                or grouping_job.lease_expires_at <= now
+            ):
+                return None
+
+            activity_at = capture_activity_time(capture)
+            segment_id, source_key = segment_identity(capture)
+            segment_ref = self._collection(account_id, "segments").document(segment_id)
+            head_ref = self._collection(account_id, "event_heads").document(capture.camera_id)
+            segment_snapshot = await segment_ref.get(transaction=transaction)
+            head_snapshot = await head_ref.get(transaction=transaction)
+            segment = (
+                _model(segment_snapshot, ActivitySegment) if segment_snapshot.exists else None
+            )
+
+            head_event: ActivityEvent | None = None
+            head_event_id = head_snapshot.get("event_id") if head_snapshot.exists else None
+            if isinstance(head_event_id, str):
+                head_event_snapshot = await self._collection(account_id, "events").document(
+                    head_event_id
+                ).get(transaction=transaction)
+                if head_event_snapshot.exists:
+                    head_event = _model(head_event_snapshot, ActivityEvent)
+
+            event_created = False
+            segment_created = segment is None
+            event: ActivityEvent | None = None
+            if segment is not None:
+                if head_event is not None and segment.event_id == head_event.id:
+                    event = head_event
+                else:
+                    segment_event_snapshot = await self._collection(
+                        account_id, "events"
+                    ).document(segment.event_id).get(transaction=transaction)
+                    if not segment_event_snapshot.exists:
+                        raise ValueError("Segment references a missing activity event")
+                    event = _model(segment_event_snapshot, ActivityEvent)
+            elif head_event is not None and (
+                head_event.first_capture_at - policy.reopen_window
+                <= activity_at
+                <= head_event.last_capture_at + policy.reopen_window
+            ):
+                event = head_event
+            else:
+                event_created = True
+                event = ActivityEvent(
+                    id=candidate_event_id,
+                    account_id=account_id,
+                    camera_ids=[capture.camera_id],
+                    first_capture_at=activity_at,
+                    last_capture_at=activity_at,
+                    capture_count=1,
+                    grouping_policy_version=policy.version,
+                    created_at=now,
+                    updated_at=now,
+                )
+
+            if not event_created:
+                camera_ids = list(event.camera_ids)
+                if capture.camera_id not in camera_ids:
+                    camera_ids.append(capture.camera_id)
+                event = ActivityEvent.model_validate(
+                    {
+                        **event.model_dump(mode="python"),
+                        "status": ActivityEventStatus.OPEN,
+                        "current_revision": event.current_revision + 1,
+                        "camera_ids": camera_ids,
+                        "first_capture_at": min(event.first_capture_at, activity_at),
+                        "last_capture_at": max(event.last_capture_at, activity_at),
+                        "capture_count": event.capture_count + 1,
+                        "updated_at": now,
+                    }
+                )
+
+            if segment is None:
+                segment = ActivitySegment(
+                    id=segment_id,
+                    account_id=account_id,
+                    event_id=event.id,
+                    camera_id=capture.camera_id,
+                    source_key=source_key,
+                    first_capture_at=activity_at,
+                    last_capture_at=activity_at,
+                    capture_count=1,
+                    created_at=now,
+                )
+            else:
+                segment = ActivitySegment.model_validate(
+                    {
+                        **segment.model_dump(mode="python"),
+                        "first_capture_at": min(segment.first_capture_at, activity_at),
+                        "last_capture_at": max(segment.last_capture_at, activity_at),
+                        "capture_count": segment.capture_count + 1,
+                    }
+                )
+
+            inference_job_ref = self._collection(account_id, "jobs").document(
+                event_inference_job_id(event.id)
+            )
+            inference_job_snapshot = await inference_job_ref.get(transaction=transaction)
+            proposed_inference_job = DurableJob(
+                id=inference_job_ref.id,
+                account_id=account_id,
+                kind=JobKind.EVENT_INFERENCE,
+                subject_id=event.id,
+                subject_revision=event.current_revision,
+                available_at=event.last_capture_at + policy.quiet_after,
+                created_at=now,
+            )
+            if inference_job_snapshot.exists:
+                existing_inference_job = _model(inference_job_snapshot, DurableJob)
+                if (
+                    existing_inference_job.kind != proposed_inference_job.kind
+                    or existing_inference_job.subject_id != proposed_inference_job.subject_id
+                ):
+                    raise JobIdentityConflict
+                if proposed_inference_job.subject_revision <= (
+                    existing_inference_job.subject_revision
+                ):
+                    inference_job = existing_inference_job
+                else:
+                    inference_job = proposed_inference_job.model_copy(
+                        update={"created_at": existing_inference_job.created_at},
+                        deep=True,
+                    )
+            else:
+                inference_job = proposed_inference_job
+
+            completed_grouping_job = DurableJob.model_validate(
+                {
+                    **grouping_job.model_dump(mode="python"),
+                    "status": JobStatus.COMPLETED,
+                    "lease_id": None,
+                    "lease_owner": None,
+                    "lease_expires_at": None,
+                    "completed_at": now,
+                }
+            )
+            event_ref = self._collection(account_id, "events").document(event.id)
+            transaction.set(event_ref, _document(event))
+            transaction.set(segment_ref, _document(segment))
+            transaction.set(inference_job_ref, _document(inference_job))
+            transaction.set(grouping_job_ref, _document(completed_grouping_job))
+            transaction.update(
+                capture_ref,
+                {
+                    "segment_id": segment.id,
+                    "event_id": event.id,
+                    "updated_at": now,
+                },
+            )
+            if head_event is None or event.last_capture_at >= head_event.last_capture_at:
+                transaction.set(
+                    head_ref,
+                    {
+                        "schema_version": 1,
+                        "event_id": event.id,
+                        "updated_at": now,
+                    },
+                )
+            return CaptureGroupingResult(
+                event=event,
+                segment=segment,
+                inference_job=inference_job,
+                event_created=event_created,
+                segment_created=segment_created,
+            )
+
+        return await group(transaction)
 
     async def save_meal(self, meal: MealEntry) -> MealEntry:
         meal_ref = self._collection(meal.account_id, "meals").document(meal.id)
