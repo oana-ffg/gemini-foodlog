@@ -84,11 +84,17 @@ See [AGENTS.md](./AGENTS.md) for the complete project contract and the hackathon
 
 ## Status
 
-**Concept and architecture defined; the first zero-cost browser-to-journal slice is runnable locally and its backend has a private Cloud Run smoke preview.**
+**Durable authenticated capture is live; real Gemini interpretation and the product journal are not built yet.**
 
-The current slice provisions an ephemeral account and browser camera, accepts authenticated JPEG or PNG captures with idempotency and quota enforcement, stores them in memory, and shows an uncertainty-aware journal in the React UI. Users can confirm or correct an inference, inspect its immutable revision history, and answer focused clarification questions that revise the same meal. Three immutable synthetic images have deterministic local results; three degraded distant-camera fixtures exercise the uncertain path. **Neither local mode nor the private preview calls Gemini, and this is not an accuracy claim.**
+The production API runs on bounded, scale-to-zero Cloud Run and accepts JPEG or PNG captures through one shared contract. Verified browser users authenticate with Firebase; physical and Python cameras use independently revocable `FoodLogCamera` credentials. Accepted images consume the account's 200-image trial entitlement, persist in private Cloud Storage plus Firestore, deduplicate exact retries, and can be read back only through the authenticated owner API. The test account has exercised both browser-user and device upload paths with exact byte/hash read-back.
 
-Google ADK is installed and the FoodLog agent definition is import-tested without invoking a model. The backend commit has been deployed privately to Cloud Run with IAM plus an application secret, scale-to-zero, a one-instance maximum, and a DKK 400 gross-spend budget alert. An authenticated live test created an ephemeral account, accepted two synthetic captures, reconstructed both expected meals, and returned the private image bytes exactly. The web UI is not hosted yet. Production configuration still fails closed until the private GCS, Firestore, real authentication, and asynchronous worker adapters exist. See the working [MVP architecture and decision record](./docs/mvp-architecture.md), [credit-expiry runbook](./docs/credit-expiry-runbook.md), and [verified preview record](./infra/preview/README.md). The original proposal is preserved verbatim in [CORE_IDEA.md](./CORE_IDEA.md).
+The React application is live at [gemini-foodlog-2026.web.app](https://gemini-foodlog-2026.web.app). Its separate `/camera` route provides the first manual phone-camera path; motion capture, wake lock, and the persistent browser delivery queue follow after the signed-in phone smoke. The locked [Python camera client](./clients/python/README.md) can already replay fixture sequences or capture a bounded webcam sequence through the production device-authenticated endpoint.
+
+Account admission, the 25-account ceiling, 200-image trials, launch-mail consent records, the waitlist API, and one Pushover notification per new account are implemented. The dedicated notification worker and API are live; image-processing and inbound-mail workers are not.
+
+**Production does not currently invoke Gemini or infer meals.** Google ADK is installed and import-tested, but the real model, agent tools, event grouping, structured inference, learning loop, corrections, pattern questions, purchase-email flow, and corresponding real-data UI remain backlog work. Existing local deterministic fixture behavior is test/preview scaffolding only and is not an accuracy claim.
+
+See the working [MVP architecture and decision record](./docs/mvp-architecture.md), [credit-expiry runbook](./docs/credit-expiry-runbook.md), [source-controlled MVP backlog](./docs/mvp-backlog.html), and [historical preview record](./infra/preview/README.md). The original proposal is preserved verbatim in [CORE_IDEA.md](./CORE_IDEA.md).
 
 The source-controlled [MVP backlog](./docs/mvp-backlog.html) lists every currently known build, deployment, testing, human-validation, and release task in intended phases with explicit dependencies. Mock and preview work is deliberately separated from production capabilities.
 
@@ -110,7 +116,9 @@ In another terminal, from the repository root:
 npm run dev:web
 ```
 
-Open `http://127.0.0.1:5173`, grant webcam permission, and use **Analyze current frame**. The physical unattended camera, motion bursts, Gemini processing, purchase email, household-wiki updates, and durable cloud adapters remain to be implemented.
+Open `http://127.0.0.1:5173`, sign in with a verified Firebase account, and open the dedicated camera page. Local API mode is for deterministic development tests; it does not invoke Gemini.
+
+For production fixture or PC-webcam capture through the same device contract intended for firmware, use the locked [Python camera client](./clients/python/README.md).
 
 ## Verify
 
@@ -119,6 +127,11 @@ npm run typecheck
 npm run build
 
 cd services/backend
+uv run ruff check .
+uv run pytest
+
+cd ../../clients/python
+uv sync --frozen
 uv run ruff check .
 uv run pytest
 ```
