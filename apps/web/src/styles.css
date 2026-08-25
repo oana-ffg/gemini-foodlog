@@ -184,6 +184,20 @@ button:disabled { cursor: not-allowed; opacity: 0.46; }
 .manual-camera__controls h2 { margin-top: 0; font-size: 2rem; }
 .manual-camera__controls > p:not(.fine-print) { color: #d5ddd8; line-height: 1.6; }
 .manual-camera__controls .fine-print { color: #aebbb3; line-height: 1.5; }
+.motion-status {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 20px 0 0;
+}
+.motion-status > div {
+  padding: 12px 14px;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 12px;
+  background: rgba(0,0,0,0.12);
+}
+.motion-status dt { color: #aebbb3; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.motion-status dd { margin: 5px 0 0; font-weight: 700; text-transform: capitalize; }
 
 .questions, .journal { padding-top: 80px; }
 .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 32px; }

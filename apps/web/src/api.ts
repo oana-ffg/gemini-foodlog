@@ -103,6 +103,15 @@ export interface BrowserCaptureMetadata {
   sequenceNumber: number;
   width: number;
   height: number;
+  burstId?: string;
+  burstFrameIndex?: number;
+  motion?: {
+    detected: boolean;
+    algorithm: string;
+    score: number;
+    changedPixelRatio: number;
+    threshold: number;
+  };
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? (
@@ -247,8 +256,11 @@ export function uploadCapture(
   idempotencyKey: string,
   capture: BrowserCaptureMetadata,
 ): Promise<CaptureAccepted> {
+  if ((capture.burstId === undefined) !== (capture.burstFrameIndex === undefined)) {
+    throw new Error("Motion burst ID and frame index must be supplied together.");
+  }
   const form = new FormData();
-  form.append("metadata", JSON.stringify({
+  const metadata: Record<string, unknown> = {
     schema_version: 1,
     camera_id: cameraId,
     captured_at: capture.capturedAt,
@@ -258,7 +270,21 @@ export function uploadCapture(
     sequence_number: capture.sequenceNumber,
     width: capture.width,
     height: capture.height,
-  }));
+  };
+  if (capture.burstId !== undefined && capture.burstFrameIndex !== undefined) {
+    metadata.burst_id = capture.burstId;
+    metadata.burst_frame_index = capture.burstFrameIndex;
+  }
+  if (capture.motion !== undefined) {
+    metadata.motion = {
+      detected: capture.motion.detected,
+      algorithm: capture.motion.algorithm,
+      score: capture.motion.score,
+      changed_pixel_ratio: capture.motion.changedPixelRatio,
+      threshold: capture.motion.threshold,
+    };
+  }
+  form.append("metadata", JSON.stringify(metadata));
   form.append("image", image, "capture.jpg");
   return apiRequest<CaptureAccepted>("/v1/captures", {
     method: "POST",

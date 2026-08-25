@@ -103,6 +103,15 @@ describe("authenticated API client", () => {
         sequenceNumber: 7,
         width: 1280,
         height: 720,
+        burstId: "motion-burst-1",
+        burstFrameIndex: 3,
+        motion: {
+          detected: true,
+          algorithm: "browser-luma-delta-v1",
+          score: 0.24,
+          changedPixelRatio: 0.18,
+          threshold: 0.03,
+        },
       },
     );
 
@@ -118,9 +127,42 @@ describe("authenticated API client", () => {
       client_version: "web-mvp/1",
       sequence_id: "browser-sequence-1",
       sequence_number: 7,
+      burst_id: "motion-burst-1",
+      burst_frame_index: 3,
       width: 1280,
       height: 720,
+      motion: {
+        detected: true,
+        algorithm: "browser-luma-delta-v1",
+        score: 0.24,
+        changed_pixel_ratio: 0.18,
+        threshold: 0.03,
+      },
     });
     expect(form.get("image")).toBeInstanceOf(Blob);
+  });
+
+  it("refuses incomplete motion burst metadata before the network", async () => {
+    firebase.auth.currentUser = {
+      getIdToken: vi.fn().mockResolvedValue("firebase-id-token"),
+    };
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(() => uploadCapture(
+        "camera-1",
+        new Blob(["jpeg bytes"], { type: "image/jpeg" }),
+        "idempotency-1",
+        {
+          capturedAt: "2026-08-25T15:00:00.000Z",
+          sequenceId: "browser-sequence-1",
+          sequenceNumber: 7,
+          width: 1280,
+          height: 720,
+          burstId: "motion-burst-1",
+        },
+      ))
+      .toThrow("frame index");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
