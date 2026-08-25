@@ -18,6 +18,8 @@ from .errors import (
     CrossAccountAccess,
     DeviceCredentialCollision,
     IdempotencyConflict,
+    InboundAddressCollision,
+    InboundAddressStateConflict,
     InvalidDeviceCredential,
     JobIdentityConflict,
     MealNotFound,
@@ -51,6 +53,8 @@ from .models import (
     DeviceCredentialStatus,
     DurableJob,
     EntitlementMode,
+    InboundMailAddress,
+    InboundMailRoute,
     JobKind,
     JobStatus,
     LaunchMailConsent,
@@ -462,6 +466,66 @@ class FirestoreRepository:
         if not account.exists or not entitlement.exists:
             raise AccountNotProvisioned
         return self._account_from_snapshots(account, entitlement)
+
+    async def create_inbound_mail_address(
+        self,
+        *,
+        owner_user_id: str,
+        address: str,
+        address_hash: str,
+    ) -> InboundMailAddress:
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def create(transaction):
+            identity = await self._identity(owner_user_id).get(transaction=transaction)
+            if not identity.exists or identity.get("status") != "active":
+                raise AccountNotProvisioned
+            account_id = identity.get("account_id")
+            if not isinstance(account_id, str) or not account_id:
+                raise AccountNotProvisioned
+
+            address_ref = self._collection(account_id, "inbound_mail_addresses").document("current")
+            address_snapshot = await address_ref.get(transaction=transaction)
+            if address_snapshot.exists:
+                existing = _model(address_snapshot, InboundMailAddress)
+                existing_hash = sha256(existing.address.casefold().encode()).hexdigest()
+                route_snapshot = (
+                    await self._client.collection("inbound_mail_routes")
+                    .document(existing_hash)
+                    .get(transaction=transaction)
+                )
+                if not route_snapshot.exists:
+                    raise InboundAddressStateConflict
+                route = _model(route_snapshot, InboundMailRoute)
+                if route.account_id != account_id or route.address_id != existing.id:
+                    raise InboundAddressStateConflict
+                return existing
+
+            route_ref = self._client.collection("inbound_mail_routes").document(address_hash)
+            route_snapshot = await route_ref.get(transaction=transaction)
+            if route_snapshot.exists:
+                route = _model(route_snapshot, InboundMailRoute)
+                if route.account_id == account_id:
+                    raise InboundAddressStateConflict
+                raise InboundAddressCollision
+
+            created_at = utc_now()
+            inbound_address = InboundMailAddress(
+                account_id=account_id,
+                address=address,
+                created_at=created_at,
+            )
+            route = InboundMailRoute(
+                id=address_hash,
+                account_id=account_id,
+                created_at=created_at,
+            )
+            transaction.create(address_ref, _document(inbound_address))
+            transaction.create(route_ref, _document(route))
+            return inbound_address
+
+        return await create(transaction)
 
     async def record_launch_mail_consent(
         self,

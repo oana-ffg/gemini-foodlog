@@ -14,6 +14,8 @@ from .errors import (
     CrossAccountAccess,
     DeviceCredentialCollision,
     IdempotencyConflict,
+    InboundAddressCollision,
+    InboundAddressStateConflict,
     InvalidDeviceCredential,
     JobIdentityConflict,
     MealNotFound,
@@ -48,6 +50,8 @@ from .models import (
     DeviceCredentialStatus,
     DurableJob,
     EntitlementMode,
+    InboundMailAddress,
+    InboundMailRoute,
     JobKind,
     JobStatus,
     LaunchMailConsent,
@@ -155,6 +159,14 @@ class Repository(Protocol):
     ) -> bool: ...
 
     async def account_for_owner(self, owner_user_id: str) -> Account: ...
+
+    async def create_inbound_mail_address(
+        self,
+        *,
+        owner_user_id: str,
+        address: str,
+        address_hash: str,
+    ) -> InboundMailAddress: ...
 
     async def record_launch_mail_consent(
         self,
@@ -354,6 +366,8 @@ class InMemoryRepository:
         self._notification_outbox: dict[str, AccountCreatedOutbox] = {}
         self._launch_consents: dict[str, LaunchMailConsent] = {}
         self._waitlist_by_email_hash: dict[str, WaitlistEntry] = {}
+        self._inbound_mail_addresses: dict[str, InboundMailAddress] = {}
+        self._inbound_mail_routes: dict[str, InboundMailRoute] = {}
         self._device_cameras: dict[str, DeviceCamera] = {}
         self._device_credentials: dict[str, DeviceCredentialRecord] = {}
         self._cameras: dict[str, BrowserCamera] = {}
@@ -577,6 +591,44 @@ class InMemoryRepository:
             if not account_id:
                 raise AccountNotProvisioned
             return self._accounts[account_id].model_copy(deep=True)
+
+    async def create_inbound_mail_address(
+        self,
+        *,
+        owner_user_id: str,
+        address: str,
+        address_hash: str,
+    ) -> InboundMailAddress:
+        async with self._lock:
+            account_id = self._account_by_owner.get(owner_user_id)
+            if not account_id:
+                raise AccountNotProvisioned
+            existing = self._inbound_mail_addresses.get(account_id)
+            if existing is not None:
+                route = self._inbound_mail_routes.get(
+                    sha256(existing.address.casefold().encode()).hexdigest()
+                )
+                if route is None or route.account_id != account_id:
+                    raise InboundAddressStateConflict
+                return existing.model_copy(deep=True)
+            route = self._inbound_mail_routes.get(address_hash)
+            if route is not None:
+                if route.account_id == account_id:
+                    raise InboundAddressStateConflict
+                raise InboundAddressCollision
+            created_at = utc_now()
+            inbound_address = InboundMailAddress(
+                account_id=account_id,
+                address=address,
+                created_at=created_at,
+            )
+            self._inbound_mail_addresses[account_id] = inbound_address
+            self._inbound_mail_routes[address_hash] = InboundMailRoute(
+                id=address_hash,
+                account_id=account_id,
+                created_at=created_at,
+            )
+            return inbound_address.model_copy(deep=True)
 
     async def record_launch_mail_consent(
         self,

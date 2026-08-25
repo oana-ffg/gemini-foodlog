@@ -405,6 +405,50 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "InboundMailAddress": {
+        "properties": {
+          "account_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Account Id",
+            "type": "string"
+          },
+          "address": {
+            "maxLength": 254,
+            "minLength": 20,
+            "title": "Address",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "const": "current",
+            "default": "current",
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/InboundMailAddressStatus",
+            "default": "active"
+          }
+        },
+        "required": [
+          "account_id",
+          "address"
+        ],
+        "title": "InboundMailAddress",
+        "type": "object"
+      },
+      "InboundMailAddressStatus": {
+        "enum": [
+          "active"
+        ],
+        "title": "InboundMailAddressStatus",
+        "type": "string"
+      },
       "LaunchMailConsent": {
         "properties": {
           "account_id": {
@@ -1629,6 +1673,52 @@
           }
         },
         "summary": "Device Status"
+      }
+    },
+    "/v1/inbound-mail-address": {
+      "post": {
+        "operationId": "get_or_create_inbound_mail_address_v1_inbound_mail_address_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboundMailAddress"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Or Create Inbound Mail Address"
       }
     },
     "/v1/journal": {

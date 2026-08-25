@@ -59,8 +59,7 @@ class FixtureInferenceEngine:
             ],
             alternatives=["pasta being served cold"],
             rationale=(
-                "The storage container and nearby microwave make reheating the "
-                "likely activity."
+                "The storage container and nearby microwave make reheating the likely activity."
             ),
         ),
     }
@@ -76,8 +75,7 @@ class FixtureInferenceEngine:
             confidence=Confidence.UNCERTAIN,
             components=[],
             observations=[
-                "A kitchen frame was accepted, but local fixture inference has no "
-                "ground truth."
+                "A kitchen frame was accepted, but local fixture inference has no ground truth."
             ],
             alternatives=[],
             rationale=(

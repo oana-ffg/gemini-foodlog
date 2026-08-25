@@ -27,6 +27,7 @@ from .errors import (
     CrossAccountAccess,
     DeviceCredentialCollision,
     IdempotencyConflict,
+    InboundAddressGenerationFailed,
     InvalidDeviceCredential,
     MealNotFound,
     QuestionAlreadyAnswered,
@@ -40,6 +41,7 @@ from .image_events import (
     InMemoryCaptureEventPublisher,
     PubSubCaptureEventPublisher,
 )
+from .inbound_mail import InboundMailAddressService
 from .models import (
     Account,
     BrowserCamera,
@@ -52,6 +54,7 @@ from .models import (
     DeviceCameraCreate,
     DeviceCameraCredentialIssue,
     DeviceSession,
+    InboundMailAddress,
     LaunchMailConsent,
     LaunchMailConsentRequest,
     MealEntry,
@@ -136,6 +139,7 @@ class Container:
     account_service: AccountProvisioningService
     notification_publisher: NotificationPublisher
     capture_event_publisher: CaptureEventPublisher
+    inbound_mail_address_service: InboundMailAddressService
 
 
 def create_app(
@@ -201,6 +205,10 @@ def create_app(
         ),
         notification_publisher=active_notification_publisher,
         capture_event_publisher=active_capture_event_publisher,
+        inbound_mail_address_service=InboundMailAddressService(
+            repository=repository,
+            domain=active_settings.inbound_mail_domain,
+        ),
     )
     app = FastAPI(title="Gemini FoodLog API", version="0.1.0")
     app.state.container = container
@@ -407,6 +415,20 @@ def create_app(
     @app.post("/v1/accounts", response_model=Account)
     async def provision_account(user_id: str = Depends(request_user_id)) -> Account:
         return await container.account_service.provision_account(user_id)
+
+    @app.post("/v1/inbound-mail-address", response_model=InboundMailAddress)
+    async def get_or_create_inbound_mail_address(
+        response: Response,
+        user_id: str = Depends(request_user_id),
+    ) -> InboundMailAddress:
+        response.headers["Cache-Control"] = "no-store"
+        try:
+            return await container.inbound_mail_address_service.get_or_create(user_id)
+        except InboundAddressGenerationFailed as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="inbound_address_generation_failed",
+            ) from exc
 
     @app.post("/v1/consents/launch-mail", response_model=LaunchMailConsent)
     async def record_launch_mail_consent(

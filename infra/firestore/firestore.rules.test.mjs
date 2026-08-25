@@ -24,11 +24,13 @@ const DOCUMENT_PATHS = [
   "system/public_capacity",
   "identities/firebase-user-a",
   "device_credentials/credential-hash-a",
+  "inbound_mail_routes/recipient-hash-a",
   "waitlist/email-hash-a",
   "outbox/message-a",
   "accounts/account-a",
   "accounts/account-a/entitlements/current",
   "accounts/account-a/cameras/camera-a",
+  "accounts/account-a/inbound_mail_addresses/current",
   "accounts/account-a/capture_idempotency/idempotency-hash-a",
   "accounts/account-a/captures/capture-a",
   "accounts/account-a/media/media-a",
@@ -50,6 +52,7 @@ const DOCUMENT_PATHS = [
 ];
 const COLLECTION_GROUPS = [
   "cameras",
+  "inbound_mail_addresses",
   "captures",
   "events",
   "meals",

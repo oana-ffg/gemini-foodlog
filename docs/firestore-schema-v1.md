@@ -12,12 +12,14 @@ The account is the tenant. All household data lives below
 construct paths server-side; callers never submit a trusted `account_id` or object
 path. The API never runs collection-group queries for user-facing reads.
 
-Two global lookup collections are permitted because their identifiers are needed
+Three global lookup collections are permitted because their identifiers are needed
 before the account is known:
 
 - `identities/{firebase_uid}` maps a verified Firebase user to one account;
 - `device_credentials/{credential_hash}` maps a hashed opaque device credential to
-  one active camera and account.
+  one active camera and account;
+- `inbound_mail_routes/{sha256_recipient}` maps a normalized opaque inbound address
+  to one active account address record.
 
 Neither collection is readable by web or capture clients. Device credentials are
 shown once at creation, stored only as hashes, revocable, and never reused between
@@ -30,6 +32,7 @@ cameras.
 | `system/public_capacity` | Atomic 25-public-account admission counter | `active_account_count`, `account_limit`, `waitlist_open`; explicit internal/judge unlimited accounts never consume public slots; one low-write transaction document is acceptable at MVP scale. |
 | `identities/{firebase_uid}` | Login-to-account lookup | `account_id`, `account_class` (`public` or explicitly configured `internal`), `email_normalized`, `email_verified`, `mailing_list_opt_in`, `status`; one document per Firebase UID. |
 | `device_credentials/{sha256_token}` | Camera-token lookup | `account_id`, `camera_id`, `token_version`, `status` (`active` or `revoked`), `issued_at`, nullable `last_used_at`, nullable `expires_at`, nullable `revoked_at`; the raw token is returned only by the issuance response and is never stored. |
+| `inbound_mail_routes/{sha256_recipient}` | Inbound-recipient lookup before the tenant is known | `account_id`, `address_id` (`current`), `status` (`active`), `created_at`; the normalized address itself is not stored globally. |
 | `waitlist/{sha256_email}` | Capacity overflow and product-interest list | `email_normalized`, `firebase_uid`, `reason` (`capacity`), `mailing_list_opt_in` (`true`), `policy_version`, `status` (`active`); one document per normalized verified email and accepted only while public capacity is full. |
 
 ## Account root and bounded counters
@@ -55,6 +58,7 @@ belong in private Cloud Storage rather than Firestore.
 | Collection path below `accounts/{account_id}` | Purpose | Required fields and bounds |
 | --- | --- | --- |
 | `cameras/{camera_id}` | Browser, simulator, or physical source | `name` <= 80 chars, `kind`, `status`, nullable hashed browser-instance identity, `client_version` <= 80 chars, `last_seen_at`, nullable revocation time; no secret or raw device credential. |
+| `inbound_mail_addresses/current` | Stable private purchase-forwarding address | normalized `f-` plus 192-bit random token at the App Engine inbound-mail domain, `status` (`active`), and creation time; generated server-side, contains no user/account identifier, and is returned only to the authenticated owner with `no-store`. |
 | `capture_idempotency/{sha256_key}` | Exactly-once quota reservation | `capture_id`, `camera_id`, `content_sha256`, `content_type`, `state`; immutable after reconciliation except `state`. |
 | `captures/{capture_id}` | One accepted image/frame | `camera_id`, nullable `segment_id`/`event_id`, `media_id`, `idempotency_hash`, `received_at`, `content_sha256`, `content_type`, bounded versioned `metadata` containing capture time, client, decoded dimensions, sequence/burst, and motion fields, plus `status` (`accepted`, `stored`, or `processed`). |
 | `media/{media_id}` | Immutable private-object linkage | `capture_id`, server-derived `object_key`, generation, size, content type, SHA-256, `retention_class`; no public or signed URL. |

@@ -94,6 +94,10 @@ class DeviceCredentialStatus(StrEnum):
     REVOKED = "revoked"
 
 
+class InboundMailAddressStatus(StrEnum):
+    ACTIVE = "active"
+
+
 class Account(BaseModel):
     id: str
     owner_user_id: str
@@ -112,6 +116,22 @@ class Account(BaseModel):
         ):
             raise ValueError("Unlimited accounts cannot have a trial image limit")
         return self
+
+
+class InboundMailAddress(BaseModel):
+    id: Literal["current"] = "current"
+    account_id: str = Field(min_length=1, max_length=128)
+    address: str = Field(min_length=20, max_length=254)
+    status: InboundMailAddressStatus = InboundMailAddressStatus.ACTIVE
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class InboundMailRoute(BaseModel):
+    id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    account_id: str = Field(min_length=1, max_length=128)
+    address_id: Literal["current"] = "current"
+    status: InboundMailAddressStatus = InboundMailAddressStatus.ACTIVE
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class AccountCreatedOutbox(BaseModel):

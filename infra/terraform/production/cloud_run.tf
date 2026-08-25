@@ -25,6 +25,7 @@ locals {
     FOODLOG_GROUPING_QUIET_SECONDS        = "30"
     FOODLOG_GROUPING_REOPEN_SECONDS       = "7200"
     FOODLOG_IMAGE_TOPIC                   = google_pubsub_topic.events["image"].id
+    FOODLOG_INBOUND_MAIL_DOMAIN           = "${var.project_id}.appspotmail.com"
     FOODLOG_LAUNCH_CONSENT_POLICY_VERSION = "launch-interest-v1"
     FOODLOG_MEDIA_BUCKET                  = google_storage_bucket.retained["media"].name
     FOODLOG_NOTIFICATION_TOPIC            = google_pubsub_topic.events["notification"].id

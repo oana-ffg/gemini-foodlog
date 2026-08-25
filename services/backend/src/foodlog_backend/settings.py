@@ -1,7 +1,9 @@
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from .inbound_mail import normalize_inbound_mail_domain
 
 
 class Settings(BaseSettings):
@@ -25,6 +27,12 @@ class Settings(BaseSettings):
     media_bucket: str | None = None
     image_topic: str | None = None
     notification_topic: str | None = None
+    inbound_mail_domain: str = Field(default="foodlog.invalid", min_length=3, max_length=253)
+
+    @field_validator("inbound_mail_domain")
+    @classmethod
+    def normalize_mail_domain(cls, value: str) -> str:
+        return normalize_inbound_mail_domain(value)
 
     @model_validator(mode="after")
     def reject_memory_in_production(self) -> "Settings":
@@ -48,6 +56,13 @@ class Settings(BaseSettings):
             raise ValueError("Production requires the account notification topic")
         if self.environment == "production" and self.image_topic is None:
             raise ValueError("Production requires the capture image topic")
+        expected_mail_domain = (
+            f"{self.gcp_project_id}.appspotmail.com" if self.gcp_project_id else None
+        )
+        if self.environment == "production" and self.inbound_mail_domain != expected_mail_domain:
+            raise ValueError(
+                "Production inbound_mail_domain must match the project's App Engine mail domain"
+            )
         if self.auth_backend == "firebase" and self.firebase_project_id is None:
             raise ValueError("Firebase authentication requires firebase_project_id")
         return self
