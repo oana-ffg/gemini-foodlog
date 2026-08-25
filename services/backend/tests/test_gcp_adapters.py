@@ -5,7 +5,12 @@ import pytest
 from google.api_core.exceptions import PreconditionFailed
 from pydantic import ValidationError
 
-from foodlog_backend.firestore_repository import FirestoreRepository, _model
+from foodlog_backend.firestore_repository import (
+    FirestoreRepository,
+    _camera_document_is_active,
+    _legacy_browser_camera_is_migratable,
+    _model,
+)
 from foodlog_backend.models import ActivityEvent, EntitlementMode, utc_now
 from foodlog_backend.settings import Settings
 from foodlog_backend.storage import GCSObjectStore
@@ -145,6 +150,32 @@ def test_firestore_activity_event_preserves_its_materialized_update_time() -> No
     )
 
     assert event.updated_at == updated_at
+
+
+def test_legacy_camera_documents_default_to_active_without_optional_new_fields() -> None:
+    legacy_browser = {
+        "account_id": "account-a",
+        "kind": "browser",
+    }
+
+    assert _legacy_browser_camera_is_migratable(legacy_browser) is True
+    assert (
+        _camera_document_is_active(
+            legacy_browser,
+            account_id="account-a",
+            kind="browser",
+        )
+        is True
+    )
+    assert _legacy_browser_camera_is_migratable({**legacy_browser, "status": "revoked"}) is False
+    assert (
+        _camera_document_is_active(
+            {**legacy_browser, "status": "revoked"},
+            account_id="account-a",
+            kind="browser",
+        )
+        is False
+    )
 
 
 def test_legacy_trial_entitlement_without_mode_remains_readable() -> None:

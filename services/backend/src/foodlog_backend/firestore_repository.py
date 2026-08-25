@@ -97,6 +97,28 @@ def _model[ModelT: BaseModel](snapshot: DocumentSnapshot, model_type: type[Model
     return model_type.model_validate(data)
 
 
+def _legacy_browser_camera_is_migratable(data: dict[str, Any] | None) -> bool:
+    return bool(
+        data
+        and data.get("kind") == "browser"
+        and data.get("client_instance_id_hash") is None
+        and (data.get("status") or CameraStatus.ACTIVE.value) == CameraStatus.ACTIVE.value
+    )
+
+
+def _camera_document_is_active(
+    data: dict[str, Any],
+    *,
+    account_id: str,
+    kind: str,
+) -> bool:
+    return (
+        data.get("account_id") == account_id
+        and data.get("kind") == kind
+        and (data.get("status") or CameraStatus.ACTIVE.value) == CameraStatus.ACTIVE.value
+    )
+
+
 class FirestoreRepository:
     """Account-scoped production repository backed by Firestore Native mode."""
 
@@ -815,13 +837,11 @@ class FirestoreRepository:
                     transaction.update(camera_ref, {"name": name, "updated_at": created_at})
                     camera = camera.model_copy(update={"name": name}, deep=True)
                 return camera
+            legacy_camera_data = legacy_camera.to_dict() if legacy_camera is not None else None
             if (
                 legacy_camera is not None
                 and legacy_camera.exists
-                and legacy_camera.get("kind") == "browser"
-                and legacy_camera.get("client_instance_id_hash") is None
-                and (legacy_camera.get("status") or CameraStatus.ACTIVE.value)
-                == CameraStatus.ACTIVE.value
+                and _legacy_browser_camera_is_migratable(legacy_camera_data)
             ):
                 legacy = _model(legacy_camera, BrowserCamera).model_copy(
                     update={
@@ -922,6 +942,7 @@ class FirestoreRepository:
             account_snapshot = await account_ref.get(transaction=transaction)
             camera_snapshot = await camera_ref.get(transaction=transaction)
             entitlement = await entitlement_ref.get(transaction=transaction)
+            camera_data = camera_snapshot.to_dict() or {}
             if (
                 not account_snapshot.exists
                 or not entitlement.exists
@@ -929,12 +950,10 @@ class FirestoreRepository:
                 or account_snapshot.get("owner_user_id") != account.owner_user_id
             ):
                 raise AccountNotProvisioned
-            if (
-                not camera_snapshot.exists
-                or camera_snapshot.get("account_id") != account.id
-                or camera_snapshot.get("kind") != camera.kind
-                or (camera_snapshot.get("status") or CameraStatus.ACTIVE.value)
-                != CameraStatus.ACTIVE.value
+            if not camera_snapshot.exists or not _camera_document_is_active(
+                camera_data,
+                account_id=account.id,
+                kind=camera.kind,
             ):
                 raise CameraNotFound
             entitlement_data = entitlement.to_dict() or {}
