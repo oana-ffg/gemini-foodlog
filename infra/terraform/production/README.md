@@ -46,3 +46,8 @@ This root is intentionally fixed to the `production` environment:
 `services.tf` owns the minimum API set required by the durable capture spine.
 Service resources use `disable_on_destroy = false` so removing Terraform state or
 retiring this root cannot unexpectedly disable shared Google Cloud APIs.
+
+The default Firestore database is provisioned in Native mode in `eur3`. Terraform
+uses deletion policy `PREVENT`, and the live database also has delete protection
+enabled. Point-in-time recovery remains disabled during the prototype to avoid
+unnecessary retained-version storage; the standard one-hour version window remains.
