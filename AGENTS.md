@@ -13,6 +13,7 @@
 - Treat `docs/mvp-backlog.html` as the live execution record. Before doing any task work—including research, implementation, configuration, deployment, or testing—mark the exact task `In Progress` and save that change so it is immediately visible after refreshing the page. Keep the status accurate throughout the work. Whenever work on that task stops, immediately move it to the evidence-backed next state and record the current evidence or blocker. Never leave active work marked `Todo` or completed work marked `In Progress`.
 - Do not pause otherwise independent implementation while a ticket waits for Oana's human testing. Leave it accurately marked `Needs Human Testing`, keep building dependency-ready work, and consolidate the outstanding human checks into an end-stage test run unless Oana asks to test sooner.
 - Commit each completed backlog task after its relevant validation passes. For substantial or risky work, also commit at earlier coherent safe checkpoints so validated progress is not left vulnerable to loss.
+- Push validated commits to the configured remote at coherent recovery checkpoints, especially after completed tasks or substantial green slices. Do not push half-written or failing work merely to mirror every local commit.
 - Keep commits cohesive and preserve unrelated user changes; do not absorb unrelated work merely to make a checkpoint.
 
 ## Confirmed hackathon constraints
