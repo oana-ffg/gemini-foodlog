@@ -66,5 +66,15 @@ Images, raw mail, and traces intentionally have no deletion lifecycle during the
 prototype and retain deleted objects for seven days as accidental-deletion recovery.
 The export bucket deletes live objects after one day and disables soft delete so a
 temporary export does not remain recoverable after its lifecycle expires. Bucket IAM
-is authoritative: only the project owner has access until the least-privilege runtime
-identities are added by `INF-006`.
+is authoritative. The project owner administers the buckets; API, worker, and mail
+identities receive only the object create/read operations required by their data
+flow. None can change bucket policy or delete retained objects.
+
+## Keyless runtime identities
+
+`identities.tf` creates separate API, worker, mail, notification, CI infrastructure,
+and CI deployment service accounts. Runtime data-plane accounts receive Firestore
+user access, while bucket roles are assigned per data flow in `storage.tf`. Terraform
+does not create service-account keys. The CI identities remain unusable from GitHub
+until repository-scoped Workload Identity Federation and deployment resources are
+defined by their dependent backlog tasks.

@@ -46,7 +46,92 @@ resource "google_storage_bucket_iam_policy" "retained" {
   for_each = google_storage_bucket.retained
 
   bucket      = each.value.name
-  policy_data = data.google_iam_policy.oana_storage_admin.policy_data
+  policy_data = data.google_iam_policy.retained_bucket[each.key].policy_data
+}
+
+data "google_iam_policy" "retained_bucket" {
+  for_each = local.retained_buckets
+
+  binding {
+    role = "roles/storage.admin"
+
+    members = [
+      "user:oanagoge@gmail.com",
+    ]
+  }
+
+  dynamic "binding" {
+    for_each = each.key == "media" ? [1] : []
+
+    content {
+      role = "roles/storage.objectCreator"
+
+      members = [
+        "serviceAccount:${google_service_account.runtime["api"].email}",
+      ]
+    }
+  }
+
+  dynamic "binding" {
+    for_each = each.key == "media" ? [1] : []
+
+    content {
+      role = "roles/storage.objectViewer"
+
+      members = [
+        "serviceAccount:${google_service_account.runtime["api"].email}",
+        "serviceAccount:${google_service_account.runtime["worker"].email}",
+      ]
+    }
+  }
+
+  dynamic "binding" {
+    for_each = each.key == "raw_mail" ? [1] : []
+
+    content {
+      role = "roles/storage.objectCreator"
+
+      members = [
+        "serviceAccount:${google_service_account.runtime["mail"].email}",
+      ]
+    }
+  }
+
+  dynamic "binding" {
+    for_each = each.key == "raw_mail" ? [1] : []
+
+    content {
+      role = "roles/storage.objectViewer"
+
+      members = [
+        "serviceAccount:${google_service_account.runtime["worker"].email}",
+      ]
+    }
+  }
+
+  dynamic "binding" {
+    for_each = each.key == "traces" ? [1] : []
+
+    content {
+      role = "roles/storage.objectCreator"
+
+      members = [
+        "serviceAccount:${google_service_account.runtime["worker"].email}",
+      ]
+    }
+  }
+
+  dynamic "binding" {
+    for_each = each.key == "traces" ? [1] : []
+
+    content {
+      role = "roles/storage.objectViewer"
+
+      members = [
+        "serviceAccount:${google_service_account.runtime["api"].email}",
+      ]
+    }
+  }
 }
 
 resource "google_storage_bucket" "exports" {
@@ -87,5 +172,31 @@ resource "google_storage_bucket" "exports" {
 
 resource "google_storage_bucket_iam_policy" "exports" {
   bucket      = google_storage_bucket.exports.name
-  policy_data = data.google_iam_policy.oana_storage_admin.policy_data
+  policy_data = data.google_iam_policy.exports.policy_data
+}
+
+data "google_iam_policy" "exports" {
+  binding {
+    role = "roles/storage.admin"
+
+    members = [
+      "user:oanagoge@gmail.com",
+    ]
+  }
+
+  binding {
+    role = "roles/storage.objectCreator"
+
+    members = [
+      "serviceAccount:${google_service_account.runtime["api"].email}",
+    ]
+  }
+
+  binding {
+    role = "roles/storage.objectViewer"
+
+    members = [
+      "serviceAccount:${google_service_account.runtime["api"].email}",
+    ]
+  }
 }
