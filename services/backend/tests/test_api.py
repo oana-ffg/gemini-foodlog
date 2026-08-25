@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from foodlog_backend.app import create_app
+from foodlog_backend.errors import AccountCapacityReached
 from foodlog_backend.inference import FixtureInferenceEngine, verify_fixture_files
 from foodlog_backend.models import MealInference
 from foodlog_backend.settings import Settings
@@ -32,6 +33,48 @@ def test_concurrent_account_provisioning_is_idempotent() -> None:
 
     assert len({account.id for account in accounts}) == 1
     assert all(account.owner_user_id == "same-owner" for account in accounts)
+
+
+def test_concurrent_public_admission_never_exceeds_the_configured_limit() -> None:
+    app = create_app(Settings(environment="test", public_account_limit=25))
+    repository = app.state.container.repository
+
+    async def provision_competing_users() -> list:
+        return await asyncio.gather(
+            *(repository.provision_account(f"competing-owner-{index}") for index in range(50)),
+            return_exceptions=True,
+        )
+
+    results = asyncio.run(provision_competing_users())
+    admitted = [result for result in results if not isinstance(result, Exception)]
+    rejected = [result for result in results if isinstance(result, Exception)]
+
+    assert len(admitted) == 25
+    assert len({account.id for account in admitted}) == 25
+    assert len(rejected) == 25
+    assert all(isinstance(error, AccountCapacityReached) for error in rejected)
+
+
+def test_capacity_response_is_stable_and_admitted_user_remains_idempotent() -> None:
+    app = create_app(Settings(environment="test", public_account_limit=1))
+    with TestClient(app) as client:
+        admitted = client.post(
+            "/v1/accounts",
+            headers={"X-FoodLog-Local-User": "admitted-owner"},
+        )
+        overflow = client.post(
+            "/v1/accounts",
+            headers={"X-FoodLog-Local-User": "waitlisted-owner"},
+        )
+        retry = client.post(
+            "/v1/accounts",
+            headers={"X-FoodLog-Local-User": "admitted-owner"},
+        )
+
+    assert admitted.status_code == retry.status_code == 200
+    assert admitted.json()["id"] == retry.json()["id"]
+    assert overflow.status_code == 409
+    assert overflow.json() == {"detail": "signup_capacity_exhausted"}
 
 
 def test_preview_requires_both_iam_defense_and_shared_secret() -> None:

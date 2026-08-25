@@ -105,7 +105,18 @@ class FirestoreRepository:
 
             capacity = await capacity_ref.get(transaction=transaction)
             count = capacity.get("active_account_count") if capacity.exists else 0
-            limit = capacity.get("account_limit") if capacity.exists else self._public_account_limit
+            stored_limit = (
+                capacity.get("account_limit") if capacity.exists else self._public_account_limit
+            )
+            if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+                raise ValueError("Public account capacity count is invalid")
+            if (
+                not isinstance(stored_limit, int)
+                or isinstance(stored_limit, bool)
+                or stored_limit < 1
+            ):
+                raise ValueError("Public account capacity limit is invalid")
+            limit = min(stored_limit, self._public_account_limit)
             if count >= limit:
                 raise AccountCapacityReached
 
