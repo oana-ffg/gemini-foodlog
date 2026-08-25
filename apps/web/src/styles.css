@@ -10,6 +10,27 @@
 body { margin: 0; min-width: 320px; min-height: 100vh; }
 button { font: inherit; }
 
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.auth-card {
+  width: min(520px, 100%);
+  padding: 42px;
+  border-radius: 24px;
+  background: #fffdf8;
+  box-shadow: 0 20px 60px rgba(31, 37, 33, 0.12);
+}
+
+.auth-card h1 { font-size: clamp(2.5rem, 8vw, 4rem); }
+.auth-card > p:not(.eyebrow) { color: #555d57; line-height: 1.6; }
+.auth-form, .reauth-form { display: grid; gap: 16px; margin: 28px 0 18px; }
+.auth-form label, .reauth-form label { display: grid; gap: 8px; font-size: 0.88rem; font-weight: 700; }
+.form-message--error { color: #9b3827; }
+
 .app-shell {
   width: min(1120px, calc(100% - 36px));
   margin: 0 auto;
@@ -17,12 +38,24 @@ button { font: inherit; }
 }
 
 .hero {
+  position: relative;
   display: grid;
   grid-template-columns: 1fr minmax(260px, 360px);
   gap: 24px 64px;
   align-items: end;
   padding-bottom: 56px;
 }
+
+.session-controls {
+  grid-column: 1 / -1;
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+  color: #555d57;
+  font-size: 0.86rem;
+}
+.session-controls__actions { display: flex; gap: 16px; }
+.reauth-form { width: min(360px, 100%); margin: 8px 0; }
 
 .eyebrow, .section-kicker {
   margin: 0 0 12px;

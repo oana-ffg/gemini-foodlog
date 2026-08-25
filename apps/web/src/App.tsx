@@ -16,6 +16,7 @@ import {
   type MealRevision,
   type MealStatus,
 } from "./api";
+import { SessionControls } from "./auth";
 
 interface JournalCardProps {
   entry: MealEntry;
@@ -393,6 +394,7 @@ function App() {
   return (
     <main className="app-shell">
       <header className="hero">
+        <SessionControls />
         <p className="eyebrow">All Things Agentic Hackathon 2026</p>
         <h1>Your food journal,<br />without the diary ritual.</h1>
         <p className="hero__copy">
