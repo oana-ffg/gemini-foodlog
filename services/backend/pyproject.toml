@@ -6,6 +6,8 @@ requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.116,<1",
   "google-adk[gcp]>=2,<3",
+  # 2.35.0 percent-encodes Firestore's (default) database ID in gRPC resource names.
+  "google-api-core[grpc]>=2.34,<2.35",
   "google-cloud-firestore>=2.28,<3",
   "google-cloud-storage>=3.13,<4",
   "pydantic-settings>=2.10,<3",

@@ -67,7 +67,7 @@ class FirestoreRepository:
         trial_image_limit: int,
         client: AsyncClient | None = None,
     ) -> None:
-        self._client = client or AsyncClient(project=project_id, database="(default)")
+        self._client = client or AsyncClient(project=project_id)
         self._public_account_limit = public_account_limit
         self._trial_image_limit = trial_image_limit
 
@@ -192,7 +192,7 @@ class FirestoreRepository:
         @firestore.async_transactional
         async def create(transaction):
             account_snapshot = await account_ref.get(transaction=transaction)
-            existing_id = account_snapshot.get("primary_browser_camera_id")
+            existing_id = (account_snapshot.to_dict() or {}).get("primary_browser_camera_id")
             if existing_id:
                 existing = (
                     await self._collection(account.id, "cameras")
@@ -345,7 +345,14 @@ class FirestoreRepository:
         snapshot = await reference.get()
         if not snapshot.exists:
             raise CaptureNotFound
-        await reference.update({"status": CaptureStatus.PROCESSED, "updated_at": utc_now()})
+        key_hash = snapshot.get("idempotency_hash")
+        batch = self._client.batch()
+        batch.update(reference, {"status": CaptureStatus.PROCESSED, "updated_at": utc_now()})
+        batch.update(
+            self._collection(account_id, "capture_idempotency").document(key_hash),
+            {"state": "processed"},
+        )
+        await batch.commit()
 
     async def save_meal(self, meal: MealEntry) -> MealEntry:
         meal_ref = self._collection(meal.account_id, "meals").document(meal.id)
@@ -367,7 +374,7 @@ class FirestoreRepository:
             capture = await capture_ref.get(transaction=transaction)
             if not capture.exists:
                 raise CaptureNotFound
-            existing_id = capture.get("meal_id")
+            existing_id = (capture.to_dict() or {}).get("meal_id")
             if existing_id:
                 existing = (
                     await self._collection(meal.account_id, "meals")
