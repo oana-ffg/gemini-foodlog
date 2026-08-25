@@ -35,6 +35,11 @@ from .errors import (
     WaitlistUnavailable,
 )
 from .firestore_repository import FirestoreRepository
+from .image_events import (
+    CaptureEventPublisher,
+    InMemoryCaptureEventPublisher,
+    PubSubCaptureEventPublisher,
+)
 from .models import (
     Account,
     BrowserCamera,
@@ -129,6 +134,7 @@ class Container:
     capture_service: CaptureService
     account_service: AccountProvisioningService
     notification_publisher: NotificationPublisher
+    capture_event_publisher: CaptureEventPublisher
 
 
 def create_app(
@@ -136,6 +142,7 @@ def create_app(
     *,
     token_verifier: IdentityTokenVerifier | None = None,
     notification_publisher: NotificationPublisher | None = None,
+    capture_event_publisher: CaptureEventPublisher | None = None,
 ) -> FastAPI:
     active_settings = settings or Settings()
     if active_settings.auth_backend == "firebase":
@@ -169,23 +176,33 @@ def create_app(
         object_store = InMemoryObjectStore()
     if active_settings.environment == "production":
         assert active_settings.notification_topic is not None
+        assert active_settings.image_topic is not None
         active_notification_publisher = notification_publisher or PubSubNotificationPublisher(
             topic=active_settings.notification_topic
         )
+        active_capture_event_publisher = (
+            capture_event_publisher
+            or PubSubCaptureEventPublisher(topic=active_settings.image_topic)
+        )
     else:
         active_notification_publisher = notification_publisher or InMemoryNotificationPublisher()
+        active_capture_event_publisher = (
+            capture_event_publisher or InMemoryCaptureEventPublisher()
+        )
     container = Container(
         repository=repository,
         object_store=object_store,
         capture_service=CaptureService(
             repository=repository,
             object_store=object_store,
+            event_publisher=active_capture_event_publisher,
         ),
         account_service=AccountProvisioningService(
             repository=repository,
             publisher=active_notification_publisher,
         ),
         notification_publisher=active_notification_publisher,
+        capture_event_publisher=active_capture_event_publisher,
     )
     app = FastAPI(title="Gemini FoodLog API", version="0.1.0")
     app.state.container = container

@@ -1,10 +1,7 @@
-import json
-from base64 import b64decode
-from binascii import Error as Base64Error
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Response, status
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .firestore_repository import FirestoreRepository
@@ -14,6 +11,7 @@ from .notifications import (
     PushoverClient,
     PushoverSender,
 )
+from .pubsub import PubSubPushEnvelope, decode_event
 from .repository import Repository
 
 
@@ -26,29 +24,6 @@ class NotificationSettings(BaseSettings):
     pushover_user_key: str = Field(min_length=30)
     public_account_limit: int = Field(default=25, ge=1)
     trial_image_limit: int = Field(default=200, ge=1)
-
-
-class PubSubMessage(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    data: str
-    message_id: str = Field(alias="messageId")
-
-
-class PubSubPushEnvelope(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    message: PubSubMessage
-    subscription: str
-
-
-def decode_event(envelope: PubSubPushEnvelope) -> AccountCreatedEventV1:
-    try:
-        content = b64decode(envelope.message.data, validate=True)
-        payload = json.loads(content)
-        return AccountCreatedEventV1.model_validate(payload)
-    except (Base64Error, UnicodeDecodeError, json.JSONDecodeError, ValidationError) as error:
-        raise ValueError("invalid account-created Pub/Sub event") from error
 
 
 def create_notification_app(
@@ -86,7 +61,11 @@ def create_notification_app(
     @app.post("/internal/pubsub/account-created", status_code=status.HTTP_204_NO_CONTENT)
     async def deliver_account_created(envelope: PubSubPushEnvelope) -> Response:
         try:
-            event = decode_event(envelope)
+            event = decode_event(
+                envelope,
+                AccountCreatedEventV1,
+                event_name="account-created",
+            )
         except ValueError as error:
             raise HTTPException(status_code=400, detail="invalid_pubsub_event") from error
         try:

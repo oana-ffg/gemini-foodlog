@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     gcp_project_id: str | None = None
     firebase_project_id: str | None = None
     media_bucket: str | None = None
+    image_topic: str | None = None
     notification_topic: str | None = None
 
     @model_validator(mode="after")
@@ -45,6 +46,8 @@ class Settings(BaseSettings):
             raise ValueError("Production requires Firebase authentication")
         if self.environment == "production" and self.notification_topic is None:
             raise ValueError("Production requires the account notification topic")
+        if self.environment == "production" and self.image_topic is None:
+            raise ValueError("Production requires the capture image topic")
         if self.auth_backend == "firebase" and self.firebase_project_id is None:
             raise ValueError("Firebase authentication requires firebase_project_id")
         return self

@@ -1,5 +1,3 @@
-import asyncio
-import json
 from contextlib import suppress
 from datetime import timedelta
 from typing import Literal, Protocol
@@ -10,6 +8,7 @@ from google.cloud import pubsub_v1
 from pydantic import BaseModel, ConfigDict
 
 from .models import Account, AccountCreatedOutbox, EntitlementMode, utc_now
+from .pubsub import PubSubJsonPublisher
 from .repository import Repository
 
 OUTBOX_LEASE_DURATION = timedelta(minutes=5)
@@ -50,22 +49,14 @@ class PubSubNotificationPublisher:
         topic: str,
         client: pubsub_v1.PublisherClient | None = None,
     ) -> None:
-        self._topic = topic
-        self._client = client or pubsub_v1.PublisherClient()
+        self._publisher = PubSubJsonPublisher(topic=topic, client=client)
 
     async def publish(self, event: AccountCreatedEventV1) -> str:
-        content = json.dumps(
-            event.model_dump(mode="json"),
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-        future = self._client.publish(
-            self._topic,
-            content,
+        return await self._publisher.publish(
+            event,
             event_kind=event.kind,
-            schema_version=str(event.schema_version),
+            schema_version=event.schema_version,
         )
-        return await asyncio.to_thread(future.result, timeout=30)
 
 
 class AccountProvisioningService:

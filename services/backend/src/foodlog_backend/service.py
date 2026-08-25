@@ -2,6 +2,7 @@ from hashlib import sha256
 from uuid import uuid4
 
 from .errors import CrossAccountAccess
+from .image_events import CaptureEventPublisher, CaptureStoredEventV1
 from .models import (
     BrowserCamera,
     CaptureAccepted,
@@ -18,9 +19,11 @@ class CaptureService:
         *,
         repository: Repository,
         object_store: ObjectStore,
+        event_publisher: CaptureEventPublisher,
     ) -> None:
         self._repository = repository
         self._object_store = object_store
+        self._event_publisher = event_publisher
 
     async def accept_capture(
         self,
@@ -57,6 +60,12 @@ class CaptureService:
                 content_type,
             )
             await self._repository.mark_stored(capture.id, capture.account_id)
+            await self._event_publisher.publish(
+                CaptureStoredEventV1(
+                    account_id=capture.account_id,
+                    capture_id=capture.id,
+                )
+            )
         except Exception as error:
             cleanup_errors: list[Exception] = []
             # A successfully created object is immutable evidence. Keep its
