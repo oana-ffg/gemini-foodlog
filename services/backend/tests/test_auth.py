@@ -12,21 +12,28 @@ from foodlog_backend.app import create_app
 from foodlog_backend.auth import (
     FirebaseIdentityTokenVerifier,
     InvalidAuthenticationToken,
+    VerifiedIdentity,
 )
 from foodlog_backend.settings import Settings
 
 
 class AcceptingTokenVerifier:
-    async def verify(self, token: str) -> str:
+    async def verify(self, token: str) -> VerifiedIdentity:
         assert token == "valid-id-token"
-        return "firebase-user-a"
+        return VerifiedIdentity(uid="firebase-user-a", email_verified=True)
+
+
+class UnverifiedTokenVerifier:
+    async def verify(self, token: str) -> VerifiedIdentity:
+        assert token == "unverified-id-token"
+        return VerifiedIdentity(uid="firebase-user-a", email_verified=False)
 
 
 class RejectingTokenVerifier:
     def __init__(self) -> None:
         self.tokens: list[str] = []
 
-    async def verify(self, token: str) -> str:
+    async def verify(self, token: str) -> VerifiedIdentity:
         self.tokens.append(token)
         raise InvalidAuthenticationToken
 
@@ -56,6 +63,16 @@ def test_verified_bearer_token_is_the_only_source_of_user_identity() -> None:
 
     assert response.status_code == 200
     assert response.json()["owner_user_id"] == "firebase-user-a"
+
+
+def test_unverified_email_cannot_reach_any_private_route() -> None:
+    headers = {"Authorization": "Bearer unverified-id-token"}
+    with firebase_test_client(UnverifiedTokenVerifier()) as client:
+        account = client.post("/v1/accounts", headers=headers)
+        journal = client.get("/v1/journal", headers=headers)
+
+    assert account.status_code == journal.status_code == 403
+    assert account.json() == journal.json() == {"detail": "email_verification_required"}
 
 
 @pytest.mark.parametrize(
@@ -135,7 +152,10 @@ def test_firebase_verifier_returns_only_the_verified_uid(
         firebase_app=cast(App, fake_app),
     )
 
-    assert asyncio.run(verifier.verify("signed-token")) == "verified-user"
+    assert asyncio.run(verifier.verify("signed-token")) == VerifiedIdentity(
+        uid="verified-user",
+        email_verified=False,
+    )
     assert calls == [("signed-token", fake_app)]
 
 

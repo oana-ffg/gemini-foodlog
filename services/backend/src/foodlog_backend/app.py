@@ -143,13 +143,19 @@ def create_app(
                 )
             assert active_token_verifier is not None
             try:
-                return await active_token_verifier.verify(parts[1])
+                identity = await active_token_verifier.verify(parts[1])
             except InvalidAuthenticationToken as error:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="A valid bearer token is required",
                     headers={"WWW-Authenticate": "Bearer"},
                 ) from error
+            if not identity.email_verified:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="email_verification_required",
+                )
+            return identity.uid
 
         if active_settings.environment == "preview" and (
             x_foodlog_preview_secret is None

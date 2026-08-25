@@ -28,6 +28,7 @@ button { font: inherit; }
 .auth-card h1 { font-size: clamp(2.5rem, 8vw, 4rem); }
 .auth-card > p:not(.eyebrow) { color: #555d57; line-height: 1.6; }
 .auth-form, .reauth-form { display: grid; gap: 16px; margin: 28px 0 18px; }
+.verification-actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 28px 0 18px; }
 .auth-form label, .reauth-form label { display: grid; gap: 8px; font-size: 0.88rem; font-weight: 700; }
 .form-message--error { color: #9b3827; }
 

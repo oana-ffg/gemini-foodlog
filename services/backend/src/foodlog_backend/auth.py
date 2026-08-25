@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import dataclass
 from typing import Protocol
 
 import firebase_admin
@@ -11,8 +12,14 @@ class InvalidAuthenticationToken(Exception):
     """Raised when a presented Firebase identity token cannot be trusted."""
 
 
+@dataclass(frozen=True)
+class VerifiedIdentity:
+    uid: str
+    email_verified: bool
+
+
 class IdentityTokenVerifier(Protocol):
-    async def verify(self, token: str) -> str: ...
+    async def verify(self, token: str) -> VerifiedIdentity: ...
 
 
 class FirebaseIdentityTokenVerifier:
@@ -30,7 +37,7 @@ class FirebaseIdentityTokenVerifier:
                 name=app_name,
             )
 
-    async def verify(self, token: str) -> str:
+    async def verify(self, token: str) -> VerifiedIdentity:
         try:
             claims = await asyncio.to_thread(
                 firebase_auth.verify_id_token,
@@ -43,4 +50,7 @@ class FirebaseIdentityTokenVerifier:
         uid = claims.get("uid")
         if not isinstance(uid, str) or not uid or len(uid) > 128:
             raise InvalidAuthenticationToken
-        return uid
+        return VerifiedIdentity(
+            uid=uid,
+            email_verified=claims.get("email_verified") is True,
+        )

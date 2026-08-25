@@ -2,7 +2,9 @@ import {
   EmailAuthProvider,
   createUserWithEmailAndPassword,
   onAuthStateChanged,
+  reload,
   reauthenticateWithCredential,
+  sendEmailVerification,
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
   type User,
@@ -20,11 +22,14 @@ import { auth } from "./firebase";
 
 interface AuthContextValue {
   user: User | null;
+  emailVerified: boolean;
   loading: boolean;
   signUp: (email: string, password: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   reauthenticate: (password: string) => Promise<void>;
+  sendVerificationEmail: () => Promise<void>;
+  refreshVerification: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -52,11 +57,13 @@ function authErrorMessage(error: unknown): string {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [emailVerified, setEmailVerified] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(
     () => onAuthStateChanged(auth, (nextUser) => {
       setUser(nextUser);
+      setEmailVerified(nextUser?.emailVerified ?? false);
       setLoading(false);
     }),
     [],
@@ -64,9 +71,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AuthContextValue>(() => ({
     user,
+    emailVerified,
     loading,
     signUp: async (email, password) => {
-      await createUserWithEmailAndPassword(auth, email, password);
+      const credential = await createUserWithEmailAndPassword(auth, email, password);
+      await sendEmailVerification(credential.user);
     },
     signIn: async (email, password) => {
       await signInWithEmailAndPassword(auth, email, password);
@@ -81,7 +90,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         EmailAuthProvider.credential(user.email, password),
       );
     },
-  }), [loading, user]);
+    sendVerificationEmail: async () => {
+      if (!user) throw new Error("Sign in before requesting verification.");
+      await sendEmailVerification(user);
+    },
+    refreshVerification: async () => {
+      if (!user) throw new Error("Sign in before checking verification.");
+      await reload(user);
+      await user.getIdToken(true);
+      setEmailVerified(user.emailVerified);
+    },
+  }), [emailVerified, loading, user]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
@@ -93,7 +112,7 @@ export function useAuth(): AuthContextValue {
 }
 
 export function AuthGate({ children }: { children: ReactNode }) {
-  const { user, loading, signIn, signUp } = useAuth();
+  const { user, emailVerified, loading, signIn, signUp } = useAuth();
   const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -104,7 +123,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return <main className="auth-shell"><p role="status">Checking your session…</p></main>;
   }
 
-  if (user) return children;
+  if (user && emailVerified) return children;
+  if (user) return <EmailVerificationGate />;
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -165,6 +185,78 @@ export function AuthGate({ children }: { children: ReactNode }) {
         <button type="button" className="text-button" onClick={switchMode} disabled={busy}>
           {mode === "sign-in" ? "Need an account? Sign up" : "Already registered? Sign in"}
         </button>
+      </section>
+    </main>
+  );
+}
+
+function EmailVerificationGate() {
+  const { user, refreshVerification, sendVerificationEmail, signOut } = useAuth();
+  const [busyAction, setBusyAction] = useState<"check" | "send" | "sign-out">();
+  const [message, setMessage] = useState<string | undefined>(
+    "We sent a verification link when this account was created.",
+  );
+
+  const run = async (
+    action: "check" | "send" | "sign-out",
+    operation: () => Promise<void>,
+    successMessage: string,
+  ) => {
+    setBusyAction(action);
+    setMessage(undefined);
+    try {
+      await operation();
+      setMessage(successMessage);
+    } catch (error: unknown) {
+      setMessage(authErrorMessage(error));
+    } finally {
+      setBusyAction(undefined);
+    }
+  };
+
+  return (
+    <main className="auth-shell">
+      <section className="auth-card" aria-labelledby="verification-title">
+        <p className="eyebrow">One quick security step</p>
+        <h1 id="verification-title">Verify your email.</h1>
+        <p>
+          Open the link sent to <strong>{user?.email}</strong>, then come back here.
+          Nothing private is accessible until Firebase confirms the address.
+        </p>
+        <div className="verification-actions">
+          <button
+            type="button"
+            disabled={busyAction !== undefined}
+            onClick={() => run(
+              "check",
+              refreshVerification,
+              "Not verified yet. Open the email link, then check again.",
+            )}
+          >
+            {busyAction === "check" ? "Checking…" : "I've verified — check again"}
+          </button>
+          <button
+            type="button"
+            className="button--quiet"
+            disabled={busyAction !== undefined}
+            onClick={() => run(
+              "send",
+              sendVerificationEmail,
+              "A new verification email was sent.",
+            )}
+          >
+            {busyAction === "send" ? "Sending…" : "Resend verification email"}
+          </button>
+          <button
+            type="button"
+            className="text-button"
+            disabled={busyAction !== undefined}
+            onClick={() => run("sign-out", signOut, "Signed out.")}
+          >
+            Sign out
+          </button>
+        </div>
+        {message ? <p className="form-message" role="status">{message}</p> : null}
       </section>
     </main>
   );
