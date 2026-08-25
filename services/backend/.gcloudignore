@@ -1,0 +1,12 @@
+# Cloud Build receives only the files used by Dockerfile. This allowlist prevents
+# local virtual environments, caches, tests, fixtures, and build artifacts from
+# becoming upload context or billable build input.
+**
+!.gcloudignore
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!src/
+!src/**
+src/**/__pycache__/
+src/**/*.pyc
