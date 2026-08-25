@@ -90,3 +90,16 @@ The web app, restricted browser API key, and Hosting release are created by thei
 dedicated authentication and UI tasks. The App Check API remains available, but
 provider configuration and enforcement are deliberately deferred until a hard
 assessment-spend boundary exists.
+
+## Production API
+
+`cloud_run.tf` owns the browser-reachable API transport. The application remains
+authenticated: every `/v1` route derives its account from a verified Firebase ID
+token or a revocable camera credential, while `/health` is intentionally public for
+platform probes. The service runs with the dedicated API identity, request-only CPU,
+zero minimum instances, one maximum instance, eight concurrent requests per instance,
+a 60-second timeout, and no model configuration.
+
+The deploy input in `production.auto.tfvars` must be an Artifact Registry image pinned
+by sha256 digest. Release work updates that one reviewed value after tests and the
+remote image build succeed; mutable tags are never deployed.
