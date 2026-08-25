@@ -21,10 +21,13 @@ def test_container_build_uses_the_reviewed_production_lockfile() -> None:
     assert "!cloudbuild.yaml" in gcloudignore
 
 
-def test_cloud_build_smokes_the_runtime_and_fingerprints_installed_packages() -> None:
+def test_cloud_build_smokes_the_runtime_and_uses_the_free_tier_default() -> None:
     configuration = (BACKEND_ROOT / "cloudbuild.yaml").read_text()
 
-    assert "E2_STANDARD_2" in configuration
+    # Cloud Build's current default is the free-tier E2_STANDARD_2 machine. Omitting
+    # the option also keeps this config compatible with older installed gcloud
+    # clients that reject the newly added enum before sending a build request.
+    assert "machineType" not in configuration
     assert "foodlog_backend.notification_app" in configuration
     assert "metadata.distributions()" in configuration
     assert "locked-manifest-sha256=" in configuration

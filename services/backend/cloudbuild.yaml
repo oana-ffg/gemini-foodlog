@@ -38,7 +38,4 @@ steps:
 images:
   - ${_IMAGE}
 
-options:
-  machineType: E2_STANDARD_2
-
 timeout: 900s
