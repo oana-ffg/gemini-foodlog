@@ -2,10 +2,16 @@ import { type RefObject, useEffect, useRef, useState } from "react";
 import {
   uploadCapture,
   type BrowserCamera,
-  type BrowserCaptureMetadata,
   type CaptureAccepted,
 } from "./api";
 import { captureFrame, sampleMotionFrame } from "./cameraFrames";
+import { deliverOldestCapture } from "./captureDelivery";
+import {
+  IndexedDbCaptureQueue,
+  captureQueueDatabaseName,
+  type CaptureQueueStore,
+  type PersistedCapture,
+} from "./captureQueue";
 import {
   advanceMotionCadence,
   analyseMotion,
@@ -17,14 +23,9 @@ import {
 const MOTION_SAMPLE_INTERVAL_MS = 250;
 export const MAX_MEMORY_QUEUE_DEPTH = 30;
 
-interface QueuedCapture {
-  image: Blob;
-  idempotencyKey: string;
-  metadata: BrowserCaptureMetadata;
-}
-
 interface MotionCaptureOptions {
   videoRef: RefObject<HTMLVideoElement | null>;
+  ownerUserId: string;
   camera: BrowserCamera | undefined;
   sequenceId: string;
   takeSequenceNumber: () => number;
@@ -37,6 +38,7 @@ export interface MotionCaptureController {
   phase: MotionPhase;
   queueDepth: number;
   delivering: boolean;
+  blockedReason?: string;
   start: () => void;
   stop: () => void;
   retry: () => void;
@@ -44,6 +46,7 @@ export interface MotionCaptureController {
 
 export function useMotionCapture({
   videoRef,
+  ownerUserId,
   camera,
   sequenceId,
   takeSequenceNumber,
@@ -58,19 +61,19 @@ export function useMotionCapture({
   const previousFrameRef = useRef<Uint8ClampedArray | null>(null);
   const cadenceRef = useRef(initialMotionCadenceState());
   const deliveryActiveRef = useRef(false);
-  const queueRef = useRef<QueuedCapture[]>([]);
+  const retryTimerRef = useRef<number | null>(null);
+  const queueStoreRef = useRef<CaptureQueueStore | null>(null);
+  if (queueStoreRef.current === null && typeof indexedDB !== "undefined") {
+    queueStoreRef.current = new IndexedDbCaptureQueue(
+      captureQueueDatabaseName(ownerUserId),
+    );
+  }
+  const queueStore = queueStoreRef.current;
   const [active, setActive] = useState(false);
   const [phase, setPhase] = useState<MotionPhase>("idle");
   const [queueDepth, setQueueDepth] = useState(0);
   const [delivering, setDelivering] = useState(false);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      if (timerRef.current !== null) window.clearInterval(timerRef.current);
-    };
-  }, []);
+  const [blockedReason, setBlockedReason] = useState<string>();
 
   const stop = () => {
     if (timerRef.current !== null) {
@@ -86,61 +89,105 @@ export function useMotionCapture({
     }
   };
 
-  const publishQueueDepth = () => {
-    if (mountedRef.current) setQueueDepth(queueRef.current.length);
+  const publishQueueState = async () => {
+    if (!queueStore) return;
+    const [count, oldest] = await Promise.all([
+      queueStore.count(),
+      queueStore.oldest(),
+    ]);
+    if (mountedRef.current) {
+      setQueueDepth(count);
+      setBlockedReason(oldest?.status === "blocked" ? oldest.lastError : undefined);
+    }
+  };
+
+  const scheduleRetry = (retryAt: number) => {
+    if (retryTimerRef.current !== null) window.clearTimeout(retryTimerRef.current);
+    retryTimerRef.current = window.setTimeout(() => {
+      retryTimerRef.current = null;
+      void drainQueue();
+    }, Math.max(0, retryAt - Date.now()));
   };
 
   const drainQueue = async () => {
-    if (deliveryActiveRef.current || !camera) return;
+    if (deliveryActiveRef.current || !queueStore) return;
     deliveryActiveRef.current = true;
     if (mountedRef.current) setDelivering(true);
 
-    while (queueRef.current.length > 0) {
-      const queued = queueRef.current[0];
-      try {
-        const accepted = await uploadCapture(
-          camera.id,
-          queued.image,
-          queued.idempotencyKey,
-          queued.metadata,
+    try {
+      while (true) {
+        const result = await deliverOldestCapture(
+          queueStore,
+          (queued) => uploadCapture(
+            queued.cameraId,
+            queued.image,
+            queued.idempotencyKey,
+            queued.metadata,
+          ),
+          Date.now(),
         );
-        queueRef.current.shift();
-        publishQueueDepth();
-        if (mountedRef.current) {
-          onAccepted(accepted);
-          onMessage(`Motion frame stored. ${queueRef.current.length} queued for delivery.`);
+        await publishQueueState();
+
+        if (result.kind === "delivered") {
+          if (mountedRef.current) {
+            onAccepted(result.accepted);
+            onMessage("Motion frame stored. Continuing oldest-first delivery.");
+          }
+          continue;
         }
-      } catch (error: unknown) {
-        stop();
-        if (mountedRef.current) {
-          onMessage(
-            `Motion capture paused because delivery failed: ${
-              error instanceof Error ? error.message : "unknown upload error"
-            }. The captured frames remain queued in this tab.`,
-          );
+        if (result.kind === "waiting" || result.kind === "retry") {
+          scheduleRetry(result.retryAt);
+          if (result.kind === "retry" && mountedRef.current) {
+            const delaySeconds = Math.max(1, Math.ceil((result.retryAt - Date.now()) / 1_000));
+            onMessage(
+              `Delivery is temporarily unavailable. Retrying the oldest frame in ${delaySeconds} seconds; new captures remain persistent.`,
+            );
+          }
+          break;
+        }
+        if (result.kind === "blocked") {
+          stop();
+          if (mountedRef.current) {
+            setBlockedReason(result.reason);
+            onMessage(
+              `Persistent delivery stopped: ${result.reason}. The queued frames remain on this device.`,
+            );
+          }
         }
         break;
       }
+    } catch (error: unknown) {
+      stop();
+      if (mountedRef.current) {
+        onMessage(
+          error instanceof Error
+            ? `The persistent capture queue failed: ${error.message}`
+            : "The persistent capture queue failed.",
+        );
+      }
+    } finally {
+      deliveryActiveRef.current = false;
+      if (mountedRef.current) setDelivering(false);
     }
-
-    deliveryActiveRef.current = false;
-    if (mountedRef.current) setDelivering(false);
   };
 
   const enqueue = async (decision: MotionCaptureDecision) => {
     const video = videoRef.current;
-    if (!video) return;
-    if (queueRef.current.length >= MAX_MEMORY_QUEUE_DEPTH) {
+    if (!video || !camera || !queueStore) return;
+    const storedCount = await queueStore.count();
+    if (storedCount >= MAX_MEMORY_QUEUE_DEPTH) {
       stop();
       onMessage(
-        `Motion capture paused because the temporary queue reached ${MAX_MEMORY_QUEUE_DEPTH} frames. Keep this tab open and retry delivery.`,
+        `Motion capture paused because the persistent queue reached ${MAX_MEMORY_QUEUE_DEPTH} frames. Keep this page open for delivery or return later; the frames remain on this device.`,
       );
       return;
     }
 
     const frame = await captureFrame(video);
-    queueRef.current.push({
+    const createdAt = Date.now();
+    const capture: PersistedCapture = {
       image: frame.image,
+      cameraId: camera.id,
       idempotencyKey: crypto.randomUUID(),
       metadata: {
         capturedAt: new Date().toISOString(),
@@ -152,8 +199,13 @@ export function useMotionCapture({
         burstFrameIndex: decision.burstFrameIndex,
         motion: decision.motion,
       },
-    });
-    publishQueueDepth();
+      createdAt,
+      attempts: 0,
+      nextAttemptAt: createdAt,
+      status: "pending",
+    };
+    await queueStore.add(capture);
+    await publishQueueState();
     void drainQueue();
   };
 
@@ -201,6 +253,14 @@ export function useMotionCapture({
   };
 
   const start = () => {
+    if (!queueStore) {
+      onMessage("This browser does not provide persistent capture storage.");
+      return;
+    }
+    if (blockedReason) {
+      onMessage(`Motion mode cannot start while delivery is blocked: ${blockedReason}.`);
+      return;
+    }
     if (!camera || !videoRef.current || activeRef.current) return;
     previousFrameRef.current = null;
     cadenceRef.current = initialMotionCadenceState();
@@ -216,9 +276,44 @@ export function useMotionCapture({
   };
 
   const retry = () => {
+    if (blockedReason) {
+      onMessage(`Delivery remains blocked: ${blockedReason}.`);
+      return;
+    }
+    if (retryTimerRef.current !== null) {
+      window.clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
     onMessage("Retrying queued motion frames…");
     void drainQueue();
   };
 
-  return { active, phase, queueDepth, delivering, start, stop, retry };
+  useEffect(() => {
+    mountedRef.current = true;
+    void publishQueueState().then(() => drainQueue()).catch((error: unknown) => {
+      if (mountedRef.current) {
+        onMessage(
+          error instanceof Error
+            ? `The persistent capture queue could not start: ${error.message}`
+            : "The persistent capture queue could not start.",
+        );
+      }
+    });
+    return () => {
+      mountedRef.current = false;
+      if (timerRef.current !== null) window.clearInterval(timerRef.current);
+      if (retryTimerRef.current !== null) window.clearTimeout(retryTimerRef.current);
+    };
+  }, []);
+
+  return {
+    active,
+    phase,
+    queueDepth,
+    delivering,
+    blockedReason,
+    start,
+    stop,
+    retry,
+  };
 }

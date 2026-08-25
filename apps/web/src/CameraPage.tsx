@@ -7,7 +7,7 @@ import {
   type Account,
   type BrowserCamera,
 } from "./api";
-import { SessionControls } from "./auth";
+import { SessionControls, useAuth } from "./auth";
 import { captureFrame } from "./cameraFrames";
 import { MAX_MEMORY_QUEUE_DEPTH, useMotionCapture } from "./useMotionCapture";
 
@@ -16,6 +16,7 @@ function stopStream(stream: MediaStream | null): void {
 }
 
 export default function CameraPage() {
+  const { user } = useAuth();
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const sequenceIdRef = useRef(`browser-${crypto.randomUUID()}`);
@@ -46,6 +47,7 @@ export default function CameraPage() {
 
   const motion = useMotionCapture({
     videoRef,
+    ownerUserId: user?.uid ?? "",
     camera,
     sequenceId: sequenceIdRef.current,
     takeSequenceNumber,
@@ -113,7 +115,7 @@ export default function CameraPage() {
     motion.stop();
     setMessage(
       motion.queueDepth > 0
-        ? `Manual mode selected. ${motion.queueDepth} captured motion frames are still queued in this tab.`
+        ? `Manual mode selected. ${motion.queueDepth} captured motion frames remain queued on this device.`
         : "Manual mode selected. Nothing is uploaded until you press Send snapshot.",
     );
   };
@@ -227,7 +229,13 @@ export default function CameraPage() {
               </div>
               <div>
                 <dt>Delivery</dt>
-                <dd>{motion.delivering ? "uploading" : `${motion.queueDepth} queued`}</dd>
+                <dd>
+                  {motion.blockedReason
+                    ? "blocked"
+                    : motion.delivering
+                      ? "uploading"
+                      : `${motion.queueDepth} queued`}
+                </dd>
               </div>
             </dl>
           ) : null}
@@ -242,7 +250,12 @@ export default function CameraPage() {
               </button>
             )}
             {running && !motion.active ? (
-              <button type="button" className="button--quiet" onClick={startMotionMode} disabled={busy}>
+              <button
+                type="button"
+                className="button--quiet"
+                onClick={startMotionMode}
+                disabled={busy || motion.blockedReason !== undefined}
+              >
                 Start motion mode
               </button>
             ) : null}
@@ -254,7 +267,7 @@ export default function CameraPage() {
             <button type="button" onClick={sendSnapshot} disabled={!running || busy || motion.active}>
               {busy && running ? "Sending…" : "Send snapshot"}
             </button>
-            {motion.queueDepth > 0 && !motion.delivering ? (
+            {motion.queueDepth > 0 && !motion.delivering && !motion.blockedReason ? (
               <button type="button" className="button--quiet" onClick={retryQueuedUploads}>
                 Retry queued uploads
               </button>
@@ -264,8 +277,8 @@ export default function CameraPage() {
             Manual mode uploads only when you press Send snapshot. Motion mode compares
             tiny frames on this device, captures at most once per second during a
             15-second burst, then once per minute while activity remains open. This
-            version keeps up to {MAX_MEMORY_QUEUE_DEPTH} pending frames in this tab;
-            persistent offline delivery comes next.
+            up to {MAX_MEMORY_QUEUE_DEPTH} pending frames persist on this device across
+            temporary outages and page reloads, then retry oldest-first.
           </p>
         </div>
       </section>
