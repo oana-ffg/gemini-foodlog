@@ -22,6 +22,19 @@ locals {
     "europe-west1",
     "europe-west4",
   ]
+
+  pubsub_push_targets = {
+    image = {
+      endpoint              = "${google_cloud_run_v2_service.image.uri}/internal/pubsub/capture-stored"
+      service_account_email = google_service_account.runtime["worker"].email
+      audience              = google_cloud_run_v2_service.image.uri
+    }
+    notification = {
+      endpoint              = "${google_cloud_run_v2_service.notification.uri}/internal/pubsub/account-created"
+      service_account_email = google_service_account.runtime["notification"].email
+      audience              = google_cloud_run_v2_service.notification.uri
+    }
+  }
 }
 
 resource "google_project_service_identity" "pubsub" {
@@ -110,14 +123,16 @@ resource "google_pubsub_subscription" "consumer" {
   }
 
   dynamic "push_config" {
-    for_each = each.key == "notification" ? [true] : []
+    for_each = contains(keys(local.pubsub_push_targets), each.key) ? [
+      local.pubsub_push_targets[each.key]
+    ] : []
 
     content {
-      push_endpoint = "${google_cloud_run_v2_service.notification.uri}/internal/pubsub/account-created"
+      push_endpoint = push_config.value.endpoint
 
       oidc_token {
-        service_account_email = google_service_account.runtime["notification"].email
-        audience              = google_cloud_run_v2_service.notification.uri
+        service_account_email = push_config.value.service_account_email
+        audience              = push_config.value.audience
       }
     }
   }
