@@ -11,6 +11,7 @@ vi.mock("./firebase", () => firebase);
 import {
   AuthenticationRequiredError,
   provisionAccount,
+  uploadCapture,
 } from "./api";
 
 const account = {
@@ -77,5 +78,49 @@ describe("authenticated API client", () => {
     const secondHeaders = new Headers((fetchMock.mock.calls[1][1] as RequestInit).headers);
     expect(firstHeaders.get("Authorization")).toBe("Bearer expired-token");
     expect(secondHeaders.get("Authorization")).toBe("Bearer refreshed-token");
+  });
+
+  it("uploads browser snapshots through the shared capture envelope", async () => {
+    firebase.auth.currentUser = {
+      getIdToken: vi.fn().mockResolvedValue("firebase-id-token"),
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      capture_id: "capture-1",
+      accepted_image_count: 1,
+      entitlement_mode: "trial",
+      trial_image_limit: 200,
+      duplicate: false,
+    }, 202));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await uploadCapture(
+      "camera-1",
+      new Blob(["jpeg bytes"], { type: "image/jpeg" }),
+      "idempotency-1",
+      {
+        capturedAt: "2026-08-25T15:00:00.000Z",
+        sequenceId: "browser-sequence-1",
+        sequenceNumber: 7,
+        width: 1280,
+        height: 720,
+      },
+    );
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://127.0.0.1:8080/v1/captures");
+    expect(new Headers(init.headers).get("Idempotency-Key")).toBe("idempotency-1");
+    const form = init.body as FormData;
+    expect(JSON.parse(form.get("metadata") as string)).toEqual({
+      schema_version: 1,
+      camera_id: "camera-1",
+      captured_at: "2026-08-25T15:00:00.000Z",
+      client_kind: "browser",
+      client_version: "web-mvp/1",
+      sequence_id: "browser-sequence-1",
+      sequence_number: 7,
+      width: 1280,
+      height: 720,
+    });
+    expect(form.get("image")).toBeInstanceOf(Blob);
   });
 });

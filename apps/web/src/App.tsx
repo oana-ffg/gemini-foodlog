@@ -1,16 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   answerQuestion,
-  createBrowserCamera,
   listJournal,
   listMealRevisions,
   listOpenQuestions,
   loadCaptureImage,
   provisionAccount,
   submitMealFeedback,
-  uploadCapture,
   type Account,
-  type BrowserCamera,
   type ClarificationQuestion,
   type MealEntry,
   type MealRevision,
@@ -299,97 +297,29 @@ function QuestionCard({ question, onChanged }: QuestionCardProps) {
 }
 
 function App() {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
   const [account, setAccount] = useState<Account>();
-  const [camera, setCamera] = useState<BrowserCamera>();
   const [journal, setJournal] = useState<MealEntry[]>([]);
   const [questions, setQuestions] = useState<ClarificationQuestion[]>([]);
-  const [capturing, setCapturing] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("Preparing your private local trial…");
+  const [loadMessage, setLoadMessage] = useState("Loading your private journal…");
 
   const refreshWorkspace = useCallback(async () => {
-    const [entries, currentAccount, openQuestions] = await Promise.all([
+    const currentAccount = await provisionAccount();
+    const [entries, openQuestions] = await Promise.all([
       listJournal(),
-      provisionAccount(),
       listOpenQuestions(),
     ]);
     setJournal(entries);
     setAccount(currentAccount);
     setQuestions(openQuestions);
+    setLoadMessage("");
   }, []);
 
   useEffect(() => {
-    Promise.all([provisionAccount(), createBrowserCamera("Browser trial camera")])
-      .then(([nextAccount, nextCamera]) => {
-        setAccount(nextAccount);
-        setCamera(nextCamera);
-        setMessage("Ready. Start the camera when it points at the cooking area.");
-        return refreshWorkspace();
-      })
+    refreshWorkspace()
       .catch((error: unknown) => {
-        setMessage(error instanceof Error ? error.message : "Local API unavailable");
+        setLoadMessage(error instanceof Error ? error.message : "The journal is unavailable.");
       });
-
-    return () => {
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-    };
   }, [refreshWorkspace]);
-
-  const startCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
-        audio: false,
-      });
-      streamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
-      setCapturing(true);
-      setMessage("Camera active. Keep this tab open for the browser trial.");
-    } catch (error: unknown) {
-      setMessage(error instanceof Error ? error.message : "Camera permission failed");
-    }
-  };
-
-  const stopCamera = () => {
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-    if (videoRef.current) videoRef.current.srcObject = null;
-    setCapturing(false);
-    setMessage("Camera paused.");
-  };
-
-  const analyzeCurrentFrame = async () => {
-    if (!camera || !videoRef.current) return;
-    setBusy(true);
-    setMessage("Saving and analysing this frame…");
-    try {
-      const video = videoRef.current;
-      const canvas = document.createElement("canvas");
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const context = canvas.getContext("2d");
-      if (!context || canvas.width === 0 || canvas.height === 0) {
-        throw new Error("The camera has not produced a frame yet.");
-      }
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const image = await new Promise<Blob>((resolve, reject) => {
-        canvas.toBlob(
-          (blob) => (blob ? resolve(blob) : reject(new Error("Capture failed"))),
-          "image/jpeg",
-          0.86,
-        );
-      });
-      await uploadCapture(camera.id, image, crypto.randomUUID());
-      await refreshWorkspace();
-      setMessage("Journal updated. Answer any useful clarification below.");
-    } catch (error: unknown) {
-      setMessage(error instanceof Error ? error.message : "Capture failed");
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <main className="app-shell">
@@ -409,37 +339,10 @@ function App() {
               : account?.trial_image_limit ?? 200} images
           </strong>
         </div>
+        <Link className="camera-link" to="/camera">Open the phone camera page</Link>
       </header>
 
-      <section className="capture-panel" aria-labelledby="capture-title">
-        <div>
-          <p className="section-kicker">Browser trial camera</p>
-          <h2 id="capture-title">Point. Start. Carry on cooking.</h2>
-          <p>{message}</p>
-          <div className="button-row">
-            {!capturing ? (
-              <button type="button" onClick={startCamera}>Start camera</button>
-            ) : (
-              <button type="button" className="button--quiet" onClick={stopCamera}>Pause camera</button>
-            )}
-            <button
-              type="button"
-              onClick={analyzeCurrentFrame}
-              disabled={!capturing || busy}
-            >
-              {busy ? "Analysing…" : "Analyze current frame"}
-            </button>
-          </div>
-          <p className="fine-print">
-            This zero-install trial needs the tab open and the computer awake.
-            The physical camera is the unattended product path.
-          </p>
-        </div>
-        <div className={`camera-frame ${capturing ? "camera-frame--active" : ""}`}>
-          <video ref={videoRef} autoPlay muted playsInline />
-          {!capturing ? <span>Camera paused</span> : null}
-        </div>
-      </section>
+      {loadMessage ? <p className="empty-state" role="status">{loadMessage}</p> : null}
 
       <section className="questions" aria-labelledby="questions-title">
         <div className="section-heading">

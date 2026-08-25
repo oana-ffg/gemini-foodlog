@@ -97,6 +97,14 @@ export interface CaptureAccepted {
   duplicate: boolean;
 }
 
+export interface BrowserCaptureMetadata {
+  capturedAt: string;
+  sequenceId: string;
+  sequenceNumber: number;
+  width: number;
+  height: number;
+}
+
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8080";
 
 export class AuthenticationRequiredError extends Error {
@@ -233,17 +241,26 @@ export function uploadCapture(
   cameraId: string,
   image: Blob,
   idempotencyKey: string,
+  capture: BrowserCaptureMetadata,
 ): Promise<CaptureAccepted> {
   const form = new FormData();
+  form.append("metadata", JSON.stringify({
+    schema_version: 1,
+    camera_id: cameraId,
+    captured_at: capture.capturedAt,
+    client_kind: "browser",
+    client_version: "web-mvp/1",
+    sequence_id: capture.sequenceId,
+    sequence_number: capture.sequenceNumber,
+    width: capture.width,
+    height: capture.height,
+  }));
   form.append("image", image, "capture.jpg");
-  return apiRequest<CaptureAccepted>(
-    `/v1/browser-cameras/${encodeURIComponent(cameraId)}/captures`,
-    {
-      method: "POST",
-      headers: { "Idempotency-Key": idempotencyKey },
-      body: form,
-    },
-  );
+  return apiRequest<CaptureAccepted>("/v1/captures", {
+    method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: form,
+  });
 }
 
 export async function loadCaptureImage(captureId: string): Promise<string> {
