@@ -34,3 +34,15 @@ terraform plan -detailed-exitcode
 Exit code `0` from the plan means the checked-in configuration matches live state.
 Exit code `2` means Terraform found changes and the plan must be reviewed before an
 apply. Never use `-auto-approve` for this production root.
+
+## Production boundaries
+
+This root is intentionally fixed to the `production` environment:
+
+- regional services: `europe-west1`;
+- Firestore: `eur3`;
+- durable private object storage: `EU`.
+
+`services.tf` owns the minimum API set required by the durable capture spine.
+Service resources use `disable_on_destroy = false` so removing Terraform state or
+retiring this root cannot unexpectedly disable shared Google Cloud APIs.

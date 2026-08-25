@@ -6,6 +6,10 @@ resource "google_storage_bucket" "terraform_state" {
   public_access_prevention    = "enforced"
   uniform_bucket_level_access = true
 
+  labels = merge(local.common_labels, {
+    purpose = "terraform-state"
+  })
+
   versioning {
     enabled = true
   }
