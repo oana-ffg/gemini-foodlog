@@ -42,11 +42,13 @@ locals {
 
   required_services = toset([
     "artifactregistry.googleapis.com",
+    "apikeys.googleapis.com",
     "cloudbuild.googleapis.com",
     "firestore.googleapis.com",
     "firebase.googleapis.com",
     "firebaseappcheck.googleapis.com",
     "firebasehosting.googleapis.com",
+    "firebaseinstallations.googleapis.com",
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
     "identitytoolkit.googleapis.com",
@@ -55,6 +57,7 @@ locals {
     "pubsub.googleapis.com",
     "run.googleapis.com",
     "secretmanager.googleapis.com",
+    "securetoken.googleapis.com",
     "serviceusage.googleapis.com",
     "storage.googleapis.com",
   ])
