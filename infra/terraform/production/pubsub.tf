@@ -109,6 +109,19 @@ resource "google_pubsub_subscription" "consumer" {
     max_delivery_attempts = 5
   }
 
+  dynamic "push_config" {
+    for_each = each.key == "notification" ? [true] : []
+
+    content {
+      push_endpoint = "${google_cloud_run_v2_service.notification.uri}/internal/pubsub/account-created"
+
+      oidc_token {
+        service_account_email = google_service_account.runtime["notification"].email
+        audience              = google_cloud_run_v2_service.notification.uri
+      }
+    }
+  }
+
   lifecycle {
     prevent_destroy = true
   }
