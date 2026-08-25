@@ -86,5 +86,7 @@ project; it never creates a second project. Firebase Management, Hosting, App Ch
 and Identity Toolkit APIs are explicit Terraform-owned services. Identity Platform
 enables email/password sign-in, forbids duplicate emails, disables anonymous and
 phone sign-in, and authorizes only localhost plus the project's Firebase domains.
-The web app, restricted browser API key, Hosting release, and App Check enforcement
-are created by their dedicated authentication and UI tasks.
+The web app, restricted browser API key, and Hosting release are created by their
+dedicated authentication and UI tasks. The App Check API remains available, but
+provider configuration and enforcement are deliberately deferred until a hard
+assessment-spend boundary exists.

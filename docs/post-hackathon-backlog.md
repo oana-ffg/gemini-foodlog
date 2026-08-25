@@ -51,6 +51,16 @@ Replace the 25-account hackathon gate and 200-image trial with product-appropria
 
 ## Maintenance
 
+### Reconsider Firebase App Check before wider public access
+
+Evaluate App Check or an equivalent browser-abuse control together with a hard,
+verified spend boundary. reCAPTCHA Enterprise assessments can be consumed by
+anonymous visitors before account admission, its free 10,000 monthly assessments
+are shared across the organization, and billing-enabled projects automatically enter
+the paid tier after that allowance. Do not enable enforcement merely because the API
+is available; first prove that unexpected assessment traffic cannot create
+out-of-pocket spend.
+
 ### Migrate deprecated test and agent-framework interfaces
 
 Replace ADK's deprecated `BaseAgentConfig` path before its next major removal, and

@@ -184,7 +184,7 @@ This is a privacy decision, even though it means using Gemini 3.6 Flash instead 
 
 The physical client, browser webcam mode, and Python webcam simulator use the same capture envelope and ingestion semantics. This makes the cloud path testable without the physical device, gives public trial users a zero-install route, and gives hackathon judges a reproducible fixture route.
 
-Each frame is uploaded in one authenticated request to the Cloud Run API. Physical and Python clients use a revocable camera credential; browser capture uses the verified Firebase session plus App Check and an account-scoped browser-camera record. The API validates the authenticated camera or user, idempotency key, entitlement, declared metadata, actual content type, and configured size limits before streaming the accepted image to private Cloud Storage and writing its Firestore metadata. The MVP does not use a two-step signed-upload protocol or expose Firebase Storage credentials to capture clients. An upload is acknowledged only after the durable image and metadata state can be reconciled safely; retries with the same idempotency key return the existing result without consuming quota twice.
+Each frame is uploaded in one authenticated request to the Cloud Run API. Physical and Python clients use a revocable camera credential; browser capture uses the verified Firebase session and an account-scoped browser-camera record. The API validates the authenticated camera or user, idempotency key, entitlement, declared metadata, actual content type, and configured size limits before streaming the accepted image to private Cloud Storage and writing its Firestore metadata. The MVP does not use a two-step signed-upload protocol or expose Firebase Storage credentials to capture clients. An upload is acknowledged only after the durable image and metadata state can be reconciled safely; retries with the same idempotency key return the existing result without consuming quota twice.
 
 Each upload includes server-verifiable device identity plus capture metadata such as:
 
@@ -454,7 +454,9 @@ Users can teach or correct household knowledge outside a particular meal through
 
 The web application uses Firebase Authentication. The backend verifies Firebase ID tokens and derives the authenticated user server-side.
 
-Public signup is open during the hackathon lifecycle, with a hard ceiling of 25 self-service trial accounts. Every new account starts with the 200-image lifetime trial entitlement. Email verification is required before a user can provision an application account, create camera credentials, upload test media, or trigger model processing. The web client and custom backend also enforce Firebase App Check with the invisible, score-based reCAPTCHA Enterprise provider. Backend rate/concurrency limits and the global processing stop remain necessary because App Check and account quotas are not complete Sybil protection.
+Public signup is open during the hackathon lifecycle, with a hard ceiling of 25 self-service trial accounts. Every new account starts with the 200-image lifetime trial entitlement. Email verification is required before a user can provision an application account, create camera credentials, upload test media, or trigger model processing.
+
+Firebase App Check with reCAPTCHA Enterprise is deliberately deferred for the MVP. App Check's custom-backend integration would add attestation to browser calls, but anonymous visits can consume reCAPTCHA assessments before the 25-account application boundary. On a billing-enabled project, exceeding the organization-wide 10,000-assessment monthly allowance automatically enters the paid tier, and the MVP has no hard assessment-spend ceiling. This conflicts with the no-out-of-pocket requirement. The MVP instead relies on verified Firebase sessions, transactional account admission, per-account image entitlement, revocable device credentials, bounded Cloud Run capacity, and the global processing stop. App Check must be reconsidered before a broader public launch, alongside a hard cost boundary or another abuse-control design.
 
 Self-service account capacity is claimed in a Firestore transaction so concurrent signups cannot exceed the ceiling. Operator-created internal and judge accounts are explicitly marked and do not consume public trial slots. Once the 25 slots are filled, additional authenticated users receive a stable `signup_capacity_exhausted` response and cannot obtain an application account, camera credential, trial quota, or access to another account. Avoiding extra unused Firebase Authentication identities is desirable, but the security boundary is application-account provisioning rather than Firebase user creation.
 
@@ -489,7 +491,7 @@ Compromise of one camera credential must not grant:
 Tenant separation is enforced at multiple layers:
 
 - account identity derived from verified user or device credentials;
-- valid Firebase App Check attestation on web-client API calls;
+- verified, project-bound Firebase identity on web-client API calls;
 - tenant-owned Firestore documents nested below `accounts/{accountId}` and carrying explicit ownership where collection-group queries require it;
 - Firestore Security Rules denying direct web-client access to private application data;
 - backend repository methods deriving or validating account scope on every operation, with cross-account integration tests, because server SDKs use IAM and bypass Firestore Security Rules;
@@ -566,15 +568,15 @@ At hackathon traffic, the remaining stack should normally stay in free tiers or 
 - Pub/Sub events carry metadata rather than image bytes and have 10 GiB of free monthly throughput;
 - request-based Cloud Run scales to zero and includes two million free requests per month plus monthly CPU and memory allowances;
 - the expected Firestore reads, writes, and stored metadata fit comfortably within its free quota of 50,000 reads and 20,000 writes per day plus 1 GiB stored;
-- Firebase Hosting includes 10 GiB of storage and 10 GiB of monthly transfer; Firebase Authentication, App Engine Standard inbound mail, and reCAPTCHA assessments should remain within their free allowances;
+- Firebase Hosting includes 10 GiB of storage and 10 GiB of monthly transfer; Firebase Authentication and App Engine Standard inbound mail should remain within their free allowances;
 - the 25 possible account-created Pushover alerts are far below the individual account's 10,000 free messages per month;
 - retained private images cost roughly $0.02/GiB-month in Belgium after any applicable free allowance; 5,000 one-megabyte images would be about 5 GiB or $0.10/month before operations and user-facing egress;
 - Artifact Registry includes 0.5 GiB-month, after which container storage is roughly $0.10/GiB-month; cleanup policies must prevent old revisions accumulating;
 - Terraform state, logs, and secrets are small but still monitored because free allowances can be exceeded.
 
-Two explicit cost cliffs remain:
+Two explicit cost cliffs were reviewed:
 
-- reCAPTCHA is free for the first 10,000 monthly assessments, then the current paid tier charges an $8 flat amount through 100,000 assessments;
+- reCAPTCHA is free for the first 10,000 monthly assessments per organization, then the current paid tier charges an $8 flat amount through 100,000 assessments; App Check is deferred so this is not an active MVP cost;
 - Veo fixture generation is separately budgeted as a one-off evaluation expense; a small suite can cost from a few dollars to a few tens of dollars depending on model variant, resolution, audio, duration, and rejected generations.
 
 The dominant operational risk is repeated model analysis from retries, reprocessing, evaluation, or abusive account creation, not storing 200 JPEGs. Every successful Gemini call records model, regional endpoint, input/output/thinking token counts, event and account identifiers, estimated cost, and whether the call was a retry or evaluation run.

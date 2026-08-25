@@ -8,8 +8,8 @@ is deployed.
 ## Authentication
 
 - Browser clients send a verified Firebase ID token as
-  `Authorization: Bearer <id-token>` and, once enabled, the Firebase App Check
-  token required by the hosted API.
+  `Authorization: Bearer <id-token>`. Firebase App Check is deliberately deferred
+  for the MVP under the documented cost boundary decision.
 - Physical cameras and the Python simulator send the one-time provisioned secret
   as `Authorization: FoodLogCamera <credential>`.
 - Clients never send an account or owner identifier. The backend derives both from
