@@ -10,6 +10,7 @@ from foodlog_backend.settings import Settings
 
 ROOT = Path(__file__).resolve().parents[3]
 FIXTURES = ROOT / "tests" / "fixtures" / "images"
+ADVERSARIAL_FIXTURES = FIXTURES / "adversarial"
 USER_HEADER = {"X-FoodLog-Local-User": "owner-a"}
 
 
@@ -141,6 +142,33 @@ def test_unknown_image_is_explicitly_uncertain_without_model_call() -> None:
         entry = client.get("/v1/journal", headers=USER_HEADER).json()[0]
         assert entry["confidence"] == "uncertain"
         assert "never calls Gemini" in entry["rationale"]
+
+
+def test_adversarial_camera_fixtures_remain_uncertain_without_model_call() -> None:
+    fixture_paths = sorted(ADVERSARIAL_FIXTURES.glob("*.png"))
+    assert len(fixture_paths) == 3
+
+    for index, fixture_path in enumerate(fixture_paths):
+        with build_client() as client:
+            _, camera = provision(client)
+            response = client.post(
+                f"/v1/browser-cameras/{camera['id']}/captures",
+                headers={
+                    **USER_HEADER,
+                    "Idempotency-Key": f"adversarial-capture-{index:02d}",
+                },
+                files={
+                    "image": (fixture_path.name, fixture_path.read_bytes(), "image/png")
+                },
+            )
+
+            assert response.status_code == 202
+            entry = client.get("/v1/journal", headers=USER_HEADER).json()[0]
+            assert entry["title"] == "Unrecognized kitchen activity"
+            assert entry["confidence"] == "uncertain"
+            questions = client.get("/v1/questions", headers=USER_HEADER).json()
+            assert len(questions) == 1
+            assert questions[0]["meal_id"] == entry["id"]
 
 
 def test_declared_image_type_must_match_content() -> None:

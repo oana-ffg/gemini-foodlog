@@ -4,6 +4,7 @@
 - **Last updated:** 2026-08-25
 - **Source concept:** [CORE_IDEA.md](../CORE_IDEA.md) preserves the original proposal verbatim.
 - **Deferred work:** [post-hackathon-backlog.md](post-hackathon-backlog.md) is the canonical post-hackathon list.
+- **Credit expiry:** [credit-expiry-runbook.md](credit-expiry-runbook.md) records the zero-out-of-pocket shutdown boundary.
 
 This document records the MVP decisions made so far, the reasons behind them, and the details that remain open. It is deliberately more specific than the project-level instructions. Implementation status is called out explicitly; planned sections are not deployment claims.
 
@@ -63,13 +64,13 @@ As of 2026-08-25, the repository has a deliberately zero-model-cost local checkp
 - a clarification inbox, meal feedback controls, and revision history in the web application;
 - tenant-isolation, retry/rollback, quota, content-validation, feedback, question, and end-to-end fixture tests;
 - a Google ADK `Agent` and `App` definition that is imported in tests without calling a model;
-- three immutable synthetic still-image fixtures generated with OpenAI image generation, not Veo.
+- six immutable synthetic still-image fixtures generated with OpenAI image generation, not Veo: three deterministic ground-truth frames and three degraded distant-camera ambiguity tests.
 
 Known fixture hashes produce deterministic local journal results. Unknown valid images are marked uncertain. Local and preview modes never call Gemini, and production startup fails closed because the GCP storage, identity, and worker adapters are not implemented.
 
 Commit `ada2235` is deployed as the private Cloud Run service `foodlog-preview-api` in `europe-west1`. It uses IAM plus a Secret Manager application secret, a dedicated runtime identity, zero minimum instances, and a one-instance maximum. The authenticated smoke test created one ephemeral test account and camera, accepted two OpenAI-generated synthetic fixtures, produced the expected confident steak and chicken journal entries, and returned the stored private image bytes exactly. Cloud Logging showed no server errors. The React UI is not hosted, all preview state is in memory, and this is explicitly not the durable production slice.
 
-The dedicated Google Cloud project `gemini-foodlog-2026` is the only project linked to the dedicated `Gemini FoodLog Hackathon` billing account. The promotion is active with DKK 984.25 remaining and expires on 2026-09-24. A DKK 35 monthly gross-spend budget alerts at 50%, 90%, and 100%; it excludes credits when measuring spend so the warning still works while the promotion pays the bill. No model call has been made, and the unrelated local gcloud default remains `ffutils`. Exact live identifiers and evidence are recorded in `infra/preview/README.md`.
+The dedicated Google Cloud project `gemini-foodlog-2026` is the only project linked to the dedicated `Gemini FoodLog Hackathon` billing account. The promotion is active with DKK 984.25 remaining and expires on 2026-09-24. A DKK 400 monthly gross-spend budget alerts at 25%, 50%, and 75% (DKK 100, 200, and 300); it excludes credits when measuring spend so the warning still works while the promotion pays the bill. No model call has been made, and the unrelated local gcloud default remains `ffutils`. Exact live identifiers and evidence are recorded in `infra/preview/README.md`.
 
 ## 2. System shape
 
@@ -530,9 +531,9 @@ An image ceiling alone does not cap Gemini spending because costs depend on even
 
 Internal and judge test accounts can use unlimited entitlements, but they remain subject to the global safety controls.
 
-The hackathon promotion was redeemed into the dedicated FoodLog billing account on 2026-08-25. It is active with DKK 984.25 remaining and expires on 2026-09-24. The private no-model preview has a DKK 35 monthly gross-spend budget with current-spend notifications at 50%, 90%, and 100%. The budget excludes credits when measuring spend, so an alert is not hidden merely because the promotion covers the invoice.
+The hackathon promotion was redeemed into the dedicated FoodLog billing account on 2026-08-25. It is active with DKK 984.25 remaining and expires on 2026-09-24. The private no-model preview has a DKK 400 monthly gross-spend budget with current-spend notifications at 25%, 50%, and 75% (DKK 100, 200, and 300). The budget excludes credits when measuring spend, so an alert is not hidden merely because the promotion covers the invoice.
 
-This budget is an alert, not a hard stop. Public signup and model processing remain disabled. Before either is enabled, re-estimate expected traffic and measured per-event cost, then ask Oana again whether to keep or change the DKK 35 amount and choose the separate model-spend kill-switch threshold. The application must not silently invent those limits.
+This budget is an alert, not a hard stop, and therefore cannot guarantee zero out-of-pocket spend. Public signup and model processing remain disabled. Before either is enabled, implement and verify the separate application-level model-spend kill switch, reserve headroom below the remaining credit, and define the shutdown action before credit expiry. The [credit-expiry runbook](credit-expiry-runbook.md) owns that operational boundary. The application must not silently invent or raise those limits.
 
 ### 11.3 Working cost estimate
 
@@ -677,7 +678,7 @@ Synthetic scenarios must be labeled clearly and isolated from real household lea
 
 Generated fixtures supplement real footage; they cannot establish real-world accuracy by themselves.
 
-The current fixture bootstrap uses three synthetic OpenAI-generated still images covering steak, chicken, and reheated pasta. This does not count as the Veo bonus integration. Veo has not been used and will not be invoked until its separate evaluation budget and scenarios are approved.
+The current fixture bootstrap uses six synthetic OpenAI-generated still images: deterministic frames covering steak, chicken, and reheated pasta, plus three degraded distant-camera views of a person opening red, pale, or genuinely ambiguous meat packaging beside a sink and air-fryer basket. The degraded fixtures currently test safe uncertainty and question creation without a model; they become model-evaluation inputs only after the spend kill switch is implemented. This does not count as the Veo bonus integration. Veo has not been used and will not be invoked until its separate evaluation budget and scenarios are approved.
 
 ### 14.1 Demo privacy boundary
 

@@ -26,9 +26,11 @@ Verified on 2026-08-25:
 - Scaling: automatic, zero minimum instances, one service-level and revision-level maximum instance
 - Runtime limits: one vCPU, 512 MiB memory, four concurrent requests
 - Access: Cloud Run Invoker is granted only to `oanagoge@gmail.com`; the application also requires secret version 2 from `foodlog-preview-shared-secret`
-- Budget: DKK 35 monthly gross-spend alert, excluding credits, with current-spend notifications at 50%, 90%, and 100%
+- Budget: DKK 400 monthly gross-spend alert, excluding credits, with current-spend notifications at 25%, 50%, and 75% (DKK 100, 200, and 300)
 
 The authenticated smoke test created test account `60ae7914-b2af-4d73-9e6e-d54fee09f080` and browser camera `8b1175ad-5b50-42ed-b61a-2bef9aa8c87c`. It uploaded the synthetic steak and chicken fixtures, received `202 Accepted` for both, and read back two confident journal entries: `Air-fried steak` and `Air-fried chicken breast`. The private steak-image response had SHA-256 `8e51f9691aebf6335d6d1cf1c7863b73654918bb97db3bd99bd5235e290da208`, exactly matching the source fixture.
+
+A later adversarial smoke test uploaded all three degraded distant-camera fixtures through browser camera `90b28f68-54c9-461c-92bf-e791736f1984`. All three were accepted and stored as provisional `Unrecognized kitchen activity` entries with `uncertain` confidence, and each produced one open clarification question. This is the required no-model behavior: the fixture hashes are intentionally absent from the deterministic map, so the preview does not pretend to evaluate visual recognition while Gemini remains disabled.
 
 Cloud Logging showed eight successful smoke/verification requests, one expected diagnostic `401` while correcting the initial secret encoding, and no `5xx` responses. The Cloud Run dashboard populated application request latency around 7-28 ms and end-to-end latency around 25-372 ms for this tiny sample. Its Cost view was left unavailable because it requests the additional App Optimize API, which was not needed for verification and was not enabled.
 
