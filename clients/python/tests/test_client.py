@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from foodlog_camera.client import CameraClientError, FoodLogCameraClient
+from foodlog_camera.client import CameraClientError, FoodLogCameraClient, MotionMetadata
 
 CAMERA_ID = "camera-test-1"
 CREDENTIAL = "flc_v1_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG"
@@ -71,6 +71,51 @@ def test_revoked_credential_fails_without_leaking_secret() -> None:
     ):
         client.status()
     assert CREDENTIAL not in str(raised.value)
+
+
+def test_upload_includes_bounded_motion_burst_metadata() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(202, json={
+            "capture_id": "capture-motion-1",
+            "accepted_image_count": 8,
+            "entitlement_mode": "trial",
+            "trial_image_limit": 200,
+            "duplicate": False,
+        })
+
+    with camera_client(handler) as client:
+        client.upload_capture(
+            image=b"\x89PNG\r\n\x1a\nbytes",
+            content_type="image/png",
+            width=10,
+            height=20,
+            captured_at=datetime(2026, 8, 25, 17, 0, tzinfo=UTC),
+            sequence_id="sequence-motion-1",
+            sequence_number=4,
+            burst_id="motion-burst-1",
+            burst_frame_index=2,
+            motion=MotionMetadata(
+                detected=True,
+                algorithm="browser-luma-delta-v1",
+                score=0.24,
+                changed_pixel_ratio=0.18,
+                threshold=0.03,
+            ),
+        )
+
+    body = requests[0].content
+    assert b'"burst_id":"motion-burst-1"' in body
+    assert b'"burst_frame_index":2' in body
+    assert b'"algorithm":"browser-luma-delta-v1"' in body
+    assert b'"changed_pixel_ratio":0.18' in body
+
+
+def test_motion_metadata_rejects_out_of_range_values() -> None:
+    with pytest.raises(ValueError, match="between zero and one"):
+        MotionMetadata(detected=True, algorithm="test", score=1.1)
 
 
 def camera_client(

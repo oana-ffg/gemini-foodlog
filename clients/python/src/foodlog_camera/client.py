@@ -27,6 +27,32 @@ class CaptureAccepted:
     duplicate: bool
 
 
+@dataclass(frozen=True, slots=True)
+class MotionMetadata:
+    detected: bool
+    algorithm: str
+    score: float | None = None
+    changed_pixel_ratio: float | None = None
+    threshold: float | None = None
+
+    def __post_init__(self) -> None:
+        if not self.algorithm.strip() or len(self.algorithm) > 80:
+            raise ValueError("motion algorithm must contain 1 to 80 characters")
+        for name in ("score", "changed_pixel_ratio", "threshold"):
+            value = getattr(self, name)
+            if value is not None and not 0 <= value <= 1:
+                raise ValueError(f"motion {name} must be between zero and one")
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "detected": self.detected,
+            "algorithm": self.algorithm,
+            "score": self.score,
+            "changed_pixel_ratio": self.changed_pixel_ratio,
+            "threshold": self.threshold,
+        }
+
+
 class FoodLogCameraClient:
     def __init__(
         self,
@@ -87,6 +113,7 @@ class FoodLogCameraClient:
         idempotency_key: str | None = None,
         burst_id: str | None = None,
         burst_frame_index: int | None = None,
+        motion: MotionMetadata | None = None,
     ) -> CaptureAccepted:
         if captured_at.tzinfo is None or captured_at.utcoffset() is None:
             raise ValueError("captured_at must include a UTC offset")
@@ -111,6 +138,8 @@ class FoodLogCameraClient:
         if burst_id is not None:
             metadata["burst_id"] = burst_id
             metadata["burst_frame_index"] = burst_frame_index
+        if motion is not None:
+            metadata["motion"] = motion.payload()
 
         key = idempotency_key or f"python-{uuid4()}"
         extension = ".jpg" if content_type == "image/jpeg" else ".png"
