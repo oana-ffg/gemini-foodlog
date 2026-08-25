@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from secrets import compare_digest
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,8 +10,10 @@ from .auth import (
     FirebaseIdentityTokenVerifier,
     IdentityTokenVerifier,
     InvalidAuthenticationToken,
+    VerifiedIdentity,
 )
 from .errors import (
+    AccountAlreadyProvisioned,
     AccountCapacityReached,
     AccountNotProvisioned,
     CameraNotFound,
@@ -21,6 +24,7 @@ from .errors import (
     QuestionAlreadyAnswered,
     QuestionNotFound,
     TrialQuotaExhausted,
+    WaitlistUnavailable,
 )
 from .firestore_repository import FirestoreRepository
 from .inference import FixtureInferenceEngine, InferenceEngine
@@ -30,6 +34,8 @@ from .models import (
     BrowserCameraCreate,
     CaptureAccepted,
     ClarificationQuestion,
+    LaunchMailConsent,
+    LaunchMailConsentRequest,
     MealEntry,
     MealFeedbackRequest,
     MealFeedbackResult,
@@ -37,6 +43,8 @@ from .models import (
     QuestionAnswerRequest,
     QuestionAnswerResult,
     QuestionStatus,
+    WaitlistEntry,
+    WaitlistJoinRequest,
 )
 from .repository import InMemoryRepository, Repository
 from .service import CaptureService
@@ -130,11 +138,11 @@ def create_app(
         allow_headers=allowed_headers,
     )
 
-    async def request_user_id(
+    async def request_identity(
         authorization: str | None = Header(default=None),
         x_foodlog_local_user: str | None = Header(default=None),
         x_foodlog_preview_secret: str | None = Header(default=None),
-    ) -> str:
+    ) -> VerifiedIdentity:
         if active_settings.auth_backend == "firebase":
             parts = authorization.split() if authorization else []
             if len(parts) != 2 or parts[0].lower() != "bearer" or len(parts[1]) > 8192:
@@ -157,7 +165,7 @@ def create_app(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="email_verification_required",
                 )
-            return identity.uid
+            return identity
 
         if active_settings.environment == "preview" and (
             x_foodlog_preview_secret is None
@@ -173,13 +181,42 @@ def create_app(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Local user header is required",
             )
-        return x_foodlog_local_user
+        return VerifiedIdentity(uid=x_foodlog_local_user, email_verified=True)
+
+    async def request_user_id(
+        identity: Annotated[VerifiedIdentity, Depends(request_identity)],
+    ) -> str:
+        return identity.uid
+
+    def verified_email(identity: VerifiedIdentity) -> str:
+        if identity.email is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="verified_email_required",
+            )
+        return identity.email
 
     @app.exception_handler(AccountCapacityReached)
     async def account_capacity_handler(*_: object) -> Response:
         return Response(
             status_code=status.HTTP_409_CONFLICT,
             content='{"detail":"signup_capacity_exhausted"}',
+            media_type="application/json",
+        )
+
+    @app.exception_handler(AccountAlreadyProvisioned)
+    async def account_already_provisioned_handler(*_: object) -> Response:
+        return Response(
+            status_code=status.HTTP_409_CONFLICT,
+            content='{"detail":"account_already_provisioned"}',
+            media_type="application/json",
+        )
+
+    @app.exception_handler(WaitlistUnavailable)
+    async def waitlist_unavailable_handler(*_: object) -> Response:
+        return Response(
+            status_code=status.HTTP_409_CONFLICT,
+            content='{"detail":"signup_capacity_available"}',
             media_type="application/json",
         )
 
@@ -230,6 +267,29 @@ def create_app(
     @app.post("/v1/accounts", response_model=Account)
     async def provision_account(user_id: str = Depends(request_user_id)) -> Account:
         return await container.repository.provision_account(user_id)
+
+    @app.post("/v1/consents/launch-mail", response_model=LaunchMailConsent)
+    async def record_launch_mail_consent(
+        request: LaunchMailConsentRequest,
+        identity: Annotated[VerifiedIdentity, Depends(request_identity)],
+    ) -> LaunchMailConsent:
+        return await container.repository.record_launch_mail_consent(
+            owner_user_id=identity.uid,
+            email_normalized=verified_email(identity),
+            granted=request.granted,
+            policy_version=active_settings.launch_consent_policy_version,
+        )
+
+    @app.post("/v1/waitlist", response_model=WaitlistEntry)
+    async def join_waitlist(
+        request: WaitlistJoinRequest,
+        identity: Annotated[VerifiedIdentity, Depends(request_identity)],
+    ) -> WaitlistEntry:
+        return await container.repository.join_waitlist(
+            firebase_uid=identity.uid,
+            email_normalized=verified_email(identity),
+            policy_version=active_settings.waitlist_policy_version,
+        )
 
     @app.post("/v1/browser-cameras", response_model=BrowserCamera)
     async def create_browser_camera(

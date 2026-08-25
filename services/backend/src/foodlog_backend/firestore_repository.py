@@ -9,6 +9,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from pydantic import BaseModel
 
 from .errors import (
+    AccountAlreadyProvisioned,
     AccountCapacityReached,
     AccountNotProvisioned,
     CameraNotFound,
@@ -19,6 +20,7 @@ from .errors import (
     QuestionAlreadyAnswered,
     QuestionNotFound,
     TrialQuotaExhausted,
+    WaitlistUnavailable,
 )
 from .models import (
     Account,
@@ -27,6 +29,7 @@ from .models import (
     CaptureStatus,
     ClarificationQuestion,
     EntitlementMode,
+    LaunchMailConsent,
     MealEntry,
     MealFeedback,
     MealFeedbackKind,
@@ -37,6 +40,7 @@ from .models import (
     QuestionAnswerRequest,
     QuestionAnswerResult,
     QuestionStatus,
+    WaitlistEntry,
     utc_now,
 )
 from .repository import inference_from_meal, revised_inference
@@ -206,6 +210,109 @@ class FirestoreRepository:
         if not account.exists or not entitlement.exists:
             raise AccountNotProvisioned
         return self._account_from_snapshots(account, entitlement)
+
+    async def record_launch_mail_consent(
+        self,
+        *,
+        owner_user_id: str,
+        email_normalized: str,
+        granted: bool,
+        policy_version: str,
+    ) -> LaunchMailConsent:
+        account = await self.account_for_owner(owner_user_id)
+        consent_id = sha256(
+            f"{owner_user_id}\0{email_normalized}\0launch_mail\0{policy_version}\0{granted}".encode()
+        ).hexdigest()
+        consent = LaunchMailConsent(
+            id=consent_id,
+            account_id=account.id,
+            actor_user_id=owner_user_id,
+            email_normalized=email_normalized,
+            granted=granted,
+            policy_version=policy_version,
+        )
+        identity_ref = self._identity(owner_user_id)
+        consent_ref = self._collection(account.id, "consents").document(consent.id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def record(transaction):
+            identity = await identity_ref.get(transaction=transaction)
+            existing = await consent_ref.get(transaction=transaction)
+            if (
+                not identity.exists
+                or identity.get("status") != "active"
+                or identity.get("account_id") != account.id
+            ):
+                raise AccountNotProvisioned
+            if existing.exists:
+                return _model(existing, LaunchMailConsent)
+            transaction.create(consent_ref, _document(consent))
+            transaction.update(
+                identity_ref,
+                {
+                    "email_normalized": email_normalized,
+                    "mailing_list_opt_in": granted,
+                    "mailing_list_policy_version": policy_version,
+                    "updated_at": consent.created_at,
+                },
+            )
+            return consent
+
+        return await record(transaction)
+
+    async def join_waitlist(
+        self,
+        *,
+        firebase_uid: str,
+        email_normalized: str,
+        policy_version: str,
+    ) -> WaitlistEntry:
+        entry_id = sha256(email_normalized.encode()).hexdigest()
+        entry = WaitlistEntry(
+            id=entry_id,
+            firebase_uid=firebase_uid,
+            email_normalized=email_normalized,
+            policy_version=policy_version,
+        )
+        identity_ref = self._identity(firebase_uid)
+        waitlist_ref = self._client.collection("waitlist").document(entry.id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def join(transaction):
+            identity = await identity_ref.get(transaction=transaction)
+            existing = await waitlist_ref.get(transaction=transaction)
+            capacity = await self._client.collection("system").document(
+                "public_capacity"
+            ).get(transaction=transaction)
+            if identity.exists:
+                raise AccountAlreadyProvisioned
+            if existing.exists:
+                stored = _model(existing, WaitlistEntry)
+                if stored.firebase_uid != firebase_uid:
+                    raise CrossAccountAccess
+                return stored
+            count = capacity.get("active_account_count") if capacity.exists else 0
+            stored_limit = (
+                capacity.get("account_limit")
+                if capacity.exists
+                else self._public_account_limit
+            )
+            if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+                raise ValueError("Public account capacity count is invalid")
+            if (
+                not isinstance(stored_limit, int)
+                or isinstance(stored_limit, bool)
+                or stored_limit < 1
+            ):
+                raise ValueError("Public account capacity limit is invalid")
+            if count < min(stored_limit, self._public_account_limit):
+                raise WaitlistUnavailable
+            transaction.create(waitlist_ref, _document(entry))
+            return entry
+
+        return await join(transaction)
 
     async def _account_in_transaction(
         self,

@@ -10,6 +10,14 @@ class AccountNotProvisioned(FoodLogError):
     pass
 
 
+class AccountAlreadyProvisioned(FoodLogError):
+    pass
+
+
+class WaitlistUnavailable(FoodLogError):
+    pass
+
+
 class CameraNotFound(FoodLogError):
     pass
 

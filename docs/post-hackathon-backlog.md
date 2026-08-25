@@ -1,7 +1,7 @@
 # Post-hackathon backlog
 
 - **Status:** Deferred work that is intentionally outside the hackathon MVP
-- **Last updated:** 2026-08-24
+- **Last updated:** 2026-08-25
 - **MVP decisions:** [mvp-architecture.md](mvp-architecture.md)
 
 This is the canonical list of product and architecture changes to reconsider after the hackathon. Adding an item here does not commit us to a particular solution or priority.
@@ -48,3 +48,12 @@ Evaluate phone and other camera clients after the physical microcontroller and w
 ### Full-product onboarding and capacity
 
 Replace the 25-account hackathon gate and 200-image trial with product-appropriate capacity, abuse controls, entitlements, and—only if needed—billing. Select an outbound email provider before sending the consented full-product availability notice to the waitlist.
+
+## Maintenance
+
+### Migrate deprecated test and agent-framework interfaces
+
+Replace ADK's deprecated `BaseAgentConfig` path before its next major removal, and
+migrate FastAPI/Starlette integration tests from the deprecated `httpx` TestClient
+compatibility path to `httpx2` once the dependency set supports it. Both are warning-only
+with the current locked dependencies; the full MVP backend suite still passes.

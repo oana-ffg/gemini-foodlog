@@ -1,9 +1,11 @@
 import asyncio
 from collections.abc import Iterable
+from hashlib import sha256
 from typing import Protocol
 from uuid import uuid4
 
 from .errors import (
+    AccountAlreadyProvisioned,
     AccountCapacityReached,
     AccountNotProvisioned,
     CameraNotFound,
@@ -14,6 +16,7 @@ from .errors import (
     QuestionAlreadyAnswered,
     QuestionNotFound,
     TrialQuotaExhausted,
+    WaitlistUnavailable,
 )
 from .models import (
     Account,
@@ -23,6 +26,7 @@ from .models import (
     ClarificationQuestion,
     Confidence,
     EntitlementMode,
+    LaunchMailConsent,
     MealComponent,
     MealEntry,
     MealFeedback,
@@ -36,6 +40,7 @@ from .models import (
     QuestionAnswerRequest,
     QuestionAnswerResult,
     QuestionStatus,
+    WaitlistEntry,
     utc_now,
 )
 
@@ -44,6 +49,23 @@ class Repository(Protocol):
     async def provision_account(self, owner_user_id: str) -> Account: ...
 
     async def account_for_owner(self, owner_user_id: str) -> Account: ...
+
+    async def record_launch_mail_consent(
+        self,
+        *,
+        owner_user_id: str,
+        email_normalized: str,
+        granted: bool,
+        policy_version: str,
+    ) -> LaunchMailConsent: ...
+
+    async def join_waitlist(
+        self,
+        *,
+        firebase_uid: str,
+        email_normalized: str,
+        policy_version: str,
+    ) -> WaitlistEntry: ...
 
     async def create_browser_camera(self, owner_user_id: str, name: str) -> BrowserCamera: ...
 
@@ -120,6 +142,8 @@ class InMemoryRepository:
         self._unlimited_owner_user_ids = frozenset(unlimited_owner_user_ids or set())
         self._accounts: dict[str, Account] = {}
         self._account_by_owner: dict[str, str] = {}
+        self._launch_consents: dict[str, LaunchMailConsent] = {}
+        self._waitlist_by_email_hash: dict[str, WaitlistEntry] = {}
         self._cameras: dict[str, BrowserCamera] = {}
         self._browser_camera_by_account: dict[str, str] = {}
         self._captures: dict[str, CaptureRecord] = {}
@@ -173,6 +197,64 @@ class InMemoryRepository:
             if not account_id:
                 raise AccountNotProvisioned
             return self._accounts[account_id].model_copy(deep=True)
+
+    async def record_launch_mail_consent(
+        self,
+        *,
+        owner_user_id: str,
+        email_normalized: str,
+        granted: bool,
+        policy_version: str,
+    ) -> LaunchMailConsent:
+        account = await self.account_for_owner(owner_user_id)
+        consent_id = sha256(
+            f"{owner_user_id}\0{email_normalized}\0launch_mail\0{policy_version}\0{granted}".encode()
+        ).hexdigest()
+        async with self._lock:
+            existing = self._launch_consents.get(consent_id)
+            if existing:
+                return existing.model_copy(deep=True)
+            consent = LaunchMailConsent(
+                id=consent_id,
+                account_id=account.id,
+                actor_user_id=owner_user_id,
+                email_normalized=email_normalized,
+                granted=granted,
+                policy_version=policy_version,
+            )
+            self._launch_consents[consent.id] = consent
+            return consent.model_copy(deep=True)
+
+    async def join_waitlist(
+        self,
+        *,
+        firebase_uid: str,
+        email_normalized: str,
+        policy_version: str,
+    ) -> WaitlistEntry:
+        email_hash = sha256(email_normalized.encode()).hexdigest()
+        async with self._lock:
+            if firebase_uid in self._account_by_owner:
+                raise AccountAlreadyProvisioned
+            existing = self._waitlist_by_email_hash.get(email_hash)
+            if existing:
+                if existing.firebase_uid != firebase_uid:
+                    raise CrossAccountAccess
+                return existing.model_copy(deep=True)
+            public_account_count = sum(
+                account.entitlement_mode == EntitlementMode.TRIAL
+                for account in self._accounts.values()
+            )
+            if public_account_count < self._public_account_limit:
+                raise WaitlistUnavailable
+            entry = WaitlistEntry(
+                id=email_hash,
+                firebase_uid=firebase_uid,
+                email_normalized=email_normalized,
+                policy_version=policy_version,
+            )
+            self._waitlist_by_email_hash[email_hash] = entry
+            return entry.model_copy(deep=True)
 
     async def create_browser_camera(self, owner_user_id: str, name: str) -> BrowserCamera:
         account = await self.account_for_owner(owner_user_id)

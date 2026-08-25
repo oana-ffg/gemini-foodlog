@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     trial_image_limit: int = Field(default=200, ge=1)
     public_account_limit: int = Field(default=25, ge=1)
     unlimited_owner_user_ids: set[str] = Field(default_factory=set)
+    launch_consent_policy_version: str = Field(default="launch-interest-v1", min_length=1)
+    waitlist_policy_version: str = Field(default="capacity-waitlist-v1", min_length=1)
     preview_shared_secret: str | None = Field(default=None, min_length=32)
     gcp_project_id: str | None = None
     firebase_project_id: str | None = None

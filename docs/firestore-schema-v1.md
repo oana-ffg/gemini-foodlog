@@ -30,7 +30,7 @@ cameras.
 | `system/public_capacity` | Atomic 25-public-account admission counter | `active_account_count`, `account_limit`, `waitlist_open`; explicit internal/judge unlimited accounts never consume public slots; one low-write transaction document is acceptable at MVP scale. |
 | `identities/{firebase_uid}` | Login-to-account lookup | `account_id`, `account_class` (`public` or explicitly configured `internal`), `email_normalized`, `email_verified`, `mailing_list_opt_in`, `status`; one document per Firebase UID. |
 | `device_credentials/{sha256_token}` | Camera-token lookup | `account_id`, `camera_id`, `token_version`, `status`, `last_used_at`, `expires_at`; never stores the token. |
-| `waitlist/{sha256_email}` | Capacity overflow and product-interest list | `email_normalized`, `firebase_uid`, `reason`, `mailing_list_opt_in`; one document per normalized email. |
+| `waitlist/{sha256_email}` | Capacity overflow and product-interest list | `email_normalized`, `firebase_uid`, `reason` (`capacity`), `mailing_list_opt_in` (`true`), `policy_version`, `status` (`active`); one document per normalized verified email and accepted only while public capacity is full. |
 
 ## Account root and bounded counters
 
@@ -70,7 +70,7 @@ belong in private Cloud Storage rather than Firestore.
 | `traces/{trace_id}` | Agent-run index | event/job IDs, model and prompt versions, status, started/completed timestamps, token/cost counters, immutable GCS `object_key` and SHA-256; full trace stays in GCS. |
 | `jobs/{job_id}` | Durable asynchronous work state | `kind`, subject ID, status, attempt count, `available_at`, lease owner/expiry, last error code/message <= 2,000 chars; payload <= 20 scalar/reference keys. |
 | `exports/{export_id}` | User data-export state | status, requested/completed/expiry timestamps, temporary GCS object key, byte size, SHA-256; object expires after one day. |
-| `consents/{consent_id}` | Immutable consent change | consent kind, granted boolean, policy version, actor identity, timestamp. |
+| `consents/{sha256_actor_email_kind_policy_decision}` | Immutable consent change | `kind` (`launch_mail`), `granted`, `policy_version`, `actor_user_id`, `email_normalized`, timestamp; identical retries deduplicate while a changed decision or verified email appends a new event. |
 | `outbox/{message_id}` | Transactional notification/email intent | `kind`, status, dedupe hash, available timestamp, attempt count, recipient identity reference, payload <= 20 scalar/reference keys; no provider secret. |
 
 ## Write invariants

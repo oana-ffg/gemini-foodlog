@@ -16,6 +16,7 @@ class InvalidAuthenticationToken(Exception):
 class VerifiedIdentity:
     uid: str
     email_verified: bool
+    email: str | None = None
 
 
 class IdentityTokenVerifier(Protocol):
@@ -53,4 +54,14 @@ class FirebaseIdentityTokenVerifier:
         return VerifiedIdentity(
             uid=uid,
             email_verified=claims.get("email_verified") is True,
+            email=self._normalized_email(claims.get("email")),
         )
+
+    @staticmethod
+    def _normalized_email(value: object) -> str | None:
+        if not isinstance(value, str):
+            return None
+        normalized = value.strip().casefold()
+        if not normalized or len(normalized) > 320:
+            return None
+        return normalized

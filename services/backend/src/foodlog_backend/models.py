@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -64,6 +65,36 @@ class Account(BaseModel):
         ):
             raise ValueError("Unlimited accounts cannot have a trial image limit")
         return self
+
+
+class LaunchMailConsentRequest(BaseModel):
+    granted: bool
+
+
+class LaunchMailConsent(BaseModel):
+    id: str
+    account_id: str
+    actor_user_id: str
+    email_normalized: str
+    granted: bool
+    policy_version: str
+    kind: Literal["launch_mail"] = "launch_mail"
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class WaitlistJoinRequest(BaseModel):
+    join: Literal[True]
+
+
+class WaitlistEntry(BaseModel):
+    id: str
+    firebase_uid: str
+    email_normalized: str
+    policy_version: str
+    reason: Literal["capacity"] = "capacity"
+    mailing_list_opt_in: Literal[True] = True
+    status: Literal["active"] = "active"
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class BrowserCameraCreate(BaseModel):

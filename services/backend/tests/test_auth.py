@@ -20,7 +20,11 @@ from foodlog_backend.settings import Settings
 class AcceptingTokenVerifier:
     async def verify(self, token: str) -> VerifiedIdentity:
         assert token == "valid-id-token"
-        return VerifiedIdentity(uid="firebase-user-a", email_verified=True)
+        return VerifiedIdentity(
+            uid="firebase-user-a",
+            email_verified=True,
+            email="user-a@example.test",
+        )
 
 
 class UnverifiedTokenVerifier:
@@ -38,13 +42,25 @@ class RejectingTokenVerifier:
         raise InvalidAuthenticationToken
 
 
-def firebase_test_client(token_verifier: Any) -> TestClient:
+class MappingTokenVerifier:
+    def __init__(self, identities: dict[str, VerifiedIdentity]) -> None:
+        self._identities = identities
+
+    async def verify(self, token: str) -> VerifiedIdentity:
+        try:
+            return self._identities[token]
+        except KeyError as error:
+            raise InvalidAuthenticationToken from error
+
+
+def firebase_test_client(token_verifier: Any, **settings_overrides: Any) -> TestClient:
     return TestClient(
         create_app(
             Settings(
                 environment="test",
                 auth_backend="firebase",
                 firebase_project_id="test-firebase-project",
+                **settings_overrides,
             ),
             token_verifier=token_verifier,
         )
@@ -136,14 +152,18 @@ def test_firebase_cors_allows_bearer_tokens_but_not_local_identity_headers() -> 
     assert local_header_preflight.status_code == 400
 
 
-def test_firebase_verifier_returns_only_the_verified_uid(
+def test_firebase_verifier_returns_verified_uid_and_normalized_email(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, object]] = []
 
     def verify_id_token(token: str, app: object) -> dict[str, str]:
         calls.append((token, app))
-        return {"uid": "verified-user", "email": "not-used@example.test"}
+        return {
+            "uid": "verified-user",
+            "email": "  Mixed.Case@Example.Test  ",
+            "email_verified": "not-a-boolean",
+        }
 
     fake_app = object()
     monkeypatch.setattr(firebase_auth, "verify_id_token", verify_id_token)
@@ -155,6 +175,7 @@ def test_firebase_verifier_returns_only_the_verified_uid(
     assert asyncio.run(verifier.verify("signed-token")) == VerifiedIdentity(
         uid="verified-user",
         email_verified=False,
+        email="mixed.case@example.test",
     )
     assert calls == [("signed-token", fake_app)]
 
@@ -223,3 +244,124 @@ def test_local_authentication_rejects_unused_token_verifier() -> None:
             Settings(environment="test"),
             token_verifier=AcceptingTokenVerifier(),
         )
+
+
+def test_launch_mail_consent_records_decline_grant_and_idempotent_retry() -> None:
+    headers = {"Authorization": "Bearer valid-id-token"}
+    with firebase_test_client(AcceptingTokenVerifier()) as client:
+        account = client.post("/v1/accounts", headers=headers)
+        declined = client.post(
+            "/v1/consents/launch-mail",
+            headers=headers,
+            json={"granted": False},
+        )
+        declined_retry = client.post(
+            "/v1/consents/launch-mail",
+            headers=headers,
+            json={"granted": False},
+        )
+        granted = client.post(
+            "/v1/consents/launch-mail",
+            headers=headers,
+            json={"granted": True},
+        )
+
+    assert account.status_code == 200
+    assert declined.status_code == declined_retry.status_code == granted.status_code == 200
+    assert declined.json()["id"] == declined_retry.json()["id"]
+    assert declined.json()["id"] != granted.json()["id"]
+    assert declined.json()["granted"] is False
+    assert granted.json()["granted"] is True
+    assert granted.json()["kind"] == "launch_mail"
+    assert granted.json()["policy_version"] == "launch-interest-v1"
+    assert granted.json()["email_normalized"] == "user-a@example.test"
+
+
+def test_launch_mail_consent_requires_account_and_verified_email_claim() -> None:
+    no_email = MappingTokenVerifier(
+        {
+            "no-email-token": VerifiedIdentity(
+                uid="firebase-user-without-email",
+                email_verified=True,
+            )
+        }
+    )
+    with firebase_test_client(no_email) as client:
+        missing_account = client.post(
+            "/v1/consents/launch-mail",
+            headers={"Authorization": "Bearer no-email-token"},
+            json={"granted": True},
+        )
+
+    assert missing_account.status_code == 400
+    assert missing_account.json() == {"detail": "verified_email_required"}
+
+    with firebase_test_client(AcceptingTokenVerifier()) as client:
+        not_provisioned = client.post(
+            "/v1/consents/launch-mail",
+            headers={"Authorization": "Bearer valid-id-token"},
+            json={"granted": True},
+        )
+
+    assert not_provisioned.status_code == 404
+
+
+def test_waitlist_requires_full_capacity_and_explicit_affirmative_join() -> None:
+    verifier = MappingTokenVerifier(
+        {
+            "admitted-token": VerifiedIdentity(
+                uid="admitted-user",
+                email_verified=True,
+                email="admitted@example.test",
+            ),
+            "waiting-token": VerifiedIdentity(
+                uid="waiting-user",
+                email_verified=True,
+                email="waiting@example.test",
+            ),
+        }
+    )
+    admitted_headers = {"Authorization": "Bearer admitted-token"}
+    waiting_headers = {"Authorization": "Bearer waiting-token"}
+    with firebase_test_client(verifier, public_account_limit=1) as client:
+        too_early = client.post(
+            "/v1/waitlist",
+            headers=waiting_headers,
+            json={"join": True},
+        )
+        admitted = client.post("/v1/accounts", headers=admitted_headers)
+        capacity_rejection = client.post("/v1/accounts", headers=waiting_headers)
+        non_affirmative = client.post(
+            "/v1/waitlist",
+            headers=waiting_headers,
+            json={"join": False},
+        )
+        joined = client.post(
+            "/v1/waitlist",
+            headers=waiting_headers,
+            json={"join": True},
+        )
+        joined_retry = client.post(
+            "/v1/waitlist",
+            headers=waiting_headers,
+            json={"join": True},
+        )
+        admitted_cannot_join = client.post(
+            "/v1/waitlist",
+            headers=admitted_headers,
+            json={"join": True},
+        )
+
+    assert too_early.status_code == 409
+    assert too_early.json() == {"detail": "signup_capacity_available"}
+    assert admitted.status_code == 200
+    assert capacity_rejection.status_code == 409
+    assert capacity_rejection.json() == {"detail": "signup_capacity_exhausted"}
+    assert non_affirmative.status_code == 422
+    assert joined.status_code == joined_retry.status_code == 200
+    assert joined.json()["id"] == joined_retry.json()["id"]
+    assert joined.json()["mailing_list_opt_in"] is True
+    assert joined.json()["reason"] == "capacity"
+    assert joined.json()["policy_version"] == "capacity-waitlist-v1"
+    assert admitted_cannot_join.status_code == 409
+    assert admitted_cannot_join.json() == {"detail": "account_already_provisioned"}
