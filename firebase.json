@@ -1,4 +1,7 @@
 {
+  "firestore": {
+    "indexes": "infra/firestore/firestore.indexes.json"
+  },
   "hosting": {
     "public": "apps/web/dist",
     "ignore": [

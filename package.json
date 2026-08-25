@@ -6,6 +6,7 @@
   ],
   "scripts": {
     "build": "npm run build --workspace @foodlog/web",
+    "deploy:indexes": "npx --yes firebase-tools@15.28.1 deploy --only firestore:indexes --project gemini-foodlog-2026",
     "deploy:web": "npm run build && npx --yes firebase-tools@15.28.1 deploy --only hosting --project gemini-foodlog-2026",
     "dev:web": "npm run dev --workspace @foodlog/web",
     "typecheck": "npm run typecheck --workspace @foodlog/web"
