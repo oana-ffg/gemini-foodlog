@@ -1,3 +1,4 @@
+import asyncio
 from base64 import b64decode
 from pathlib import Path
 
@@ -16,6 +17,21 @@ USER_HEADER = {"X-FoodLog-Local-User": "owner-a"}
 
 def build_client() -> TestClient:
     return TestClient(create_app(Settings(environment="test")))
+
+
+def test_concurrent_account_provisioning_is_idempotent() -> None:
+    app = create_app(Settings(environment="test"))
+    repository = app.state.container.repository
+
+    async def provision_concurrently() -> list:
+        return await asyncio.gather(
+            *(repository.provision_account("same-owner") for _ in range(50))
+        )
+
+    accounts = asyncio.run(provision_concurrently())
+
+    assert len({account.id for account in accounts}) == 1
+    assert all(account.owner_user_id == "same-owner" for account in accounts)
 
 
 def test_preview_requires_both_iam_defense_and_shared_secret() -> None:

@@ -95,7 +95,13 @@ class FirestoreRepository:
             identity = await identity_ref.get(transaction=transaction)
             if identity.exists:
                 existing_id = identity.get("account_id")
-                return await self._account_in_transaction(transaction, existing_id)
+                if identity.get("status") != "active" or not isinstance(existing_id, str):
+                    raise AccountNotProvisioned
+                return await self._account_in_transaction(
+                    transaction,
+                    existing_id,
+                    expected_owner_user_id=owner_user_id,
+                )
 
             capacity = await capacity_ref.get(transaction=transaction)
             count = capacity.get("active_account_count") if capacity.exists else 0
@@ -165,10 +171,21 @@ class FirestoreRepository:
             raise AccountNotProvisioned
         return self._account_from_snapshots(account, entitlement)
 
-    async def _account_in_transaction(self, transaction, account_id: str) -> Account:
+    async def _account_in_transaction(
+        self,
+        transaction,
+        account_id: str,
+        *,
+        expected_owner_user_id: str,
+    ) -> Account:
         account = await self._account(account_id).get(transaction=transaction)
         entitlement = await self._entitlement(account_id).get(transaction=transaction)
-        if not account.exists or not entitlement.exists:
+        if (
+            not account.exists
+            or not entitlement.exists
+            or account.get("status") != "active"
+            or account.get("owner_user_id") != expected_owner_user_id
+        ):
             raise AccountNotProvisioned
         return self._account_from_snapshots(account, entitlement)
 

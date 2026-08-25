@@ -18,7 +18,11 @@ async def smoke(args: argparse.Namespace) -> None:
         trial_image_limit=200,
     )
     store = GCSObjectStore(project_id=args.project, bucket_name=args.bucket)
-    account = await repository.provision_account(args.owner_id)
+    provisioned_accounts = await asyncio.gather(
+        *(repository.provision_account(args.owner_id) for _ in range(10))
+    )
+    assert len({account.id for account in provisioned_accounts}) == 1
+    account = provisioned_accounts[0]
     camera = await repository.create_browser_camera(args.owner_id, "Durable smoke camera")
     idempotency_key = f"durable-smoke-{content_sha256[:24]}"
 
@@ -75,6 +79,7 @@ async def smoke(args: argparse.Namespace) -> None:
     print(f"object_key={capture.object_key}")
     print(f"sha256={content_sha256}")
     print("accepted_image_count=1")
+    print("account_provisioning_idempotent=true")
     print("rollback_verified=true")
 
 
