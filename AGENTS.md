@@ -8,6 +8,11 @@
 - The system asks questions when needed, learns from the answers, and logs food.
 - The primary goal is a food journal for monitoring symptoms and investigating possible food triggers. Calorie tracking is secondary, not the defining purpose.
 
+## Repository workflow
+
+- Commit each completed backlog task after its relevant validation passes. For substantial or risky work, also commit at earlier coherent safe checkpoints so validated progress is not left vulnerable to loss.
+- Keep commits cohesive and preserve unrelated user changes; do not absorb unrelated work merely to make a checkpoint.
+
 ## Confirmed hackathon constraints
 
 This is a new project for Google's 2026 [All Things Agentic Hackathon](https://allthingsagentichackathon.devpost.com/). The [official rules](https://allthingsagentichackathon.devpost.com/rules) are authoritative.

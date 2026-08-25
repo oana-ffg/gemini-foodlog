@@ -37,10 +37,11 @@ The smallest convincing end-to-end story is:
 3. The backend securely stores and groups the frames.
 4. The agent inspects the event and retrieves relevant account-scoped context.
 5. It records a meal with confidence, alternatives, evidence, and an understandable rationale.
-6. If uncertainty matters, it logs the best guess provisionally and asks a focused question without blocking the journal.
+6. If uncertainty matters, it logs the best guess provisionally and may ask a narrow, evidence-backed question on that event without blocking the journal.
 7. The user confirms or corrects the result in the web UI.
 8. The meal and household knowledge are revised without erasing the original evidence or feedback.
 9. A later similar event benefits from that learning.
+10. After enough history exists, the agent may surface a specific pattern hypothesis with supporting examples for the user to confirm or correct.
 
 ### 1.3 Planned production slice
 
@@ -62,7 +63,7 @@ As of 2026-08-25, the repository has a deliberately zero-model-cost local checkp
 - a FastAPI ingestion API with non-production header authentication, a 25-account cap, a 200-image trial quota, idempotent capture acceptance, content validation, and authorization-checked image access;
 - concurrency-safe in-memory repository and object-store adapters;
 - immutable meal revisions, raw idempotent confirmation/correction records, and tenant-scoped clarification questions whose answers revise the original meal instead of creating a duplicate;
-- a clarification inbox, meal feedback controls, and revision history in the web application;
+- a prototype clarification inbox, meal feedback controls, and revision history in the web application; the generic standalone inbox is rejected UX and is not the production design;
 - tenant-isolation, retry/rollback, quota, content-validation, feedback, question, and end-to-end fixture tests;
 - a Google ADK `Agent` and `App` definition that is imported in tests without calling a model;
 - six immutable synthetic still-image fixtures generated with OpenAI image generation, not Veo: three deterministic ground-truth frames and three degraded distant-camera ambiguity tests.
@@ -310,9 +311,10 @@ Expected tools include:
 - get recent relevant purchases;
 - list household-wiki page summaries;
 - read selected household-wiki pages;
-- inspect relevant recent meals and unresolved questions;
+- inspect relevant recent meals, active context, unresolved event questions, and prior pattern hypotheses;
 - write a structured meal hypothesis;
-- open or resolve a clarification question;
+- open or resolve a focused event question;
+- propose or resolve an evidence-backed longitudinal pattern hypothesis;
 - propose a versioned household-knowledge update.
 
 Every tool derives or validates the account boundary independently. The agent cannot choose an arbitrary account identifier.
@@ -329,7 +331,7 @@ A meal inference contains:
 - competing plausible interpretations;
 - account-specific assumptions used;
 - an evidence-based user-facing rationale;
-- whether a clarification question is justified;
+- whether a focused event question is justified and the exact ambiguity it discriminates;
 - links to the exact event, images, purchases, and knowledge revisions involved.
 
 The product stores and displays this structured rationale. It does not request or store hidden model chain-of-thought.
@@ -343,10 +345,12 @@ The user-facing confidence is qualitative: for example, confident, likely, or un
 When the agent has a plausible but uncertain result:
 
 1. Save the best guess immediately with a clearly provisional status.
-2. Open a non-blocking clarification question when the answer could materially change the journal or future learning.
+2. Ask a narrow non-blocking question on that event only when the answer could materially change the journal or future learning, such as whether pale meat was chicken or planned duck.
 3. Keep the journal usable even if the question is never answered.
 4. Revise the same meal after feedback rather than creating a contradictory duplicate.
 5. Close or supersede stale questions when later evidence resolves them.
+
+The agent must not ask a generic question such as "What meal were you cooking?" as a substitute for doing the inference. Even when the activity is genuinely unknown, it records that state and offers event-level correction or not-cooking actions; it does not create a generic data-labeling request in the AI question feed.
 
 ### 7.4 Durable background execution
 
@@ -424,15 +428,20 @@ An agent-generated generalization cannot receive broader user-confirmed scope th
 
 Feedback may target the whole meal or an individual component, ingredient, or preparation method. Correcting the steak identification must not discard a separately correct potato component or force the user to rewrite the entire meal.
 
-### 9.3 Question load
+### 9.3 Agent questions and pattern hypotheses
 
-The system may ask many questions initially. Its success criterion is not zero questions; it is a decreasing need to repeat questions about stable household patterns while continuing to notice meaningful exceptions and new purchases.
+The system may ask many useful questions initially. Its success criterion is not zero questions; it is a decreasing need to repeat questions about stable household distinctions while continuing to notice meaningful exceptions and new purchases.
 
-Uncertainty alone does not require a question. The agent asks only when the answer could materially change the meal record or teach a reusable household distinction. Harmless uncertainty remains visible in the rationale without entering the question inbox.
+There are two valid agent-initiated interactions:
+
+- **Focused event questions** appear only on the relevant journal event and distinguish between concrete hypotheses already supported by evidence. They do not ask the user to identify the meal from scratch.
+- **Longitudinal pattern hypotheses** appear in the AI observations feed after enough history exists. Examples include "I'm noticing you usually eat steak on Thursdays; is that accurate?" and "Weekday breakfasts look like cereal, while weekends are usually pancakes or pastries; is that accurate?" Each hypothesis cites its supporting time window and examples and lets the user confirm, correct, or reject it.
+
+The observations feed is not a clarification inbox and does not contain generic event-labeling forms. A question such as "What meal or ingredient was being prepared?" appearing there is an explicit product failure. Uncertainty alone does not require a question; harmless uncertainty remains visible in the event rationale.
 
 ### 9.4 Proactive knowledge updates
 
-Users can teach or correct household knowledge outside a particular meal through a natural-language input. The raw wording is preserved, and the agent turns it into a versioned wiki revision with provenance. The UI shows the resulting change and offers correction or retirement, without requiring a redundant approval of knowledge the user just deliberately supplied.
+Users can teach or correct household knowledge outside a particular meal through a natural-language input. Stable statements may become versioned wiki knowledge. Temporary statements, such as a visitor bringing duck that may be cooked tomorrow, remain time-bounded context unless the user or later evidence supports promotion to a durable pattern. The raw wording is preserved, and the UI shows the resulting change and offers correction or retirement without requiring redundant approval of knowledge the user just deliberately supplied.
 
 ## 10. Accounts, devices, and tenant isolation
 
@@ -575,7 +584,8 @@ The MVP GUI must let an authenticated user:
 - browse the chronological meal journal;
 - distinguish provisional, confirmed, and corrected meals;
 - open a meal and inspect its event images, evidence, alternatives, and rationale;
-- answer unresolved clarification questions;
+  - answer narrow event-specific questions on the event that produced them;
+  - review evidence-backed agent observations and confirm, correct, or reject proposed household patterns;
 - give thumbs-up feedback;
 - give thumbs-down feedback with a natural-language correction;
 - add or correct household knowledge in natural language;
@@ -586,7 +596,7 @@ The MVP GUI must let an authenticated user:
 - see whether trial capacity is available, join the waitlist when it is full, and view or withdraw product-launch consent;
 - view the data currently stored for the account.
 
-Questions use an in-app inbox with a visible count. The MVP does not send push notifications, question emails, or other out-of-app alerts.
+The AI observations feed may show a visible count of unresolved pattern hypotheses. It never duplicates event correction forms. The MVP does not send push notifications, question emails, or other out-of-app alerts.
 
 ### 12.1 Full account-data export
 
