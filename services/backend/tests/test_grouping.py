@@ -5,7 +5,11 @@ from hashlib import sha256
 import pytest
 
 import foodlog_backend.repository as repository_module
-from foodlog_backend.grouping import CaptureGroupingService, GroupingPolicy
+from foodlog_backend.grouping import (
+    ACCOUNT_EVENT_HEAD_ID,
+    CaptureGroupingService,
+    GroupingPolicy,
+)
 from foodlog_backend.models import (
     ActivityEventStatus,
     CaptureEnvelopeV1,
@@ -96,6 +100,10 @@ async def claim_and_group(
 
 def build_repository() -> InMemoryRepository:
     return InMemoryRepository(public_account_limit=25, trial_image_limit=200)
+
+
+def test_account_event_head_id_is_valid_for_firestore() -> None:
+    assert not (ACCOUNT_EVENT_HEAD_ID.startswith("__") and ACCOUNT_EVENT_HEAD_ID.endswith("__"))
 
 
 def test_related_cameras_share_an_account_event_without_crossing_tenants(

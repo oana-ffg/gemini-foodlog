@@ -13,7 +13,7 @@ from .models import (
     utc_now,
 )
 
-ACCOUNT_EVENT_HEAD_ID = "__account__"
+ACCOUNT_EVENT_HEAD_ID = "account-affinity"
 
 
 @dataclass(frozen=True, slots=True)

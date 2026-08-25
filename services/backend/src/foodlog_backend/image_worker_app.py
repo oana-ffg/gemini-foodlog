@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 from typing import Literal
 
@@ -10,6 +11,8 @@ from .grouping import CaptureGroupingService, GroupingPolicy
 from .image_events import CaptureStoredEventV1
 from .pubsub import PubSubPushEnvelope, decode_event
 from .repository import Repository
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ImageWorkerSettings(BaseSettings):
@@ -75,6 +78,11 @@ def create_image_worker_app(
                 worker_id=f"pubsub:{envelope.message.message_id}"[:200],
             )
         except Exception as error:
+            LOGGER.exception(
+                "Capture grouping failed for account %s capture %s",
+                event.account_id,
+                event.capture_id,
+            )
             raise HTTPException(status_code=503, detail="capture_grouping_failed") from error
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
