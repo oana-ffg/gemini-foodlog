@@ -105,7 +105,11 @@ export interface BrowserCaptureMetadata {
   height: number;
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8080";
+const API_BASE = import.meta.env.VITE_API_BASE ?? (
+  import.meta.env.PROD
+    ? "https://foodlog-api-sptvo5nsga-ew.a.run.app"
+    : "http://127.0.0.1:8080"
+);
 
 export class AuthenticationRequiredError extends Error {
   constructor() {
