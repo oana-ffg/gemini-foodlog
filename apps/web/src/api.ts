@@ -1,3 +1,5 @@
+import { auth } from "./firebase";
+
 export type Confidence = "confident" | "likely" | "uncertain";
 export type MealStatus = "provisional" | "confirmed" | "corrected" | "contradicted";
 export type MealFeedbackKind = "confirm" | "correct";
@@ -96,22 +98,70 @@ export interface CaptureAccepted {
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8080";
-const LOCAL_USER = "local-owner";
 
-function requestHeaders(extra?: HeadersInit): Headers {
+export class AuthenticationRequiredError extends Error {
+  constructor() {
+    super("Your session ended. Sign in again to continue.");
+    this.name = "AuthenticationRequiredError";
+  }
+}
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+function requestHeaders(token: string, extra?: HeadersInit): Headers {
   const headers = new Headers(extra);
-  headers.set("X-FoodLog-Local-User", LOCAL_USER);
+  headers.set("Authorization", `Bearer ${token}`);
   return headers;
 }
 
+async function authenticatedFetch(path: string, init?: RequestInit): Promise<Response> {
+  const user = auth.currentUser;
+  if (!user) throw new AuthenticationRequiredError();
+
+  const send = async (forceRefresh: boolean) => {
+    const token = await user.getIdToken(forceRefresh);
+    return fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: requestHeaders(token, init?.headers),
+    });
+  };
+
+  const response = await send(false);
+  if (response.status !== 401) return response;
+
+  // Firebase refreshes near-expiry tokens automatically. A single forced refresh
+  // also recovers when the API rejects a token that expired between acquisition
+  // and verification. Never loop and never retry under a different signed-in user.
+  if (auth.currentUser !== user) throw new AuthenticationRequiredError();
+  return send(true);
+}
+
+async function responseError(response: Response): Promise<ApiError> {
+  const raw = await response.text();
+  let detail = raw;
+  if (raw && response.headers.get("Content-Type")?.includes("application/json")) {
+    try {
+      const value = JSON.parse(raw) as { detail?: unknown };
+      if (typeof value.detail === "string") detail = value.detail;
+    } catch {
+      // Preserve the raw response when an upstream sends malformed JSON.
+    }
+  }
+  return new ApiError(detail || `Request failed with status ${response.status}`, response.status);
+}
+
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: requestHeaders(init?.headers),
-  });
+  const response = await authenticatedFetch(path, init);
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `Request failed with status ${response.status}`);
+    throw await responseError(response);
   }
   return (await response.json()) as T;
 }
@@ -197,12 +247,11 @@ export function uploadCapture(
 }
 
 export async function loadCaptureImage(captureId: string): Promise<string> {
-  const response = await fetch(
-    `${API_BASE}/v1/captures/${encodeURIComponent(captureId)}/image`,
-    { headers: requestHeaders() },
+  const response = await authenticatedFetch(
+    `/v1/captures/${encodeURIComponent(captureId)}/image`,
   );
   if (!response.ok) {
-    throw new Error(`Image request failed with status ${response.status}`);
+    throw await responseError(response);
   }
   return URL.createObjectURL(await response.blob());
 }
