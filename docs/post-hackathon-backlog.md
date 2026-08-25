@@ -51,6 +51,15 @@ Replace the 25-account hackathon gate and 200-image trial with product-appropria
 
 ## Maintenance
 
+### Add operator-wide capture discovery only when an admin surface needs it
+
+The production account-scoped capture queries are indexed and working. A global
+operator query that orders the captures collection group by received_at
+descending currently requires an additional collection-group single-field index.
+Do not add index cost or an admin data-access path speculatively; define the
+support authorization and audit boundary first, then add the exact query and
+index together.
+
 ### Reconsider Firebase App Check before wider public access
 
 Evaluate App Check or an equivalent browser-abuse control together with a hard,
