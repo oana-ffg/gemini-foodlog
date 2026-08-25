@@ -31,7 +31,9 @@ def stored_capture(
             event_publisher=publisher,
         )
         account = await repository.provision_account(owner_user_id)
-        camera = await repository.create_browser_camera(owner_user_id, "Kitchen")
+        camera = await repository.create_browser_camera(
+            owner_user_id, "Kitchen", "test-browser-instance-0001"
+        )
         accepted = await service.accept_capture(
             owner_user_id=owner_user_id,
             camera=camera,
@@ -72,7 +74,9 @@ def test_capture_publish_failure_retains_stored_work_for_idempotent_retry() -> N
             event_publisher=publisher,
         )
         account = await repository.provision_account("retry-owner")
-        camera = await repository.create_browser_camera("retry-owner", "Kitchen")
+        camera = await repository.create_browser_camera(
+            "retry-owner", "Kitchen", "test-browser-instance-0001"
+        )
         request = {
             "owner_user_id": "retry-owner",
             "camera": camera,
@@ -128,9 +132,7 @@ def test_image_worker_groups_once_and_acknowledges_duplicate_delivery() -> None:
 def test_image_worker_rejects_bad_events_and_retries_processing_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    repository, publisher, account_id, capture_id = stored_capture(
-        owner_user_id="failure-owner"
-    )
+    repository, publisher, account_id, capture_id = stored_capture(owner_user_id="failure-owner")
     app = create_image_worker_app(worker_settings(), repository=repository)
     valid_envelope = push_envelope(publisher.events[0].model_dump(mode="json"))
 

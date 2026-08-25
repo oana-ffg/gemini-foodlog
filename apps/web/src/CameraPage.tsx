@@ -8,6 +8,7 @@ import {
   type BrowserCamera,
 } from "./api";
 import { SessionControls, useAuth } from "./auth";
+import { browserCameraInstanceId } from "./browserCameraIdentity";
 import { captureFrame } from "./cameraFrames";
 import { useCaptureWakeLock } from "./useCaptureWakeLock";
 import { MAX_MEMORY_QUEUE_DEPTH, useMotionCapture } from "./useMotionCapture";
@@ -34,6 +35,7 @@ export default function CameraPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const sequenceIdRef = useRef(`browser-${crypto.randomUUID()}`);
+  const cameraInstanceIdRef = useRef(browserCameraInstanceId());
   const sequenceNumberRef = useRef(0);
   const [account, setAccount] = useState<Account>();
   const [camera, setCamera] = useState<BrowserCamera>();
@@ -89,7 +91,7 @@ export default function CameraPage() {
     setMessage("Registering this camera…");
     try {
       const currentAccount = await provisionAccount();
-      const nextCamera = await createBrowserCamera(name);
+      const nextCamera = await createBrowserCamera(name, cameraInstanceIdRef.current);
       setAccount(currentAccount);
       setCamera(nextCamera);
       setMessage("Camera registered. Start it when it points at the cooking area.");

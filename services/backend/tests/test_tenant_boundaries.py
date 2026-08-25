@@ -54,8 +54,12 @@ def test_capture_writes_require_the_same_explicit_account_scope() -> None:
         repository = build_repository()
         account_a = await repository.provision_account("tenant-owner-a")
         account_b = await repository.provision_account("tenant-owner-b")
-        camera_a = await repository.create_browser_camera("tenant-owner-a", "Kitchen A")
-        camera_b = await repository.create_browser_camera("tenant-owner-b", "Kitchen B")
+        camera_a = await repository.create_browser_camera(
+            "tenant-owner-a", "Kitchen A", "test-browser-instance-0001"
+        )
+        camera_b = await repository.create_browser_camera(
+            "tenant-owner-b", "Kitchen B", "test-browser-instance-0001"
+        )
         capture_a = await reserve_capture(
             repository,
             account=account_a,
@@ -78,9 +82,7 @@ def test_capture_writes_require_the_same_explicit_account_scope() -> None:
                 idempotency_key="tenant-wrong-object-key",
                 content_type="image/jpeg",
                 content_sha256=sha256(b"wrong-object").hexdigest(),
-                object_key=(
-                    f"accounts/{account_b.id}/captures/tenant-capture-wrong-object.jpg"
-                ),
+                object_key=(f"accounts/{account_b.id}/captures/tenant-capture-wrong-object.jpg"),
             )
         with pytest.raises(CaptureNotFound):
             await repository.mark_stored(
@@ -112,7 +114,9 @@ def test_derived_records_cannot_attach_to_another_accounts_capture_or_meal() -> 
         repository = build_repository()
         account_a = await repository.provision_account("derived-owner-a")
         account_b = await repository.provision_account("derived-owner-b")
-        camera_a = await repository.create_browser_camera("derived-owner-a", "Kitchen A")
+        camera_a = await repository.create_browser_camera(
+            "derived-owner-a", "Kitchen A", "test-browser-instance-0001"
+        )
         capture_a = await reserve_capture(
             repository,
             account=account_a,
@@ -145,9 +149,7 @@ def test_derived_records_cannot_attach_to_another_accounts_capture_or_meal() -> 
                 reason="This must never be persisted.",
             )
 
-        assert [meal.id for meal in await repository.list_meals("derived-owner-a")] == [
-            meal_a.id
-        ]
+        assert [meal.id for meal in await repository.list_meals("derived-owner-a")] == [meal_a.id]
         assert await repository.list_meals("derived-owner-b") == []
         assert await repository.list_questions("derived-owner-b") == []
 
@@ -159,7 +161,9 @@ def test_worker_jobs_and_grouping_are_keyed_by_account_and_fail_closed() -> None
         repository = build_repository()
         account_a = await repository.provision_account("worker-owner-a")
         account_b = await repository.provision_account("worker-owner-b")
-        camera_a = await repository.create_browser_camera("worker-owner-a", "Kitchen A")
+        camera_a = await repository.create_browser_camera(
+            "worker-owner-a", "Kitchen A", "test-browser-instance-0001"
+        )
         capture_a = await reserve_capture(
             repository,
             account=account_a,

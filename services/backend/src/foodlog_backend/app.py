@@ -44,6 +44,7 @@ from .models import (
     Account,
     BrowserCamera,
     BrowserCameraCreate,
+    Camera,
     CaptureAccepted,
     CaptureEnvelopeV1,
     ClarificationQuestion,
@@ -180,15 +181,12 @@ def create_app(
         active_notification_publisher = notification_publisher or PubSubNotificationPublisher(
             topic=active_settings.notification_topic
         )
-        active_capture_event_publisher = (
-            capture_event_publisher
-            or PubSubCaptureEventPublisher(topic=active_settings.image_topic)
+        active_capture_event_publisher = capture_event_publisher or PubSubCaptureEventPublisher(
+            topic=active_settings.image_topic
         )
     else:
         active_notification_publisher = notification_publisher or InMemoryNotificationPublisher()
-        active_capture_event_publisher = (
-            capture_event_publisher or InMemoryCaptureEventPublisher()
-        )
+        active_capture_event_publisher = capture_event_publisher or InMemoryCaptureEventPublisher()
     container = Container(
         repository=repository,
         object_store=object_store,
@@ -438,7 +436,27 @@ def create_app(
         request: BrowserCameraCreate,
         user_id: str = Depends(request_user_id),
     ) -> BrowserCamera:
-        return await container.repository.create_browser_camera(user_id, request.name)
+        return await container.repository.create_browser_camera(
+            user_id,
+            request.name,
+            request.client_instance_id,
+        )
+
+    @app.get("/v1/cameras", response_model=list[Camera])
+    async def list_cameras(
+        user_id: str = Depends(request_user_id),
+    ) -> list[Camera]:
+        return await container.repository.list_cameras(user_id)
+
+    @app.post("/v1/cameras/{camera_id}/revoke", response_model=Camera)
+    async def revoke_camera(
+        camera_id: str,
+        user_id: str = Depends(request_user_id),
+    ) -> Camera:
+        return await container.repository.revoke_camera(
+            owner_user_id=user_id,
+            camera_id=camera_id,
+        )
 
     @app.post("/v1/device-cameras", response_model=DeviceCameraCredentialIssue)
     async def issue_device_camera(
@@ -549,6 +567,11 @@ def create_app(
                 principal.uid,
                 envelope.camera_id,
             )
+            if camera.kind != "browser":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="camera_client_kind_mismatch",
+                )
 
         return await container.capture_service.accept_capture(
             owner_user_id=owner_user_id,

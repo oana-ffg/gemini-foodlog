@@ -27,6 +27,19 @@ The owner can independently revoke it with
 `POST /v1/device-cameras/{camera_id}/revoke`. A revoked credential receives `401`
 and must not be retried indefinitely.
 
+## Browser registration and camera inventory
+
+Each browser installation persists a random, non-secret `client_instance_id` and
+registers it with its owner-chosen name through `POST /v1/browser-cameras`. The
+backend stores only its SHA-256 hash and returns the same account-scoped camera on
+retries, updating the name without creating duplicates. A different browser
+installation creates an independent source.
+
+An authenticated owner lists every browser and physical source, including revoked
+ones, with `GET /v1/cameras`. `POST /v1/cameras/{camera_id}/revoke` revokes either
+kind without affecting the owner's other cameras. Browser uploads use only active
+browser camera IDs; physical credentials cannot be used through the browser path.
+
 ## Request
 
 The request is `multipart/form-data` with:

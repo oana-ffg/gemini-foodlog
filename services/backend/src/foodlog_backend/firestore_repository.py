@@ -27,6 +27,7 @@ from .errors import (
     WaitlistUnavailable,
 )
 from .grouping import (
+    ACCOUNT_EVENT_HEAD_ID,
     CaptureGroupingResult,
     GroupingPolicy,
     capture_activity_time,
@@ -39,12 +40,13 @@ from .models import (
     ActivityEventStatus,
     ActivitySegment,
     BrowserCamera,
+    Camera,
+    CameraStatus,
     CaptureEnvelopeV1,
     CaptureRecord,
     CaptureStatus,
     ClarificationQuestion,
     DeviceCamera,
-    DeviceCameraStatus,
     DeviceCredentialRecord,
     DeviceCredentialStatus,
     DurableJob,
@@ -615,7 +617,7 @@ class FirestoreRepository:
                 or account_snapshot.get("status") != "active"
                 or not camera_snapshot.exists
                 or camera_snapshot.get("kind") != "device"
-                or camera_snapshot.get("status") != DeviceCameraStatus.ACTIVE.value
+                or camera_snapshot.get("status") != CameraStatus.ACTIVE.value
             ):
                 raise InvalidDeviceCredential
             owner_user_id = account_snapshot.get("owner_user_id")
@@ -639,6 +641,33 @@ class FirestoreRepository:
         owner_user_id: str,
         camera_id: str,
     ) -> DeviceCamera:
+        camera = await self._revoke_camera(
+            owner_user_id=owner_user_id,
+            camera_id=camera_id,
+            expected_kind="device",
+        )
+        assert isinstance(camera, DeviceCamera)
+        return camera
+
+    async def revoke_camera(
+        self,
+        *,
+        owner_user_id: str,
+        camera_id: str,
+    ) -> Camera:
+        return await self._revoke_camera(
+            owner_user_id=owner_user_id,
+            camera_id=camera_id,
+            expected_kind=None,
+        )
+
+    async def _revoke_camera(
+        self,
+        *,
+        owner_user_id: str,
+        camera_id: str,
+        expected_kind: str | None,
+    ) -> Camera:
         account = await self.account_for_owner(owner_user_id)
         camera_ref = self._collection(account.id, "cameras").document(camera_id)
         credential_query = self._client.collection("device_credentials").where(
@@ -657,41 +686,43 @@ class FirestoreRepository:
             if (
                 not camera_snapshot.exists
                 or camera_snapshot.get("account_id") != account.id
-                or camera_snapshot.get("kind") != "device"
+                or (expected_kind is not None and camera_snapshot.get("kind") != expected_kind)
             ):
                 raise CameraNotFound
-            camera = _model(camera_snapshot, DeviceCamera)
-            if camera.status == DeviceCameraStatus.REVOKED:
+            model_type = BrowserCamera if camera_snapshot.get("kind") == "browser" else DeviceCamera
+            camera = _model(camera_snapshot, model_type)
+            if camera.status == CameraStatus.REVOKED:
                 return camera
             now = utc_now()
             revoked = camera.model_copy(
                 update={
-                    "status": DeviceCameraStatus.REVOKED,
+                    "status": CameraStatus.REVOKED,
                     "revoked_at": now,
                 }
             )
             transaction.update(
                 camera_ref,
                 {
-                    "status": DeviceCameraStatus.REVOKED.value,
+                    "status": CameraStatus.REVOKED.value,
                     "revoked_at": now,
                     "updated_at": now,
                 },
             )
-            for snapshot in credential_snapshots:
-                if (
-                    snapshot.exists
-                    and snapshot.get("account_id") == account.id
-                    and snapshot.get("camera_id") == camera_id
-                ):
-                    transaction.update(
-                        snapshot.reference,
-                        {
-                            "status": DeviceCredentialStatus.REVOKED.value,
-                            "revoked_at": now,
-                            "updated_at": now,
-                        },
-                    )
+            if isinstance(camera, DeviceCamera):
+                for snapshot in credential_snapshots:
+                    if (
+                        snapshot.exists
+                        and snapshot.get("account_id") == account.id
+                        and snapshot.get("camera_id") == camera_id
+                    ):
+                        transaction.update(
+                            snapshot.reference,
+                            {
+                                "status": DeviceCredentialStatus.REVOKED.value,
+                                "revoked_at": now,
+                                "updated_at": now,
+                            },
+                        )
             return revoked
 
         return await revoke(transaction)
@@ -707,7 +738,7 @@ class FirestoreRepository:
             not snapshot.exists
             or snapshot.get("account_id") != account_id
             or snapshot.get("kind") != "device"
-            or snapshot.get("status") != DeviceCameraStatus.ACTIVE.value
+            or snapshot.get("status") != CameraStatus.ACTIVE.value
         ):
             raise CameraNotFound
         return _model(snapshot, DeviceCamera)
@@ -742,49 +773,107 @@ class FirestoreRepository:
             created_at=account.get("created_at"),
         )
 
-    async def create_browser_camera(self, owner_user_id: str, name: str) -> BrowserCamera:
+    async def create_browser_camera(
+        self,
+        owner_user_id: str,
+        name: str,
+        client_instance_id: str,
+    ) -> BrowserCamera:
         account = await self.account_for_owner(owner_user_id)
         account_ref = self._account(account.id)
-        camera_id = str(uuid4())
+        instance_hash = sha256(client_instance_id.encode()).hexdigest()
+        camera_id = f"browser-{instance_hash}"
+        camera_ref = self._collection(account.id, "cameras").document(camera_id)
         created_at = utc_now()
         transaction = self._client.transaction()
 
         @firestore.async_transactional
         async def create(transaction):
             account_snapshot = await account_ref.get(transaction=transaction)
-            existing_id = (account_snapshot.to_dict() or {}).get("primary_browser_camera_id")
-            if existing_id:
-                existing = (
-                    await self._collection(account.id, "cameras")
-                    .document(existing_id)
+            existing = await camera_ref.get(transaction=transaction)
+            account_data = account_snapshot.to_dict() or {}
+            legacy_camera_id = account_data.get("primary_browser_camera_id")
+            legacy_camera = None
+            if isinstance(legacy_camera_id, str) and legacy_camera_id != camera_id:
+                legacy_camera = (
+                    await self._collection(
+                        account.id,
+                        "cameras",
+                    )
+                    .document(legacy_camera_id)
                     .get(transaction=transaction)
                 )
-                if existing.exists:
-                    return _model(existing, BrowserCamera)
+            if (
+                not account_snapshot.exists
+                or account_snapshot.get("owner_user_id") != owner_user_id
+                or account_snapshot.get("status") != "active"
+            ):
+                raise AccountNotProvisioned
+            if existing.exists:
+                camera = _model(existing, BrowserCamera)
+                if camera.status == CameraStatus.ACTIVE and camera.name != name:
+                    transaction.update(camera_ref, {"name": name, "updated_at": created_at})
+                    camera = camera.model_copy(update={"name": name}, deep=True)
+                return camera
+            if (
+                legacy_camera is not None
+                and legacy_camera.exists
+                and legacy_camera.get("kind") == "browser"
+                and legacy_camera.get("client_instance_id_hash") is None
+                and (legacy_camera.get("status") or CameraStatus.ACTIVE.value)
+                == CameraStatus.ACTIVE.value
+            ):
+                legacy = _model(legacy_camera, BrowserCamera).model_copy(
+                    update={
+                        "name": name,
+                        "client_instance_id_hash": instance_hash,
+                    },
+                    deep=True,
+                )
+                transaction.update(
+                    legacy_camera.reference,
+                    {
+                        "name": name,
+                        "client_instance_id_hash": instance_hash,
+                        "status": CameraStatus.ACTIVE.value,
+                        "updated_at": created_at,
+                    },
+                )
+                return legacy
             camera = BrowserCamera(
                 id=camera_id,
                 account_id=account.id,
                 name=name,
+                client_instance_id_hash=instance_hash,
                 created_at=created_at,
             )
-            camera_ref = self._collection(account.id, "cameras").document(camera.id)
             transaction.create(camera_ref, _document(camera))
-            transaction.update(
-                account_ref,
-                {"primary_browser_camera_id": camera.id, "updated_at": created_at},
-            )
             return camera
 
         return await create(transaction)
 
-    async def camera_for_owner(self, owner_user_id: str, camera_id: str) -> BrowserCamera:
+    async def list_cameras(self, owner_user_id: str) -> list[Camera]:
+        account = await self.account_for_owner(owner_user_id)
+        cameras: list[Camera] = []
+        async for snapshot in self._collection(account.id, "cameras").stream():
+            model_type = BrowserCamera if snapshot.get("kind") == "browser" else DeviceCamera
+            camera = _model(snapshot, model_type)
+            if camera.account_id != account.id:
+                raise CrossAccountAccess
+            cameras.append(camera)
+        return sorted(cameras, key=lambda camera: (camera.created_at, camera.id))
+
+    async def camera_for_owner(self, owner_user_id: str, camera_id: str) -> Camera:
         account = await self.account_for_owner(owner_user_id)
         snapshot = await self._collection(account.id, "cameras").document(camera_id).get()
-        if not snapshot.exists or snapshot.get("kind") != "browser":
+        if not snapshot.exists:
             raise CameraNotFound
-        camera = _model(snapshot, BrowserCamera)
+        model_type = BrowserCamera if snapshot.get("kind") == "browser" else DeviceCamera
+        camera = _model(snapshot, model_type)
         if camera.account_id != account.id:
             raise CrossAccountAccess
+        if camera.status != CameraStatus.ACTIVE:
+            raise CameraNotFound
         return camera
 
     async def reserve_capture(
@@ -844,10 +933,8 @@ class FirestoreRepository:
                 not camera_snapshot.exists
                 or camera_snapshot.get("account_id") != account.id
                 or camera_snapshot.get("kind") != camera.kind
-                or (
-                    isinstance(camera, DeviceCamera)
-                    and camera_snapshot.get("status") != DeviceCameraStatus.ACTIVE.value
-                )
+                or (camera_snapshot.get("status") or CameraStatus.ACTIVE.value)
+                != CameraStatus.ACTIVE.value
             ):
                 raise CameraNotFound
             entitlement_data = entitlement.to_dict() or {}
@@ -1213,41 +1300,69 @@ class FirestoreRepository:
             activity_at = capture_activity_time(capture)
             segment_id, source_key = segment_identity(capture)
             segment_ref = self._collection(account_id, "segments").document(segment_id)
-            head_ref = self._collection(account_id, "event_heads").document(capture.camera_id)
-            segment_snapshot = await segment_ref.get(transaction=transaction)
-            head_snapshot = await head_ref.get(transaction=transaction)
-            segment = (
-                _model(segment_snapshot, ActivitySegment) if segment_snapshot.exists else None
+            camera_head_ref = self._collection(account_id, "event_heads").document(
+                capture.camera_id
             )
+            account_head_ref = self._collection(account_id, "event_heads").document(
+                ACCOUNT_EVENT_HEAD_ID
+            )
+            segment_snapshot = await segment_ref.get(transaction=transaction)
+            camera_head_snapshot = await camera_head_ref.get(transaction=transaction)
+            account_head_snapshot = await account_head_ref.get(transaction=transaction)
+            segment = _model(segment_snapshot, ActivitySegment) if segment_snapshot.exists else None
 
-            head_event: ActivityEvent | None = None
-            head_event_id = head_snapshot.get("event_id") if head_snapshot.exists else None
-            if isinstance(head_event_id, str):
-                head_event_snapshot = await self._collection(account_id, "events").document(
-                    head_event_id
-                ).get(transaction=transaction)
-                if head_event_snapshot.exists:
-                    head_event = _model(head_event_snapshot, ActivityEvent)
+            head_events: dict[str, ActivityEvent] = {}
+            for head_snapshot in (camera_head_snapshot, account_head_snapshot):
+                head_event_id = head_snapshot.get("event_id") if head_snapshot.exists else None
+                if isinstance(head_event_id, str) and head_event_id not in head_events:
+                    head_event_snapshot = (
+                        await self._collection(account_id, "events")
+                        .document(head_event_id)
+                        .get(transaction=transaction)
+                    )
+                    if head_event_snapshot.exists:
+                        head_events[head_event_id] = _model(
+                            head_event_snapshot,
+                            ActivityEvent,
+                        )
+            camera_head_event_id = (
+                camera_head_snapshot.get("event_id") if camera_head_snapshot.exists else None
+            )
+            account_head_event_id = (
+                account_head_snapshot.get("event_id") if account_head_snapshot.exists else None
+            )
+            camera_head_event = head_events.get(camera_head_event_id)
+            account_head_event = head_events.get(account_head_event_id)
+            affinity_heads = [
+                event
+                for event in head_events.values()
+                if event.first_capture_at - policy.reopen_window
+                <= activity_at
+                <= event.last_capture_at + policy.reopen_window
+            ]
+            affinity_event = (
+                max(affinity_heads, key=lambda event: event.last_capture_at)
+                if affinity_heads
+                else None
+            )
 
             event_created = False
             segment_created = segment is None
             event: ActivityEvent | None = None
             if segment is not None:
-                if head_event is not None and segment.event_id == head_event.id:
-                    event = head_event
+                if segment.event_id in head_events:
+                    event = head_events[segment.event_id]
                 else:
-                    segment_event_snapshot = await self._collection(
-                        account_id, "events"
-                    ).document(segment.event_id).get(transaction=transaction)
+                    segment_event_snapshot = (
+                        await self._collection(account_id, "events")
+                        .document(segment.event_id)
+                        .get(transaction=transaction)
+                    )
                     if not segment_event_snapshot.exists:
                         raise ValueError("Segment references a missing activity event")
                     event = _model(segment_event_snapshot, ActivityEvent)
-            elif head_event is not None and (
-                head_event.first_capture_at - policy.reopen_window
-                <= activity_at
-                <= head_event.last_capture_at + policy.reopen_window
-            ):
-                event = head_event
+            elif affinity_event is not None:
+                event = affinity_event
             else:
                 event_created = True
                 event = ActivityEvent(
@@ -1356,9 +1471,24 @@ class FirestoreRepository:
                     "updated_at": now,
                 },
             )
-            if head_event is None or event.last_capture_at >= head_event.last_capture_at:
+            if (
+                camera_head_event is None
+                or event.last_capture_at >= camera_head_event.last_capture_at
+            ):
                 transaction.set(
-                    head_ref,
+                    camera_head_ref,
+                    {
+                        "schema_version": 1,
+                        "event_id": event.id,
+                        "updated_at": now,
+                    },
+                )
+            if (
+                account_head_event is None
+                or event.last_capture_at >= account_head_event.last_capture_at
+            ):
+                transaction.set(
+                    account_head_ref,
                     {
                         "schema_version": 1,
                         "event_id": event.id,

@@ -29,7 +29,9 @@ class MutableClock:
 
 async def stored_capture_job(repository: InMemoryRepository) -> DurableJob:
     account = await repository.provision_account("job-owner")
-    camera = await repository.create_browser_camera("job-owner", "Job test camera")
+    camera = await repository.create_browser_camera(
+        "job-owner", "Job test camera", "test-browser-instance-0001"
+    )
     capture, _, created = await repository.reserve_capture(
         capture_id="capture-for-job-0001",
         account=account,
@@ -57,9 +59,7 @@ def test_storing_a_capture_transactionally_enqueues_one_grouping_job() -> None:
     repository = build_repository()
     job = asyncio.run(stored_capture_job(repository))
 
-    asyncio.run(
-        repository.mark_stored(account_id=job.account_id, capture_id=job.subject_id)
-    )
+    asyncio.run(repository.mark_stored(account_id=job.account_id, capture_id=job.subject_id))
     stored = asyncio.run(repository.job_for_account(job.account_id, job.id))
 
     assert stored is not None

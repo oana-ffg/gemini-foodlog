@@ -192,10 +192,80 @@ def provision(client: TestClient, user: str = "owner-a") -> tuple[dict, dict]:
     camera = client.post(
         "/v1/browser-cameras",
         headers=headers,
-        json={"name": "Test browser camera"},
+        json={
+            "name": "Test browser camera",
+            "client_instance_id": f"test-browser-{user}-0001",
+        },
     )
     assert camera.status_code == 200
     return account.json(), camera.json()
+
+
+def test_owner_can_manage_multiple_tenant_scoped_camera_sources() -> None:
+    with build_client() as client:
+        client.post("/v1/accounts", headers=USER_HEADER)
+        first = client.post(
+            "/v1/browser-cameras",
+            headers=USER_HEADER,
+            json={
+                "name": "Phone by sink",
+                "client_instance_id": "browser-instance-phone-0001",
+            },
+        )
+        renamed = client.post(
+            "/v1/browser-cameras",
+            headers=USER_HEADER,
+            json={
+                "name": "Phone by air fryer",
+                "client_instance_id": "browser-instance-phone-0001",
+            },
+        )
+        second = client.post(
+            "/v1/browser-cameras",
+            headers=USER_HEADER,
+            json={
+                "name": "Tablet wide view",
+                "client_instance_id": "browser-instance-tablet-0002",
+            },
+        )
+        device = client.post(
+            "/v1/device-cameras",
+            headers=USER_HEADER,
+            json={"name": "ESP kitchen camera"},
+        )
+        inventory = client.get("/v1/cameras", headers=USER_HEADER)
+        revoked = client.post(
+            f"/v1/cameras/{second.json()['id']}/revoke",
+            headers=USER_HEADER,
+        )
+
+        foreign_headers = {"X-FoodLog-Local-User": "owner-b"}
+        client.post("/v1/accounts", headers=foreign_headers)
+        foreign_inventory = client.get("/v1/cameras", headers=foreign_headers)
+        foreign_revoke = client.post(
+            f"/v1/cameras/{first.json()['id']}/revoke",
+            headers=foreign_headers,
+        )
+        inventory_after = client.get("/v1/cameras", headers=USER_HEADER)
+
+    assert first.status_code == renamed.status_code == second.status_code == 200
+    assert renamed.json()["id"] == first.json()["id"]
+    assert renamed.json()["name"] == "Phone by air fryer"
+    assert second.json()["id"] != first.json()["id"]
+    assert device.status_code == 200
+    assert inventory.status_code == 200
+    assert {camera["id"] for camera in inventory.json()} == {
+        first.json()["id"],
+        second.json()["id"],
+        device.json()["camera"]["id"],
+    }
+    assert revoked.status_code == 200
+    assert revoked.json()["status"] == "revoked"
+    assert foreign_inventory.json() == []
+    assert foreign_revoke.status_code == 404
+    states = {camera["id"]: camera["status"] for camera in inventory_after.json()}
+    assert states[first.json()["id"]] == "active"
+    assert states[second.json()["id"]] == "revoked"
 
 
 def capture_metadata(
@@ -284,7 +354,7 @@ def post_fixture_capture(
                 id=str(uuid4()),
                 account_id=camera["account_id"],
                 capture_id=response.json()["capture_id"],
-            )
+            ),
         )
         if inference.clarification_question and inference.clarification_reason:
             await repository.open_question(

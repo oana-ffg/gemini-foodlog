@@ -13,6 +13,8 @@ from .models import (
     utc_now,
 )
 
+ACCOUNT_EVENT_HEAD_ID = "__account__"
+
 
 @dataclass(frozen=True, slots=True)
 class GroupingPolicy:
@@ -143,7 +145,5 @@ def segment_identity(capture: CaptureRecord) -> tuple[str, str]:
         source_key = f"burst:{capture.metadata.burst_id}"
     else:
         source_key = f"capture:{capture.id}"
-    digest = sha256(
-        f"{capture.account_id}\0{capture.camera_id}\0{source_key}".encode()
-    ).hexdigest()
+    digest = sha256(f"{capture.account_id}\0{capture.camera_id}\0{source_key}".encode()).hexdigest()
     return f"segment-{digest}", source_key

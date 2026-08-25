@@ -18,6 +18,8 @@ export interface BrowserCamera {
   account_id: string;
   name: string;
   kind: "browser";
+  status: "active" | "revoked";
+  revoked_at: string | null;
 }
 
 export interface MealComponent {
@@ -191,11 +193,14 @@ export function provisionAccount(): Promise<Account> {
   return apiRequest<Account>("/v1/accounts", { method: "POST" });
 }
 
-export function createBrowserCamera(name: string): Promise<BrowserCamera> {
+export function createBrowserCamera(
+  name: string,
+  clientInstanceId: string,
+): Promise<BrowserCamera> {
   return apiRequest<BrowserCamera>("/v1/browser-cameras", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, client_instance_id: clientInstanceId }),
   });
 }
 

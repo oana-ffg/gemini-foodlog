@@ -23,6 +23,7 @@ from .errors import (
     WaitlistUnavailable,
 )
 from .grouping import (
+    ACCOUNT_EVENT_HEAD_ID,
     CaptureGroupingResult,
     GroupingPolicy,
     capture_activity_time,
@@ -35,13 +36,14 @@ from .models import (
     ActivityEventStatus,
     ActivitySegment,
     BrowserCamera,
+    Camera,
+    CameraStatus,
     CaptureEnvelopeV1,
     CaptureRecord,
     CaptureStatus,
     ClarificationQuestion,
     Confidence,
     DeviceCamera,
-    DeviceCameraStatus,
     DeviceCredentialRecord,
     DeviceCredentialStatus,
     DurableJob,
@@ -192,6 +194,15 @@ class Repository(Protocol):
         camera_id: str,
     ) -> DeviceCamera: ...
 
+    async def list_cameras(self, owner_user_id: str) -> list[Camera]: ...
+
+    async def revoke_camera(
+        self,
+        *,
+        owner_user_id: str,
+        camera_id: str,
+    ) -> Camera: ...
+
     async def device_camera_for_identity(
         self,
         *,
@@ -199,9 +210,14 @@ class Repository(Protocol):
         camera_id: str,
     ) -> DeviceCamera: ...
 
-    async def create_browser_camera(self, owner_user_id: str, name: str) -> BrowserCamera: ...
+    async def create_browser_camera(
+        self,
+        owner_user_id: str,
+        name: str,
+        client_instance_id: str,
+    ) -> BrowserCamera: ...
 
-    async def camera_for_owner(self, owner_user_id: str, camera_id: str) -> BrowserCamera: ...
+    async def camera_for_owner(self, owner_user_id: str, camera_id: str) -> Camera: ...
 
     async def reserve_capture(
         self,
@@ -341,13 +357,13 @@ class InMemoryRepository:
         self._device_cameras: dict[str, DeviceCamera] = {}
         self._device_credentials: dict[str, DeviceCredentialRecord] = {}
         self._cameras: dict[str, BrowserCamera] = {}
-        self._browser_camera_by_account: dict[str, str] = {}
+        self._browser_camera_by_instance: dict[tuple[str, str], str] = {}
         self._captures: dict[str, CaptureRecord] = {}
         self._capture_by_idempotency: dict[tuple[str, str], str] = {}
         self._jobs: dict[tuple[str, str], DurableJob] = {}
         self._events: dict[tuple[str, str], ActivityEvent] = {}
         self._segments: dict[tuple[str, str], ActivitySegment] = {}
-        self._event_head_by_camera: dict[tuple[str, str], str] = {}
+        self._event_head_by_source: dict[tuple[str, str], str] = {}
         self._meals: dict[str, MealEntry] = {}
         self._meal_by_capture: dict[str, str] = {}
         self._meal_revisions: dict[str, list[MealRevision]] = {}
@@ -665,7 +681,7 @@ class InMemoryRepository:
             if (
                 camera is None
                 or camera.account_id != credential.account_id
-                or camera.status != DeviceCameraStatus.ACTIVE
+                or camera.status != CameraStatus.ACTIVE
                 or account is None
             ):
                 raise InvalidDeviceCredential
@@ -684,29 +700,66 @@ class InMemoryRepository:
         owner_user_id: str,
         camera_id: str,
     ) -> DeviceCamera:
+        camera = await self._revoke_camera(
+            owner_user_id=owner_user_id,
+            camera_id=camera_id,
+            expected_kind="device",
+        )
+        assert isinstance(camera, DeviceCamera)
+        return camera
+
+    async def revoke_camera(
+        self,
+        *,
+        owner_user_id: str,
+        camera_id: str,
+    ) -> Camera:
+        return await self._revoke_camera(
+            owner_user_id=owner_user_id,
+            camera_id=camera_id,
+            expected_kind=None,
+        )
+
+    async def _revoke_camera(
+        self,
+        *,
+        owner_user_id: str,
+        camera_id: str,
+        expected_kind: str | None,
+    ) -> Camera:
         account = await self.account_for_owner(owner_user_id)
         now = utc_now()
         async with self._lock:
-            camera = self._device_cameras.get(camera_id)
-            if camera is None or camera.account_id != account.id:
+            camera: Camera | None = self._cameras.get(camera_id) or self._device_cameras.get(
+                camera_id
+            )
+            if (
+                camera is None
+                or camera.account_id != account.id
+                or (expected_kind is not None and camera.kind != expected_kind)
+            ):
                 raise CameraNotFound
-            if camera.status == DeviceCameraStatus.REVOKED:
+            if camera.status == CameraStatus.REVOKED:
                 return camera.model_copy(deep=True)
             revoked_camera = camera.model_copy(
                 update={
-                    "status": DeviceCameraStatus.REVOKED,
+                    "status": CameraStatus.REVOKED,
                     "revoked_at": now,
-                }
+                },
+                deep=True,
             )
-            self._device_cameras[camera_id] = revoked_camera
-            for credential_hash, credential in self._device_credentials.items():
-                if credential.camera_id == camera_id:
-                    self._device_credentials[credential_hash] = credential.model_copy(
-                        update={
-                            "status": DeviceCredentialStatus.REVOKED,
-                            "revoked_at": now,
-                        }
-                    )
+            if isinstance(revoked_camera, BrowserCamera):
+                self._cameras[camera_id] = revoked_camera
+            else:
+                self._device_cameras[camera_id] = revoked_camera
+                for credential_hash, credential in self._device_credentials.items():
+                    if credential.camera_id == camera_id:
+                        self._device_credentials[credential_hash] = credential.model_copy(
+                            update={
+                                "status": DeviceCredentialStatus.REVOKED,
+                                "revoked_at": now,
+                            }
+                        )
             return revoked_camera.model_copy(deep=True)
 
     async def device_camera_for_identity(
@@ -720,27 +773,55 @@ class InMemoryRepository:
             if (
                 camera is None
                 or camera.account_id != account_id
-                or camera.status != DeviceCameraStatus.ACTIVE
+                or camera.status != CameraStatus.ACTIVE
             ):
                 raise CameraNotFound
             return camera.model_copy(deep=True)
 
-    async def create_browser_camera(self, owner_user_id: str, name: str) -> BrowserCamera:
+    async def create_browser_camera(
+        self,
+        owner_user_id: str,
+        name: str,
+        client_instance_id: str,
+    ) -> BrowserCamera:
         account = await self.account_for_owner(owner_user_id)
+        instance_hash = sha256(client_instance_id.encode()).hexdigest()
         async with self._lock:
-            existing_id = self._browser_camera_by_account.get(account.id)
+            instance_key = (account.id, instance_hash)
+            existing_id = self._browser_camera_by_instance.get(instance_key)
             if existing_id:
-                return self._cameras[existing_id].model_copy(deep=True)
-            camera = BrowserCamera(id=str(uuid4()), account_id=account.id, name=name)
+                existing = self._cameras[existing_id]
+                if existing.status == CameraStatus.ACTIVE and existing.name != name:
+                    existing = existing.model_copy(update={"name": name}, deep=True)
+                    self._cameras[existing.id] = existing
+                return existing.model_copy(deep=True)
+            camera = BrowserCamera(
+                id=str(uuid4()),
+                account_id=account.id,
+                name=name,
+                client_instance_id_hash=instance_hash,
+            )
             self._cameras[camera.id] = camera
-            self._browser_camera_by_account[account.id] = camera.id
+            self._browser_camera_by_instance[instance_key] = camera.id
             return camera.model_copy(deep=True)
 
-    async def camera_for_owner(self, owner_user_id: str, camera_id: str) -> BrowserCamera:
+    async def list_cameras(self, owner_user_id: str) -> list[Camera]:
         account = await self.account_for_owner(owner_user_id)
         async with self._lock:
-            camera = self._cameras.get(camera_id)
-            if not camera:
+            cameras: list[Camera] = [
+                camera.model_copy(deep=True)
+                for camera in (*self._cameras.values(), *self._device_cameras.values())
+                if camera.account_id == account.id
+            ]
+        return sorted(cameras, key=lambda camera: (camera.created_at, camera.id))
+
+    async def camera_for_owner(self, owner_user_id: str, camera_id: str) -> Camera:
+        account = await self.account_for_owner(owner_user_id)
+        async with self._lock:
+            camera: Camera | None = self._cameras.get(camera_id) or self._device_cameras.get(
+                camera_id
+            )
+            if camera is None or camera.status != CameraStatus.ACTIVE:
                 raise CameraNotFound
             if camera.account_id != account.id:
                 raise CrossAccountAccess
@@ -768,22 +849,14 @@ class InMemoryRepository:
         )
         async with self._lock:
             stored_account = self._accounts.get(account.id)
-            if (
-                stored_account is None
-                or stored_account.owner_user_id != account.owner_user_id
-            ):
+            if stored_account is None or stored_account.owner_user_id != account.owner_user_id:
                 raise AccountNotProvisioned
             stored_camera: BrowserCamera | DeviceCamera | None
             if isinstance(camera, DeviceCamera):
                 stored_camera = self._device_cameras.get(camera.id)
-                if (
-                    stored_camera is not None
-                    and stored_camera.status != DeviceCameraStatus.ACTIVE
-                ):
-                    raise CameraNotFound
             else:
                 stored_camera = self._cameras.get(camera.id)
-            if stored_camera is None:
+            if stored_camera is None or stored_camera.status != CameraStatus.ACTIVE:
                 raise CameraNotFound
             if stored_camera.account_id != account.id:
                 raise CrossAccountAccess
@@ -1083,14 +1156,21 @@ class InMemoryRepository:
             if segment is not None:
                 event = self._events.get((account_id, segment.event_id))
             if event is None:
-                head_id = self._event_head_by_camera.get((account_id, capture.camera_id))
-                head = self._events.get((account_id, head_id)) if head_id is not None else None
-                if head is not None and (
-                    head.first_capture_at - policy.reopen_window
+                head_ids = {
+                    self._event_head_by_source.get((account_id, capture.camera_id)),
+                    self._event_head_by_source.get((account_id, ACCOUNT_EVENT_HEAD_ID)),
+                }
+                candidate_heads = [
+                    head
+                    for head_id in head_ids
+                    if head_id is not None
+                    and (head := self._events.get((account_id, head_id))) is not None
+                    and head.first_capture_at - policy.reopen_window
                     <= activity_at
                     <= head.last_capture_at + policy.reopen_window
-                ):
-                    event = head
+                ]
+                if candidate_heads:
+                    event = max(candidate_heads, key=lambda head: head.last_capture_at)
                 else:
                     event_created = True
                     event = ActivityEvent(
@@ -1145,14 +1225,22 @@ class InMemoryRepository:
                     }
                 )
             self._segments[segment_key] = segment
-            current_head_id = self._event_head_by_camera.get((account_id, capture.camera_id))
+            current_head_id = self._event_head_by_source.get((account_id, capture.camera_id))
             current_head = (
                 self._events.get((account_id, current_head_id))
                 if current_head_id is not None
                 else None
             )
             if current_head is None or event.last_capture_at >= current_head.last_capture_at:
-                self._event_head_by_camera[(account_id, capture.camera_id)] = event.id
+                self._event_head_by_source[(account_id, capture.camera_id)] = event.id
+            account_head_id = self._event_head_by_source.get((account_id, ACCOUNT_EVENT_HEAD_ID))
+            account_head = (
+                self._events.get((account_id, account_head_id))
+                if account_head_id is not None
+                else None
+            )
+            if account_head is None or event.last_capture_at >= account_head.last_capture_at:
+                self._event_head_by_source[(account_id, ACCOUNT_EVENT_HEAD_ID)] = event.id
 
             self._captures[capture.id] = capture.model_copy(
                 update={"segment_id": segment.id, "event_id": event.id},

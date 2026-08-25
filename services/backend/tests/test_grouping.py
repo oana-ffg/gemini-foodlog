@@ -98,6 +98,71 @@ def build_repository() -> InMemoryRepository:
     return InMemoryRepository(public_account_limit=25, trial_image_limit=200)
 
 
+def test_related_cameras_share_an_account_event_without_crossing_tenants(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = build_repository()
+    clock = MutableClock()
+    monkeypatch.setattr(repository_module, "utc_now", clock)
+    policy = GroupingPolicy(quiet_after=timedelta(seconds=30), reopen_window=timedelta(hours=2))
+
+    async def scenario():
+        account_a = await repository.provision_account("multi-camera-owner-a")
+        account_b = await repository.provision_account("multi-camera-owner-b")
+        camera_a1 = await repository.create_browser_camera(
+            "multi-camera-owner-a",
+            "Sink view",
+            "multi-camera-browser-a1",
+        )
+        camera_a2 = await repository.create_browser_camera(
+            "multi-camera-owner-a",
+            "Stove view",
+            "multi-camera-browser-a2",
+        )
+        camera_b = await repository.create_browser_camera(
+            "multi-camera-owner-b",
+            "Other household",
+            "multi-camera-browser-b1",
+        )
+
+        results = []
+        for account, camera, capture_id in (
+            (account_a, camera_a1, "multi-camera-capture-1"),
+            (account_a, camera_a2, "multi-camera-capture-2"),
+            (account_b, camera_b, "multi-camera-capture-3"),
+        ):
+            await add_capture(
+                repository,
+                account=account,
+                camera=camera,
+                capture_id=capture_id,
+                captured_at=clock.current,
+                burst_id=None,
+                burst_index=None,
+            )
+            clock.advance(timedelta(seconds=1))
+            results.append(
+                await claim_and_group(
+                    repository,
+                    account_id=account.id,
+                    capture_id=capture_id,
+                    clock=clock,
+                    policy=policy,
+                )
+            )
+        return camera_a1, camera_a2, results
+
+    camera_a1, camera_a2, results = asyncio.run(scenario())
+    first, related, foreign = results
+
+    assert related.event.id == first.event.id
+    assert related.event.capture_count == 2
+    assert related.event.camera_ids == [camera_a1.id, camera_a2.id]
+    assert related.segment.id != first.segment.id
+    assert foreign.event.id != first.event.id
+    assert foreign.event.account_id != first.event.account_id
+
+
 def test_one_burst_forms_one_segment_and_one_rescheduled_event(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -108,7 +173,9 @@ def test_one_burst_forms_one_segment_and_one_rescheduled_event(
 
     async def scenario():
         account = await repository.provision_account("grouping-owner")
-        camera = await repository.create_browser_camera("grouping-owner", "Grouping camera")
+        camera = await repository.create_browser_camera(
+            "grouping-owner", "Grouping camera", "test-browser-instance-0001"
+        )
         started_at = clock.current
         await add_capture(
             repository,
@@ -180,7 +247,9 @@ def test_new_segment_reopens_the_same_meal_episode_within_window(
 
     async def scenario():
         account = await repository.provision_account("reopen-owner")
-        camera = await repository.create_browser_camera("reopen-owner", "Reopen camera")
+        camera = await repository.create_browser_camera(
+            "reopen-owner", "Reopen camera", "test-browser-instance-0001"
+        )
         await add_capture(
             repository,
             account=account,
@@ -232,9 +301,7 @@ def test_new_segment_reopens_the_same_meal_episode_within_window(
     assert reopened.event.status == ActivityEventStatus.OPEN
     assert reopened.event.meal_id == "existing-meal-0001"
     assert reopened.event.current_revision == 2
-    inference_job = repository._jobs[
-        (account.id, event_inference_job_id(first.event.id))
-    ]
+    inference_job = repository._jobs[(account.id, event_inference_job_id(first.event.id))]
     assert inference_job.subject_revision == 2
     assert inference_job.status == JobStatus.PENDING
 
@@ -249,7 +316,9 @@ def test_activity_after_reopen_window_starts_a_new_episode(
 
     async def scenario():
         account = await repository.provision_account("separate-owner")
-        camera = await repository.create_browser_camera("separate-owner", "Separate camera")
+        camera = await repository.create_browser_camera(
+            "separate-owner", "Separate camera", "test-browser-instance-0001"
+        )
         await add_capture(
             repository,
             account=account,
@@ -304,7 +373,9 @@ def test_event_inference_job_becomes_claimable_only_after_quiet(
 
     async def scenario():
         account = await repository.provision_account("quiet-owner")
-        camera = await repository.create_browser_camera("quiet-owner", "Quiet camera")
+        camera = await repository.create_browser_camera(
+            "quiet-owner", "Quiet camera", "test-browser-instance-0001"
+        )
         await add_capture(
             repository,
             account=account,
@@ -359,7 +430,9 @@ def test_grouping_rejects_wrong_or_expired_lease(
 
     async def scenario():
         account = await repository.provision_account("lease-owner")
-        camera = await repository.create_browser_camera("lease-owner", "Lease camera")
+        camera = await repository.create_browser_camera(
+            "lease-owner", "Lease camera", "test-browser-instance-0001"
+        )
         await add_capture(
             repository,
             account=account,
@@ -406,7 +479,9 @@ def test_grouping_service_claims_once_and_duplicate_delivery_is_a_noop() -> None
 
     async def scenario():
         account = await repository.provision_account("service-owner")
-        camera = await repository.create_browser_camera("service-owner", "Service camera")
+        camera = await repository.create_browser_camera(
+            "service-owner", "Service camera", "test-browser-instance-0001"
+        )
         await add_capture(
             repository,
             account=account,
@@ -444,7 +519,9 @@ def test_grouping_service_releases_failures_for_retry(
 
     async def scenario():
         account = await repository.provision_account("failure-owner")
-        camera = await repository.create_browser_camera("failure-owner", "Failure camera")
+        camera = await repository.create_browser_camera(
+            "failure-owner", "Failure camera", "test-browser-instance-0001"
+        )
         await add_capture(
             repository,
             account=account,
@@ -472,9 +549,7 @@ def test_grouping_service_releases_failures_for_retry(
         return account
 
     account = asyncio.run(scenario())
-    job = repository._jobs[
-        (account.id, capture_grouping_job_id("failure-capture-1"))
-    ]
+    job = repository._jobs[(account.id, capture_grouping_job_id("failure-capture-1"))]
     assert job.status == JobStatus.PENDING
     assert job.attempt_count == 1
     assert job.last_error_code == "RuntimeError"

@@ -84,7 +84,7 @@ class NotificationOutboxStatus(StrEnum):
     DELIVERED = "delivered"
 
 
-class DeviceCameraStatus(StrEnum):
+class CameraStatus(StrEnum):
     ACTIVE = "active"
     REVOKED = "revoked"
 
@@ -175,14 +175,18 @@ class WaitlistEntry(BaseModel):
 
 class BrowserCameraCreate(BaseModel):
     name: CameraName
+    client_instance_id: str = Field(min_length=16, max_length=128)
 
 
 class BrowserCamera(BaseModel):
     id: str
     account_id: str
     name: str
-    kind: str = "browser"
+    client_instance_id_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    kind: Literal["browser"] = "browser"
+    status: CameraStatus = CameraStatus.ACTIVE
     created_at: datetime = Field(default_factory=utc_now)
+    revoked_at: datetime | None = None
 
 
 class DeviceCameraCreate(BaseModel):
@@ -194,9 +198,12 @@ class DeviceCamera(BaseModel):
     account_id: str
     name: str
     kind: Literal["device"] = "device"
-    status: DeviceCameraStatus = DeviceCameraStatus.ACTIVE
+    status: CameraStatus = CameraStatus.ACTIVE
     created_at: datetime = Field(default_factory=utc_now)
     revoked_at: datetime | None = None
+
+
+Camera = Annotated[BrowserCamera | DeviceCamera, Field(discriminator="kind")]
 
 
 class DeviceCredentialRecord(BaseModel):

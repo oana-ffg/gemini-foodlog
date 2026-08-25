@@ -73,6 +73,18 @@
             "title": "Account Id",
             "type": "string"
           },
+          "client_instance_id_hash": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Instance Id Hash"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -83,6 +95,7 @@
             "type": "string"
           },
           "kind": {
+            "const": "browser",
             "default": "browser",
             "title": "Kind",
             "type": "string"
@@ -90,6 +103,22 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CameraStatus",
+            "default": "active"
           }
         },
         "required": [
@@ -102,6 +131,12 @@
       },
       "BrowserCameraCreate": {
         "properties": {
+          "client_instance_id": {
+            "maxLength": 128,
+            "minLength": 16,
+            "title": "Client Instance Id",
+            "type": "string"
+          },
           "name": {
             "maxLength": 80,
             "minLength": 1,
@@ -110,10 +145,19 @@
           }
         },
         "required": [
-          "name"
+          "name",
+          "client_instance_id"
         ],
         "title": "BrowserCameraCreate",
         "type": "object"
+      },
+      "CameraStatus": {
+        "enum": [
+          "active",
+          "revoked"
+        ],
+        "title": "CameraStatus",
+        "type": "string"
       },
       "CaptureAccepted": {
         "properties": {
@@ -277,7 +321,7 @@
             "title": "Revoked At"
           },
           "status": {
-            "$ref": "#/components/schemas/DeviceCameraStatus",
+            "$ref": "#/components/schemas/CameraStatus",
             "default": "active"
           }
         },
@@ -320,14 +364,6 @@
         ],
         "title": "DeviceCameraCredentialIssue",
         "type": "object"
-      },
-      "DeviceCameraStatus": {
-        "enum": [
-          "active",
-          "revoked"
-        ],
-        "title": "DeviceCameraStatus",
-        "type": "string"
       },
       "DeviceSession": {
         "properties": {
@@ -1126,6 +1162,140 @@
           }
         },
         "summary": "Create Browser Camera"
+      }
+    },
+    "/v1/cameras": {
+      "get": {
+        "operationId": "list_cameras_v1_cameras_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "discriminator": {
+                      "mapping": {
+                        "browser": "#/components/schemas/BrowserCamera",
+                        "device": "#/components/schemas/DeviceCamera"
+                      },
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/components/schemas/BrowserCamera"
+                      },
+                      {
+                        "$ref": "#/components/schemas/DeviceCamera"
+                      }
+                    ]
+                  },
+                  "title": "Response List Cameras V1 Cameras Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Cameras"
+      }
+    },
+    "/v1/cameras/{camera_id}/revoke": {
+      "post": {
+        "operationId": "revoke_camera_v1_cameras__camera_id__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "camera_id",
+            "required": true,
+            "schema": {
+              "title": "Camera Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "discriminator": {
+                    "mapping": {
+                      "browser": "#/components/schemas/BrowserCamera",
+                      "device": "#/components/schemas/DeviceCamera"
+                    },
+                    "propertyName": "kind"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/BrowserCamera"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DeviceCamera"
+                    }
+                  ],
+                  "title": "Response Revoke Camera V1 Cameras  Camera Id  Revoke Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Camera"
       }
     },
     "/v1/captures": {

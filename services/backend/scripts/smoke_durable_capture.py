@@ -23,7 +23,11 @@ async def smoke(args: argparse.Namespace) -> None:
     )
     assert len({account.id for account in provisioned_accounts}) == 1
     account = provisioned_accounts[0]
-    camera = await repository.create_browser_camera(args.owner_id, "Durable smoke camera")
+    camera = await repository.create_browser_camera(
+        args.owner_id,
+        "Durable smoke camera",
+        "durable-smoke-browser-instance-0001",
+    )
     idempotency_key = f"durable-smoke-{content_sha256[:24]}"
 
     async def reserve() -> tuple:
