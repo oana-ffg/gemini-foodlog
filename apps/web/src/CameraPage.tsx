@@ -9,10 +9,24 @@ import {
 } from "./api";
 import { SessionControls, useAuth } from "./auth";
 import { captureFrame } from "./cameraFrames";
+import { useCaptureWakeLock } from "./useCaptureWakeLock";
 import { MAX_MEMORY_QUEUE_DEPTH, useMotionCapture } from "./useMotionCapture";
+import type { CaptureWakeLockStatus } from "./wakeLock";
 
 function stopStream(stream: MediaStream | null): void {
   stream?.getTracks().forEach((track) => track.stop());
+}
+
+function wakeLockLabel(status: CaptureWakeLockStatus): string {
+  switch (status) {
+    case "active": return "active";
+    case "requesting": return "requesting";
+    case "hidden": return "inactive while hidden";
+    case "unsupported": return "unsupported";
+    case "denied": return "permission denied";
+    case "released": return "released";
+    default: return "inactive";
+  }
 }
 
 export default function CameraPage() {
@@ -29,6 +43,7 @@ export default function CameraPage() {
   const [message, setMessage] = useState(
     "Register this phone or browser before starting its camera.",
   );
+  const wakeLockStatus = useCaptureWakeLock(running);
 
   const updateAccountQuota = (accepted: Awaited<ReturnType<typeof uploadCapture>>) => {
     setAccount((current) => current ? {
@@ -54,6 +69,14 @@ export default function CameraPage() {
     onAccepted: updateAccountQuota,
     onMessage: setMessage,
   });
+  const entitlementExhausted = account?.entitlement_mode === "trial"
+    && account.trial_image_limit !== null
+    && account.accepted_image_count >= account.trial_image_limit;
+  const unattendedReady = running
+    && motion.active
+    && wakeLockStatus === "active"
+    && !motion.blockedReason
+    && !entitlementExhausted;
 
   useEffect(() => () => stopStream(streamRef.current), []);
 
@@ -78,6 +101,10 @@ export default function CameraPage() {
   };
 
   const startCamera = async () => {
+    if (entitlementExhausted) {
+      setMessage("The image entitlement is exhausted. Camera capture cannot start.");
+      return;
+    }
     if (!navigator.mediaDevices?.getUserMedia) {
       setMessage("This browser does not provide camera access.");
       return;
@@ -94,6 +121,15 @@ export default function CameraPage() {
           height: { ideal: 1080, max: 4096 },
         },
         audio: false,
+      });
+      stream.getVideoTracks().forEach((track) => {
+        track.addEventListener("ended", () => {
+          motion.stop();
+          streamRef.current = null;
+          if (videoRef.current) videoRef.current.srcObject = null;
+          setRunning(false);
+          setMessage("The camera stream ended. No new frames are being captured.");
+        }, { once: true });
       });
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
@@ -221,8 +257,12 @@ export default function CameraPage() {
         <div className="manual-camera__controls">
           <h2 id="manual-camera-title">Camera controls</h2>
           <p role="status">{message}</p>
-          {motion.active || motion.queueDepth > 0 ? (
-            <dl className="motion-status">
+          {camera ? (
+            <dl className="motion-status" aria-label="Capture readiness">
+              <div>
+                <dt>Camera stream</dt>
+                <dd>{running ? "running" : "paused"}</dd>
+              </div>
               <div>
                 <dt>Motion state</dt>
                 <dd>{motion.active ? (motion.phase === "idle" ? "watching" : motion.phase) : "paused"}</dd>
@@ -237,11 +277,33 @@ export default function CameraPage() {
                       : `${motion.queueDepth} queued`}
                 </dd>
               </div>
+              <div>
+                <dt>Screen awake</dt>
+                <dd>{wakeLockLabel(wakeLockStatus)}</dd>
+              </div>
+              <div>
+                <dt>Entitlement</dt>
+                <dd>
+                  {account?.entitlement_mode === "unlimited"
+                    ? "unlimited"
+                    : account?.trial_image_limit == null
+                      ? "unknown"
+                      : `${Math.max(0, account.trial_image_limit - account.accepted_image_count)} remaining`}
+                </dd>
+              </div>
+              <div>
+                <dt>Unattended capture</dt>
+                <dd>{unattendedReady ? "ready" : "not ready"}</dd>
+              </div>
             </dl>
           ) : null}
           <div className="button-row">
             {!running ? (
-              <button type="button" onClick={startCamera} disabled={!camera || busy}>
+              <button
+                type="button"
+                onClick={startCamera}
+                disabled={!camera || busy || entitlementExhausted}
+              >
                 Start camera
               </button>
             ) : (
@@ -264,7 +326,11 @@ export default function CameraPage() {
                 Use manual mode
               </button>
             ) : null}
-            <button type="button" onClick={sendSnapshot} disabled={!running || busy || motion.active}>
+            <button
+              type="button"
+              onClick={sendSnapshot}
+              disabled={!running || busy || motion.active || entitlementExhausted}
+            >
               {busy && running ? "Sending…" : "Send snapshot"}
             </button>
             {motion.queueDepth > 0 && !motion.delivering && !motion.blockedReason ? (
@@ -278,7 +344,9 @@ export default function CameraPage() {
             tiny frames on this device, captures at most once per second during a
             15-second burst, then once per minute while activity remains open. Up to{" "}
             {MAX_MEMORY_QUEUE_DEPTH} pending frames persist on this device across
-            temporary outages and page reloads, then retry oldest-first.
+            temporary outages and page reloads, then retry oldest-first. The page asks
+            to keep the screen awake only while the camera stream is running; if that
+            lock is unavailable, Unattended capture remains Not ready.
           </p>
         </div>
       </section>
