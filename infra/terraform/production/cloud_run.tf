@@ -23,6 +23,7 @@ locals {
     FOODLOG_GCP_PROJECT_ID                = var.project_id
     FOODLOG_LAUNCH_CONSENT_POLICY_VERSION = "launch-interest-v1"
     FOODLOG_MEDIA_BUCKET                  = google_storage_bucket.retained["media"].name
+    FOODLOG_NOTIFICATION_TOPIC            = google_pubsub_topic.events["notification"].id
     FOODLOG_PUBLIC_ACCOUNT_LIMIT          = "25"
     FOODLOG_STORAGE_BACKEND               = "gcp"
     FOODLOG_TRIAL_IMAGE_LIMIT             = "200"

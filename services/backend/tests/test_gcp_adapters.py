@@ -168,6 +168,15 @@ def test_production_cannot_select_partial_or_volatile_storage() -> None:
         Settings(environment="production", storage_backend="memory")
     with pytest.raises(ValidationError, match="gcp_project_id and media_bucket"):
         Settings(environment="production", storage_backend="gcp")
+    with pytest.raises(ValidationError, match="account notification topic"):
+        Settings(
+            environment="production",
+            auth_backend="firebase",
+            storage_backend="gcp",
+            gcp_project_id="gemini-foodlog-2026",
+            firebase_project_id="gemini-foodlog-2026",
+            media_bucket="gemini-foodlog-2026-media-163029863855",
+        )
 
     settings = Settings(
         environment="production",
@@ -176,5 +185,6 @@ def test_production_cannot_select_partial_or_volatile_storage() -> None:
         gcp_project_id="gemini-foodlog-2026",
         firebase_project_id="gemini-foodlog-2026",
         media_bucket="gemini-foodlog-2026-media-163029863855",
+        notification_topic=("projects/gemini-foodlog-2026/topics/foodlog-notification-events"),
     )
     assert settings.storage_backend == "gcp"

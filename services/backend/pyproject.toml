@@ -10,7 +10,9 @@ dependencies = [
   # 2.35.0 percent-encodes Firestore's (default) database ID in gRPC resource names.
   "google-api-core[grpc]>=2.34,<2.35",
   "google-cloud-firestore>=2.28,<3",
+  "google-cloud-pubsub>=2.39,<3",
   "google-cloud-storage>=3.13,<4",
+  "httpx>=0.28,<1",
   "pydantic-settings>=2.10,<3",
   "pillow>=11,<13",
   "python-multipart>=0.0.20,<1",
@@ -19,7 +21,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-  "httpx>=0.28,<1",
   "pytest>=8.4,<9",
   "ruff>=0.12,<1",
 ]

@@ -60,6 +60,12 @@ from .models import (
     WaitlistJoinRequest,
     utc_now,
 )
+from .notifications import (
+    AccountProvisioningService,
+    InMemoryNotificationPublisher,
+    NotificationPublisher,
+    PubSubNotificationPublisher,
+)
 from .repository import InMemoryRepository, Repository
 from .service import CaptureService
 from .settings import Settings
@@ -121,12 +127,15 @@ class Container:
     repository: Repository
     object_store: ObjectStore
     capture_service: CaptureService
+    account_service: AccountProvisioningService
+    notification_publisher: NotificationPublisher
 
 
 def create_app(
     settings: Settings | None = None,
     *,
     token_verifier: IdentityTokenVerifier | None = None,
+    notification_publisher: NotificationPublisher | None = None,
 ) -> FastAPI:
     active_settings = settings or Settings()
     if active_settings.auth_backend == "firebase":
@@ -158,6 +167,13 @@ def create_app(
             unlimited_owner_user_ids=active_settings.unlimited_owner_user_ids,
         )
         object_store = InMemoryObjectStore()
+    if active_settings.environment == "production":
+        assert active_settings.notification_topic is not None
+        active_notification_publisher = notification_publisher or PubSubNotificationPublisher(
+            topic=active_settings.notification_topic
+        )
+    else:
+        active_notification_publisher = notification_publisher or InMemoryNotificationPublisher()
     container = Container(
         repository=repository,
         object_store=object_store,
@@ -165,6 +181,11 @@ def create_app(
             repository=repository,
             object_store=object_store,
         ),
+        account_service=AccountProvisioningService(
+            repository=repository,
+            publisher=active_notification_publisher,
+        ),
+        notification_publisher=active_notification_publisher,
     )
     app = FastAPI(title="Gemini FoodLog API", version="0.1.0")
     app.state.container = container
@@ -172,9 +193,7 @@ def create_app(
     if active_settings.auth_backend == "firebase":
         allowed_headers.append("Authorization")
     else:
-        allowed_headers.extend(
-            ["X-FoodLog-Local-User", "X-FoodLog-Preview-Secret"]
-        )
+        allowed_headers.extend(["X-FoodLog-Local-User", "X-FoodLog-Preview-Secret"])
     app.add_middleware(
         CORSMiddleware,
         allow_origins=active_settings.allowed_origins,
@@ -372,7 +391,7 @@ def create_app(
 
     @app.post("/v1/accounts", response_model=Account)
     async def provision_account(user_id: str = Depends(request_user_id)) -> Account:
-        return await container.repository.provision_account(user_id)
+        return await container.account_service.provision_account(user_id)
 
     @app.post("/v1/consents/launch-mail", response_model=LaunchMailConsent)
     async def record_launch_mail_consent(

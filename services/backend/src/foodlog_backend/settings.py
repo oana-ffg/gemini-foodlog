@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     gcp_project_id: str | None = None
     firebase_project_id: str | None = None
     media_bucket: str | None = None
+    notification_topic: str | None = None
 
     @model_validator(mode="after")
     def reject_memory_in_production(self) -> "Settings":
@@ -35,6 +36,8 @@ class Settings(BaseSettings):
             raise ValueError("GCP storage requires gcp_project_id and media_bucket")
         if self.environment == "production" and self.auth_backend != "firebase":
             raise ValueError("Production requires Firebase authentication")
+        if self.environment == "production" and self.notification_topic is None:
+            raise ValueError("Production requires the account notification topic")
         if self.auth_backend == "firebase" and self.firebase_project_id is None:
             raise ValueError("Firebase authentication requires firebase_project_id")
         return self

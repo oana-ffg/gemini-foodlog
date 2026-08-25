@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Iterable
+from datetime import datetime
 from hashlib import sha256
 from typing import Protocol
 from uuid import uuid4
@@ -22,6 +23,7 @@ from .errors import (
 )
 from .models import (
     Account,
+    AccountCreatedOutbox,
     BrowserCamera,
     CaptureEnvelopeV1,
     CaptureRecord,
@@ -44,6 +46,7 @@ from .models import (
     MealRevision,
     MealRevisionSource,
     MealStatus,
+    NotificationOutboxStatus,
     QuestionAnswerRequest,
     QuestionAnswerResult,
     QuestionStatus,
@@ -55,6 +58,54 @@ from .models import (
 
 class Repository(Protocol):
     async def provision_account(self, owner_user_id: str) -> Account: ...
+
+    async def claim_account_notification_for_publish(
+        self,
+        *,
+        account_id: str,
+        lease_id: str,
+        lease_expires_at: datetime,
+    ) -> AccountCreatedOutbox | None: ...
+
+    async def mark_account_notification_published(
+        self,
+        *,
+        event_id: str,
+        lease_id: str,
+        provider_message_id: str,
+    ) -> bool: ...
+
+    async def release_account_notification_publish(
+        self,
+        *,
+        event_id: str,
+        lease_id: str,
+        error_code: str,
+    ) -> bool: ...
+
+    async def claim_account_notification_for_delivery(
+        self,
+        *,
+        event_id: str,
+        lease_id: str,
+        lease_expires_at: datetime,
+    ) -> AccountCreatedOutbox | None: ...
+
+    async def mark_account_notification_delivered(
+        self,
+        *,
+        event_id: str,
+        lease_id: str,
+        provider_delivery_id: str,
+    ) -> bool: ...
+
+    async def release_account_notification_delivery(
+        self,
+        *,
+        event_id: str,
+        lease_id: str,
+        error_code: str,
+    ) -> bool: ...
 
     async def account_for_owner(self, owner_user_id: str) -> Account: ...
 
@@ -181,6 +232,7 @@ class InMemoryRepository:
         self._unlimited_owner_user_ids = frozenset(unlimited_owner_user_ids or set())
         self._accounts: dict[str, Account] = {}
         self._account_by_owner: dict[str, str] = {}
+        self._notification_outbox: dict[str, AccountCreatedOutbox] = {}
         self._launch_consents: dict[str, LaunchMailConsent] = {}
         self._waitlist_by_email_hash: dict[str, WaitlistEntry] = {}
         self._device_cameras: dict[str, DeviceCamera] = {}
@@ -223,14 +275,178 @@ class InMemoryRepository:
                 owner_user_id=owner_user_id,
                 entitlement_mode=entitlement_mode,
                 trial_image_limit=(
-                    self._trial_image_limit
-                    if entitlement_mode == EntitlementMode.TRIAL
-                    else None
+                    self._trial_image_limit if entitlement_mode == EntitlementMode.TRIAL else None
                 ),
             )
             self._accounts[account.id] = account
             self._account_by_owner[owner_user_id] = account.id
+            event = AccountCreatedOutbox(
+                id=f"account-created-{account.id}",
+                account_id=account.id,
+                entitlement_mode=account.entitlement_mode,
+                trial_image_limit=account.trial_image_limit,
+                public_slot_number=(
+                    public_account_count + 1
+                    if account.entitlement_mode == EntitlementMode.TRIAL
+                    else None
+                ),
+                created_at=account.created_at,
+            )
+            self._notification_outbox[event.id] = event
             return account.model_copy(deep=True)
+
+    async def claim_account_notification_for_publish(
+        self,
+        *,
+        account_id: str,
+        lease_id: str,
+        lease_expires_at: datetime,
+    ) -> AccountCreatedOutbox | None:
+        async with self._lock:
+            event = next(
+                (
+                    candidate
+                    for candidate in self._notification_outbox.values()
+                    if candidate.account_id == account_id
+                ),
+                None,
+            )
+            if event is None:
+                return None
+            now = utc_now()
+            if (
+                event.status == NotificationOutboxStatus.PUBLISHING
+                and event.lease_expires_at is not None
+                and event.lease_expires_at > now
+            ):
+                return None
+            if event.status not in {
+                NotificationOutboxStatus.PENDING,
+                NotificationOutboxStatus.PUBLISHING,
+            }:
+                return None
+            event.status = NotificationOutboxStatus.PUBLISHING
+            event.publish_attempt_count += 1
+            event.lease_id = lease_id
+            event.lease_expires_at = lease_expires_at
+            event.last_error_code = None
+            return event.model_copy(deep=True)
+
+    async def mark_account_notification_published(
+        self,
+        *,
+        event_id: str,
+        lease_id: str,
+        provider_message_id: str,
+    ) -> bool:
+        async with self._lock:
+            event = self._notification_outbox.get(event_id)
+            if (
+                event is None
+                or event.status != NotificationOutboxStatus.PUBLISHING
+                or event.lease_id != lease_id
+            ):
+                return False
+            event.status = NotificationOutboxStatus.PUBLISHED
+            event.provider_message_id = provider_message_id
+            event.published_at = utc_now()
+            event.lease_id = None
+            event.lease_expires_at = None
+            return True
+
+    async def release_account_notification_publish(
+        self,
+        *,
+        event_id: str,
+        lease_id: str,
+        error_code: str,
+    ) -> bool:
+        async with self._lock:
+            event = self._notification_outbox.get(event_id)
+            if (
+                event is None
+                or event.status != NotificationOutboxStatus.PUBLISHING
+                or event.lease_id != lease_id
+            ):
+                return False
+            event.status = NotificationOutboxStatus.PENDING
+            event.last_error_code = error_code
+            event.lease_id = None
+            event.lease_expires_at = None
+            return True
+
+    async def claim_account_notification_for_delivery(
+        self,
+        *,
+        event_id: str,
+        lease_id: str,
+        lease_expires_at: datetime,
+    ) -> AccountCreatedOutbox | None:
+        async with self._lock:
+            event = self._notification_outbox.get(event_id)
+            if event is None or event.status == NotificationOutboxStatus.DELIVERED:
+                return None
+            now = utc_now()
+            if (
+                event.status == NotificationOutboxStatus.DELIVERING
+                and event.lease_expires_at is not None
+                and event.lease_expires_at > now
+            ):
+                return None
+            if event.status not in {
+                NotificationOutboxStatus.PUBLISHED,
+                NotificationOutboxStatus.DELIVERING,
+            }:
+                return None
+            event.status = NotificationOutboxStatus.DELIVERING
+            event.delivery_attempt_count += 1
+            event.lease_id = lease_id
+            event.lease_expires_at = lease_expires_at
+            event.last_error_code = None
+            return event.model_copy(deep=True)
+
+    async def mark_account_notification_delivered(
+        self,
+        *,
+        event_id: str,
+        lease_id: str,
+        provider_delivery_id: str,
+    ) -> bool:
+        async with self._lock:
+            event = self._notification_outbox.get(event_id)
+            if (
+                event is None
+                or event.status != NotificationOutboxStatus.DELIVERING
+                or event.lease_id != lease_id
+            ):
+                return False
+            event.status = NotificationOutboxStatus.DELIVERED
+            event.delivered_at = utc_now()
+            event.provider_delivery_id = provider_delivery_id
+            event.lease_id = None
+            event.lease_expires_at = None
+            return True
+
+    async def release_account_notification_delivery(
+        self,
+        *,
+        event_id: str,
+        lease_id: str,
+        error_code: str,
+    ) -> bool:
+        async with self._lock:
+            event = self._notification_outbox.get(event_id)
+            if (
+                event is None
+                or event.status != NotificationOutboxStatus.DELIVERING
+                or event.lease_id != lease_id
+            ):
+                return False
+            event.status = NotificationOutboxStatus.PUBLISHED
+            event.last_error_code = error_code
+            event.lease_id = None
+            event.lease_expires_at = None
+            return True
 
     async def account_for_owner(self, owner_user_id: str) -> Account:
         async with self._lock:
@@ -334,10 +550,7 @@ class InMemoryRepository:
             if (
                 credential is None
                 or credential.status != DeviceCredentialStatus.ACTIVE
-                or (
-                    credential.expires_at is not None
-                    and credential.expires_at <= now
-                )
+                or (credential.expires_at is not None and credential.expires_at <= now)
             ):
                 raise InvalidDeviceCredential
             camera = self._device_cameras.get(credential.camera_id)

@@ -1,3 +1,4 @@
+from datetime import datetime
 from hashlib import sha256
 from typing import Any
 from uuid import uuid4
@@ -26,6 +27,7 @@ from .errors import (
 )
 from .models import (
     Account,
+    AccountCreatedOutbox,
     BrowserCamera,
     CaptureEnvelopeV1,
     CaptureRecord,
@@ -44,6 +46,7 @@ from .models import (
     MealFeedbackResult,
     MealRevision,
     MealRevisionSource,
+    NotificationOutboxStatus,
     QuestionAnswerRequest,
     QuestionAnswerResult,
     QuestionStatus,
@@ -100,6 +103,9 @@ class FirestoreRepository:
     def _collection(self, account_id: str, name: str):
         return self._account(account_id).collection(name)
 
+    def _outbox(self, event_id: str):
+        return self._client.collection("outbox").document(event_id)
+
     async def provision_account(self, owner_user_id: str) -> Account:
         account_id = str(uuid4())
         created_at = utc_now()
@@ -134,9 +140,7 @@ class FirestoreRepository:
                 capacity = await capacity_ref.get(transaction=transaction)
                 count = capacity.get("active_account_count") if capacity.exists else 0
                 stored_limit = (
-                    capacity.get("account_limit")
-                    if capacity.exists
-                    else self._public_account_limit
+                    capacity.get("account_limit") if capacity.exists else self._public_account_limit
                 )
                 if not isinstance(count, int) or isinstance(count, bool) or count < 0:
                     raise ValueError("Public account capacity count is invalid")
@@ -155,6 +159,16 @@ class FirestoreRepository:
                 owner_user_id=owner_user_id,
                 entitlement_mode=entitlement_mode,
                 trial_image_limit=trial_image_limit,
+                created_at=created_at,
+            )
+            event = AccountCreatedOutbox(
+                id=f"account-created-{account_id}",
+                account_id=account_id,
+                entitlement_mode=entitlement_mode,
+                trial_image_limit=trial_image_limit,
+                public_slot_number=(
+                    count + 1 if entitlement_mode == EntitlementMode.TRIAL else None
+                ),
                 created_at=created_at,
             )
             transaction.create(
@@ -193,6 +207,7 @@ class FirestoreRepository:
                     "updated_at": created_at,
                 },
             )
+            transaction.create(self._outbox(event.id), _document(event))
             if entitlement_mode == EntitlementMode.TRIAL:
                 transaction.set(
                     capacity_ref,
@@ -207,6 +222,190 @@ class FirestoreRepository:
             return account
 
         return await provision(transaction)
+
+    async def _claim_account_notification(
+        self,
+        *,
+        event_id: str,
+        ready_status: NotificationOutboxStatus,
+        active_status: NotificationOutboxStatus,
+        attempt_field: str,
+        lease_id: str,
+        lease_expires_at: datetime,
+    ) -> AccountCreatedOutbox | None:
+        event_ref = self._outbox(event_id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def claim(transaction):
+            snapshot = await event_ref.get(transaction=transaction)
+            if not snapshot.exists:
+                return None
+            event = _model(snapshot, AccountCreatedOutbox)
+            now = utc_now()
+            if (
+                event.status == active_status
+                and event.lease_expires_at is not None
+                and event.lease_expires_at > now
+            ):
+                return None
+            if event.status not in {ready_status, active_status}:
+                return None
+            attempt_count = getattr(event, attempt_field) + 1
+            transaction.update(
+                event_ref,
+                {
+                    "status": active_status.value,
+                    attempt_field: attempt_count,
+                    "lease_id": lease_id,
+                    "lease_expires_at": lease_expires_at,
+                    "last_error_code": None,
+                    "updated_at": now,
+                },
+            )
+            return event.model_copy(
+                update={
+                    "status": active_status,
+                    attempt_field: attempt_count,
+                    "lease_id": lease_id,
+                    "lease_expires_at": lease_expires_at,
+                    "last_error_code": None,
+                }
+            )
+
+        return await claim(transaction)
+
+    async def _transition_account_notification(
+        self,
+        *,
+        event_id: str,
+        lease_id: str,
+        expected_status: NotificationOutboxStatus,
+        target_status: NotificationOutboxStatus,
+        updates: dict[str, Any],
+    ) -> bool:
+        event_ref = self._outbox(event_id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def transition(transaction):
+            snapshot = await event_ref.get(transaction=transaction)
+            if not snapshot.exists:
+                return False
+            event = _model(snapshot, AccountCreatedOutbox)
+            if event.status != expected_status or event.lease_id != lease_id:
+                return False
+            transaction.update(
+                event_ref,
+                {
+                    "status": target_status.value,
+                    "lease_id": None,
+                    "lease_expires_at": None,
+                    "updated_at": utc_now(),
+                    **updates,
+                },
+            )
+            return True
+
+        return await transition(transaction)
+
+    async def claim_account_notification_for_publish(
+        self,
+        *,
+        account_id: str,
+        lease_id: str,
+        lease_expires_at: datetime,
+    ) -> AccountCreatedOutbox | None:
+        return await self._claim_account_notification(
+            event_id=f"account-created-{account_id}",
+            ready_status=NotificationOutboxStatus.PENDING,
+            active_status=NotificationOutboxStatus.PUBLISHING,
+            attempt_field="publish_attempt_count",
+            lease_id=lease_id,
+            lease_expires_at=lease_expires_at,
+        )
+
+    async def mark_account_notification_published(
+        self,
+        *,
+        event_id: str,
+        lease_id: str,
+        provider_message_id: str,
+    ) -> bool:
+        return await self._transition_account_notification(
+            event_id=event_id,
+            lease_id=lease_id,
+            expected_status=NotificationOutboxStatus.PUBLISHING,
+            target_status=NotificationOutboxStatus.PUBLISHED,
+            updates={
+                "provider_message_id": provider_message_id,
+                "published_at": utc_now(),
+            },
+        )
+
+    async def release_account_notification_publish(
+        self,
+        *,
+        event_id: str,
+        lease_id: str,
+        error_code: str,
+    ) -> bool:
+        return await self._transition_account_notification(
+            event_id=event_id,
+            lease_id=lease_id,
+            expected_status=NotificationOutboxStatus.PUBLISHING,
+            target_status=NotificationOutboxStatus.PENDING,
+            updates={"last_error_code": error_code},
+        )
+
+    async def claim_account_notification_for_delivery(
+        self,
+        *,
+        event_id: str,
+        lease_id: str,
+        lease_expires_at: datetime,
+    ) -> AccountCreatedOutbox | None:
+        return await self._claim_account_notification(
+            event_id=event_id,
+            ready_status=NotificationOutboxStatus.PUBLISHED,
+            active_status=NotificationOutboxStatus.DELIVERING,
+            attempt_field="delivery_attempt_count",
+            lease_id=lease_id,
+            lease_expires_at=lease_expires_at,
+        )
+
+    async def mark_account_notification_delivered(
+        self,
+        *,
+        event_id: str,
+        lease_id: str,
+        provider_delivery_id: str,
+    ) -> bool:
+        return await self._transition_account_notification(
+            event_id=event_id,
+            lease_id=lease_id,
+            expected_status=NotificationOutboxStatus.DELIVERING,
+            target_status=NotificationOutboxStatus.DELIVERED,
+            updates={
+                "delivered_at": utc_now(),
+                "provider_delivery_id": provider_delivery_id,
+            },
+        )
+
+    async def release_account_notification_delivery(
+        self,
+        *,
+        event_id: str,
+        lease_id: str,
+        error_code: str,
+    ) -> bool:
+        return await self._transition_account_notification(
+            event_id=event_id,
+            lease_id=lease_id,
+            expected_status=NotificationOutboxStatus.DELIVERING,
+            target_status=NotificationOutboxStatus.PUBLISHED,
+            updates={"last_error_code": error_code},
+        )
 
     async def account_for_owner(self, owner_user_id: str) -> Account:
         identity = await self._identity(owner_user_id).get()
@@ -291,9 +490,11 @@ class FirestoreRepository:
         async def join(transaction):
             identity = await identity_ref.get(transaction=transaction)
             existing = await waitlist_ref.get(transaction=transaction)
-            capacity = await self._client.collection("system").document(
-                "public_capacity"
-            ).get(transaction=transaction)
+            capacity = (
+                await self._client.collection("system")
+                .document("public_capacity")
+                .get(transaction=transaction)
+            )
             if identity.exists:
                 raise AccountAlreadyProvisioned
             if existing.exists:
@@ -303,9 +504,7 @@ class FirestoreRepository:
                 return stored
             count = capacity.get("active_account_count") if capacity.exists else 0
             stored_limit = (
-                capacity.get("account_limit")
-                if capacity.exists
-                else self._public_account_limit
+                capacity.get("account_limit") if capacity.exists else self._public_account_limit
             )
             if not isinstance(count, int) or isinstance(count, bool) or count < 0:
                 raise ValueError("Public account capacity count is invalid")
@@ -338,9 +537,7 @@ class FirestoreRepository:
         )
         account_ref = self._account(account.id)
         camera_ref = self._collection(account.id, "cameras").document(camera.id)
-        credential_ref = self._client.collection("device_credentials").document(
-            credential_hash
-        )
+        credential_ref = self._client.collection("device_credentials").document(credential_hash)
         credential = DeviceCredentialRecord(
             credential_hash=credential_hash,
             account_id=account.id,
@@ -371,9 +568,7 @@ class FirestoreRepository:
         self,
         credential_hash: str,
     ) -> VerifiedDeviceIdentity:
-        credential_ref = self._client.collection("device_credentials").document(
-            credential_hash
-        )
+        credential_ref = self._client.collection("device_credentials").document(credential_hash)
         transaction = self._client.transaction()
 
         @firestore.async_transactional
@@ -520,8 +715,7 @@ class FirestoreRepository:
         return Account(
             id=account.id,
             owner_user_id=account.get("owner_user_id"),
-            entitlement_mode=entitlement_data.get("entitlement_mode")
-            or EntitlementMode.TRIAL,
+            entitlement_mode=entitlement_data.get("entitlement_mode") or EntitlementMode.TRIAL,
             trial_image_limit=entitlement_data.get("trial_image_limit"),
             accepted_image_count=entitlement_data.get("accepted_image_count"),
             created_at=account.get("created_at"),
@@ -635,9 +829,7 @@ class FirestoreRepository:
             if mode not in ENTITLEMENT_MODE_VALUES:
                 raise ValueError("Entitlement mode is invalid")
             if mode == EntitlementMode.TRIAL.value and (
-                not isinstance(limit, int)
-                or isinstance(limit, bool)
-                or limit < 1
+                not isinstance(limit, int) or isinstance(limit, bool) or limit < 1
             ):
                 raise ValueError("Trial image limit is invalid")
             if mode == EntitlementMode.TRIAL.value and count >= limit:

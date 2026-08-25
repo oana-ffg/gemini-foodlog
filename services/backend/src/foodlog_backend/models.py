@@ -60,6 +60,14 @@ class EntitlementMode(StrEnum):
     UNLIMITED = "unlimited"
 
 
+class NotificationOutboxStatus(StrEnum):
+    PENDING = "pending"
+    PUBLISHING = "publishing"
+    PUBLISHED = "published"
+    DELIVERING = "delivering"
+    DELIVERED = "delivered"
+
+
 class DeviceCameraStatus(StrEnum):
     ACTIVE = "active"
     REVOKED = "revoked"
@@ -87,6 +95,35 @@ class Account(BaseModel):
             and self.trial_image_limit is not None
         ):
             raise ValueError("Unlimited accounts cannot have a trial image limit")
+        return self
+
+
+class AccountCreatedOutbox(BaseModel):
+    id: str = Field(min_length=1, max_length=160)
+    account_id: str
+    kind: Literal["account_created"] = "account_created"
+    entitlement_mode: EntitlementMode
+    trial_image_limit: int | None = Field(default=None, ge=1)
+    public_slot_number: int | None = Field(default=None, ge=1)
+    status: NotificationOutboxStatus = NotificationOutboxStatus.PENDING
+    publish_attempt_count: int = Field(default=0, ge=0)
+    delivery_attempt_count: int = Field(default=0, ge=0)
+    lease_id: str | None = Field(default=None, max_length=128)
+    lease_expires_at: datetime | None = None
+    provider_message_id: str | None = Field(default=None, max_length=256)
+    provider_delivery_id: str | None = Field(default=None, max_length=256)
+    last_error_code: str | None = Field(default=None, max_length=120)
+    published_at: datetime | None = None
+    delivered_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def entitlement_fields_are_consistent(self) -> "AccountCreatedOutbox":
+        if self.entitlement_mode == EntitlementMode.TRIAL:
+            if self.trial_image_limit is None or self.public_slot_number is None:
+                raise ValueError("Trial account notifications require limit and slot")
+        elif self.trial_image_limit is not None or self.public_slot_number is not None:
+            raise ValueError("Unlimited account notifications cannot have trial fields")
         return self
 
 

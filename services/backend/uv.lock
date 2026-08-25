@@ -658,7 +658,9 @@ dependencies = [
     { name = "google-adk", extra = ["gcp"] },
     { name = "google-api-core", extra = ["grpc"] },
     { name = "google-cloud-firestore" },
+    { name = "google-cloud-pubsub" },
     { name = "google-cloud-storage" },
+    { name = "httpx" },
     { name = "pillow" },
     { name = "pydantic-settings" },
     { name = "python-multipart" },
@@ -667,7 +669,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -679,7 +680,9 @@ requires-dist = [
     { name = "google-adk", extras = ["gcp"], specifier = ">=2,<3" },
     { name = "google-api-core", extras = ["grpc"], specifier = ">=2.34,<2.35" },
     { name = "google-cloud-firestore", specifier = ">=2.28,<3" },
+    { name = "google-cloud-pubsub", specifier = ">=2.39,<3" },
     { name = "google-cloud-storage", specifier = ">=3.13,<4" },
+    { name = "httpx", specifier = ">=0.28,<1" },
     { name = "pillow", specifier = ">=11,<13" },
     { name = "pydantic-settings", specifier = ">=2.10,<3" },
     { name = "python-multipart", specifier = ">=0.0.20,<1" },
@@ -688,7 +691,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx", specifier = ">=0.28,<1" },
     { name = "pytest", specifier = ">=8.4,<9" },
     { name = "ruff", specifier = ">=0.12,<1" },
 ]
