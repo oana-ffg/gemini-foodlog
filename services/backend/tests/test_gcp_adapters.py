@@ -4,9 +4,7 @@ import pytest
 from google.api_core.exceptions import PreconditionFailed
 from pydantic import ValidationError
 
-from foodlog_backend.app import configured_inference_engine
 from foodlog_backend.firestore_repository import FirestoreRepository
-from foodlog_backend.inference import FixtureInferenceEngine
 from foodlog_backend.models import EntitlementMode, utc_now
 from foodlog_backend.settings import Settings
 from foodlog_backend.storage import GCSObjectStore
@@ -185,17 +183,3 @@ def test_production_cannot_select_partial_or_volatile_storage() -> None:
         media_bucket="gemini-foodlog-2026-media-163029863855",
     )
     assert settings.storage_backend == "gcp"
-
-
-def test_production_ingestion_has_no_implicit_inference_and_refuses_fixtures() -> None:
-    settings = Settings(
-        environment="production",
-        auth_backend="firebase",
-        storage_backend="gcp",
-        gcp_project_id="gemini-foodlog-2026",
-        firebase_project_id="gemini-foodlog-2026",
-        media_bucket="gemini-foodlog-2026-media-163029863855",
-    )
-    assert configured_inference_engine(settings, None) is None
-    with pytest.raises(ValueError, match="refuses the fixture"):
-        configured_inference_engine(settings, FixtureInferenceEngine())

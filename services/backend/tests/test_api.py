@@ -4,6 +4,7 @@ from base64 import b64decode
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -11,7 +12,7 @@ from PIL import Image
 from foodlog_backend.app import create_app, image_dimensions
 from foodlog_backend.errors import AccountCapacityReached
 from foodlog_backend.inference import FixtureInferenceEngine, verify_fixture_files
-from foodlog_backend.models import CaptureEnvelopeV1, MealInference, utc_now
+from foodlog_backend.models import CaptureEnvelopeV1, MealEntry, utc_now
 from foodlog_backend.settings import Settings
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -86,21 +87,19 @@ def test_public_accounts_receive_the_configured_trial_and_exhaust_it() -> None:
     with TestClient(app) as client:
         account, camera = provision(client, "public-trial-owner")
         image = (FIXTURES / "synthetic-leftover-pasta.png").read_bytes()
-        first = client.post(
-            f"/v1/browser-cameras/{camera['id']}/captures",
-            headers={
-                "X-FoodLog-Local-User": "public-trial-owner",
-                "Idempotency-Key": "public-trial-capture-0001",
-            },
-            files={"image": ("capture.png", image, "image/png")},
+        first = post_shared_browser_capture(
+            client,
+            camera=camera,
+            image=image,
+            idempotency_key="public-trial-capture-0001",
+            user="public-trial-owner",
         )
-        exhausted = client.post(
-            f"/v1/browser-cameras/{camera['id']}/captures",
-            headers={
-                "X-FoodLog-Local-User": "public-trial-owner",
-                "Idempotency-Key": "public-trial-capture-0002",
-            },
-            files={"image": ("capture.png", image, "image/png")},
+        exhausted = post_shared_browser_capture(
+            client,
+            camera=camera,
+            image=image,
+            idempotency_key="public-trial-capture-0002",
+            user="public-trial-owner",
         )
 
     assert account["entitlement_mode"] == "trial"
@@ -141,13 +140,12 @@ def test_explicit_unlimited_account_has_no_fake_limit_or_public_slot() -> None:
         )
         image = (FIXTURES / "synthetic-steak-airfryer.png").read_bytes()
         captures = [
-            client.post(
-                f"/v1/browser-cameras/{camera['id']}/captures",
-                headers={
-                    "X-FoodLog-Local-User": "internal-owner",
-                    "Idempotency-Key": f"unlimited-capture-{index:04d}",
-                },
-                files={"image": ("capture.png", image, "image/png")},
+            post_shared_browser_capture(
+                client,
+                camera=camera,
+                image=image,
+                idempotency_key=f"unlimited-capture-{index:04d}",
+                user="internal-owner",
             )
             for index in range(2)
         ]
@@ -231,6 +229,71 @@ def shared_capture_request(
         "data": {"metadata": json.dumps(metadata)},
         "files": {"image": ("capture.png", image, "image/png")},
     }
+
+
+def post_shared_browser_capture(
+    client: TestClient,
+    *,
+    camera: dict,
+    image: bytes,
+    idempotency_key: str,
+    user: str = "owner-a",
+    metadata: dict[str, object] | None = None,
+):
+    return client.post(
+        "/v1/captures",
+        **shared_capture_request(
+            headers={
+                "X-FoodLog-Local-User": user,
+                "Idempotency-Key": idempotency_key,
+            },
+            metadata=metadata or capture_metadata(camera["id"], image),
+            image=image,
+        ),
+    )
+
+
+def post_fixture_capture(
+    client: TestClient,
+    *,
+    camera: dict,
+    image: bytes,
+    idempotency_key: str,
+    user: str = "owner-a",
+    metadata: dict[str, object] | None = None,
+):
+    response = post_shared_browser_capture(
+        client,
+        camera=camera,
+        image=image,
+        idempotency_key=idempotency_key,
+        user=user,
+        metadata=metadata,
+    )
+    if response.status_code != 202 or response.json()["duplicate"]:
+        return response
+
+    async def seed_deterministic_result() -> None:
+        repository = client.app.state.container.repository
+        inference = await FixtureInferenceEngine().infer(image, "image/png")
+        meal = await repository.save_meal(
+            MealEntry(
+                **inference.model_dump(),
+                id=str(uuid4()),
+                account_id=camera["account_id"],
+                capture_id=response.json()["capture_id"],
+            )
+        )
+        if inference.clarification_question and inference.clarification_reason:
+            await repository.open_question(
+                meal=meal,
+                prompt=inference.clarification_question,
+                reason=inference.clarification_reason,
+            )
+        await repository.mark_processed(response.json()["capture_id"], camera["account_id"])
+
+    asyncio.run(seed_deterministic_result())
+    return response
 
 
 def test_shared_browser_ingestion_stores_metadata_and_bytes_without_inference() -> None:
@@ -466,10 +529,11 @@ def test_fixture_capture_creates_explainable_journal_entry() -> None:
     with build_client() as client:
         _, camera = provision(client)
         image = (FIXTURES / "synthetic-steak-airfryer.png").read_bytes()
-        response = client.post(
-            f"/v1/browser-cameras/{camera['id']}/captures",
-            headers={**USER_HEADER, "Idempotency-Key": "capture-steak-0001"},
-            files={"image": ("capture.png", image, "image/png")},
+        response = post_fixture_capture(
+            client,
+            camera=camera,
+            image=image,
+            idempotency_key="capture-steak-0001",
         )
         assert response.status_code == 202
         assert response.json()["accepted_image_count"] == 1
@@ -497,12 +561,21 @@ def test_idempotent_retry_does_not_consume_quota_or_duplicate_meal() -> None:
     with build_client() as client:
         _, camera = provision(client)
         image = (FIXTURES / "synthetic-chicken-airfryer.png").read_bytes()
-        request = {
-            "headers": {**USER_HEADER, "Idempotency-Key": "capture-chicken-0001"},
-            "files": {"image": ("capture.png", image, "image/png")},
-        }
-        first = client.post(f"/v1/browser-cameras/{camera['id']}/captures", **request)
-        retry = client.post(f"/v1/browser-cameras/{camera['id']}/captures", **request)
+        metadata = capture_metadata(camera["id"], image)
+        first = post_fixture_capture(
+            client,
+            camera=camera,
+            image=image,
+            idempotency_key="capture-chicken-0001",
+            metadata=metadata,
+        )
+        retry = post_fixture_capture(
+            client,
+            camera=camera,
+            image=image,
+            idempotency_key="capture-chicken-0001",
+            metadata=metadata,
+        )
         assert first.status_code == retry.status_code == 202
         assert retry.json()["duplicate"] is True
         assert retry.json()["accepted_image_count"] == 1
@@ -514,20 +587,20 @@ def test_cross_account_camera_and_capture_access_fail_closed() -> None:
         _, camera_a = provision(client, "owner-a")
         _, _camera_b = provision(client, "owner-b")
         image = (FIXTURES / "synthetic-leftover-pasta.png").read_bytes()
-        rejected = client.post(
-            f"/v1/browser-cameras/{camera_a['id']}/captures",
-            headers={
-                "X-FoodLog-Local-User": "owner-b",
-                "Idempotency-Key": "cross-account-0001",
-            },
-            files={"image": ("capture.png", image, "image/png")},
+        rejected = post_shared_browser_capture(
+            client,
+            camera=camera_a,
+            image=image,
+            idempotency_key="cross-account-0001",
+            user="owner-b",
         )
         assert rejected.status_code == 404
 
-        accepted = client.post(
-            f"/v1/browser-cameras/{camera_a['id']}/captures",
-            headers={**USER_HEADER, "Idempotency-Key": "owner-capture-0001"},
-            files={"image": ("capture.png", image, "image/png")},
+        accepted = post_shared_browser_capture(
+            client,
+            camera=camera_a,
+            image=image,
+            idempotency_key="owner-capture-0001",
         )
         capture_id = accepted.json()["capture_id"]
         hidden = client.get(
@@ -543,10 +616,11 @@ def test_unknown_image_is_explicitly_uncertain_without_model_call() -> None:
         one_pixel_png = b64decode(
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
         )
-        response = client.post(
-            f"/v1/browser-cameras/{camera['id']}/captures",
-            headers={**USER_HEADER, "Idempotency-Key": "unknown-capture-0001"},
-            files={"image": ("capture.png", one_pixel_png, "image/png")},
+        response = post_fixture_capture(
+            client,
+            camera=camera,
+            image=one_pixel_png,
+            idempotency_key="unknown-capture-0001",
         )
         assert response.status_code == 202
         entry = client.get("/v1/journal", headers=USER_HEADER).json()[0]
@@ -561,15 +635,11 @@ def test_adversarial_camera_fixtures_remain_uncertain_without_model_call() -> No
     for index, fixture_path in enumerate(fixture_paths):
         with build_client() as client:
             _, camera = provision(client)
-            response = client.post(
-                f"/v1/browser-cameras/{camera['id']}/captures",
-                headers={
-                    **USER_HEADER,
-                    "Idempotency-Key": f"adversarial-capture-{index:02d}",
-                },
-                files={
-                    "image": (fixture_path.name, fixture_path.read_bytes(), "image/png")
-                },
+            response = post_fixture_capture(
+                client,
+                camera=camera,
+                image=fixture_path.read_bytes(),
+                idempotency_key=f"adversarial-capture-{index:02d}",
             )
 
             assert response.status_code == 202
@@ -585,60 +655,50 @@ def test_declared_image_type_must_match_content() -> None:
     with build_client() as client:
         _, camera = provision(client)
         response = client.post(
-            f"/v1/browser-cameras/{camera['id']}/captures",
-            headers={**USER_HEADER, "Idempotency-Key": "invalid-image-0001"},
-            files={"image": ("capture.png", b"not-a-real-png", "image/png")},
+            "/v1/captures",
+            **shared_capture_request(
+                headers={**USER_HEADER, "Idempotency-Key": "invalid-image-0001"},
+                metadata={
+                    "schema_version": 1,
+                    "camera_id": camera["id"],
+                    "captured_at": utc_now().isoformat(),
+                    "client_kind": "browser",
+                    "client_version": "foodlog-test/0.1.0",
+                    "sequence_id": "test-sequence-0001",
+                    "sequence_number": 1,
+                    "width": 1,
+                    "height": 1,
+                },
+                image=b"not-a-real-png",
+            ),
         )
         assert response.status_code == 415
+
+
+def test_obsolete_browser_capture_route_is_not_exposed() -> None:
+    with build_client() as client:
+        _, camera = provision(client)
+        response = client.post(
+            f"/v1/browser-cameras/{camera['id']}/captures",
+            headers={**USER_HEADER, "Idempotency-Key": "obsolete-route-0001"},
+        )
+
+    assert response.status_code == 404
 
 
 def test_fixture_directory_matches_registered_ground_truth() -> None:
     assert verify_fixture_files(FIXTURES) == []
 
 
-class FailOnceInferenceEngine:
-    def __init__(self) -> None:
-        self._failed = False
-        self._delegate = FixtureInferenceEngine()
-
-    async def infer(self, image: bytes, content_type: str) -> MealInference:
-        if not self._failed:
-            self._failed = True
-            raise RuntimeError("simulated inference failure")
-        return await self._delegate.infer(image, content_type)
-
-
-def test_failed_processing_rolls_back_image_quota_and_idempotency() -> None:
-    app = create_app(
-        Settings(environment="test"),
-        inference_engine=FailOnceInferenceEngine(),
-    )
-    with TestClient(app, raise_server_exceptions=False) as client:
-        _, camera = provision(client)
-        image = (FIXTURES / "synthetic-steak-airfryer.png").read_bytes()
-        request = {
-            "headers": {**USER_HEADER, "Idempotency-Key": "retry-after-failure-0001"},
-            "files": {"image": ("capture.png", image, "image/png")},
-        }
-
-        failed = client.post(f"/v1/browser-cameras/{camera['id']}/captures", **request)
-        retried = client.post(f"/v1/browser-cameras/{camera['id']}/captures", **request)
-
-        assert failed.status_code == 500
-        assert retried.status_code == 202
-        assert retried.json()["accepted_image_count"] == 1
-        assert retried.json()["duplicate"] is False
-        assert len(client.get("/v1/journal", headers=USER_HEADER).json()) == 1
-
-
 def test_confirmation_is_idempotent_and_preserves_original_revision() -> None:
     with build_client() as client:
         _, camera = provision(client)
         image = (FIXTURES / "synthetic-steak-airfryer.png").read_bytes()
-        capture = client.post(
-            f"/v1/browser-cameras/{camera['id']}/captures",
-            headers={**USER_HEADER, "Idempotency-Key": "confirm-capture-0001"},
-            files={"image": ("capture.png", image, "image/png")},
+        capture = post_fixture_capture(
+            client,
+            camera=camera,
+            image=image,
+            idempotency_key="confirm-capture-0001",
         )
         meal = client.get("/v1/journal", headers=USER_HEADER).json()[0]
         request = {
@@ -670,10 +730,11 @@ def test_correction_keeps_original_inference_and_supports_unresolved_feedback() 
     with build_client() as client:
         _, camera = provision(client)
         image = (FIXTURES / "synthetic-chicken-airfryer.png").read_bytes()
-        client.post(
-            f"/v1/browser-cameras/{camera['id']}/captures",
-            headers={**USER_HEADER, "Idempotency-Key": "correct-capture-0001"},
-            files={"image": ("capture.png", image, "image/png")},
+        post_fixture_capture(
+            client,
+            camera=camera,
+            image=image,
+            idempotency_key="correct-capture-0001",
         )
         meal = client.get("/v1/journal", headers=USER_HEADER).json()[0]
         corrected = client.post(
@@ -714,10 +775,11 @@ def test_uncertain_question_answer_revises_meal_and_closes_inbox() -> None:
         one_pixel_png = b64decode(
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
         )
-        client.post(
-            f"/v1/browser-cameras/{camera['id']}/captures",
-            headers={**USER_HEADER, "Idempotency-Key": "question-capture-0001"},
-            files={"image": ("capture.png", one_pixel_png, "image/png")},
+        post_fixture_capture(
+            client,
+            camera=camera,
+            image=one_pixel_png,
+            idempotency_key="question-capture-0001",
         )
         questions = client.get("/v1/questions", headers=USER_HEADER).json()
         assert len(questions) == 1
@@ -753,10 +815,11 @@ def test_feedback_and_question_access_are_tenant_scoped() -> None:
         one_pixel_png = b64decode(
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
         )
-        client.post(
-            f"/v1/browser-cameras/{camera['id']}/captures",
-            headers={**USER_HEADER, "Idempotency-Key": "scoped-question-capture-0001"},
-            files={"image": ("capture.png", one_pixel_png, "image/png")},
+        post_fixture_capture(
+            client,
+            camera=camera,
+            image=one_pixel_png,
+            idempotency_key="scoped-question-capture-0001",
         )
         meal = client.get("/v1/journal", headers=USER_HEADER).json()[0]
         question = client.get("/v1/questions", headers=USER_HEADER).json()[0]

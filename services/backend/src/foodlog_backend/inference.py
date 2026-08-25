@@ -1,12 +1,8 @@
 from hashlib import sha256
 from pathlib import Path
-from typing import ClassVar, Protocol
+from typing import ClassVar
 
 from .models import Confidence, MealComponent, MealInference
-
-
-class InferenceEngine(Protocol):
-    async def infer(self, image: bytes, content_type: str) -> MealInference: ...
 
 
 class FixtureInferenceEngine:

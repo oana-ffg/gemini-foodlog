@@ -35,7 +35,6 @@ from .errors import (
     WaitlistUnavailable,
 )
 from .firestore_repository import FirestoreRepository
-from .inference import FixtureInferenceEngine, InferenceEngine
 from .models import (
     Account,
     BrowserCamera,
@@ -83,17 +82,6 @@ def detected_image_type(content: bytes) -> str | None:
     return None
 
 
-def configured_inference_engine(
-    settings: Settings,
-    inference_engine: InferenceEngine | None,
-) -> InferenceEngine | None:
-    if settings.environment == "production":
-        if isinstance(inference_engine, FixtureInferenceEngine):
-            raise ValueError("Production refuses the fixture inference engine")
-        return inference_engine
-    return inference_engine or FixtureInferenceEngine()
-
-
 def image_dimensions(content: bytes, content_type: str) -> tuple[int, int] | None:
     try:
         with warnings.catch_warnings():
@@ -138,14 +126,9 @@ class Container:
 def create_app(
     settings: Settings | None = None,
     *,
-    inference_engine: InferenceEngine | None = None,
     token_verifier: IdentityTokenVerifier | None = None,
 ) -> FastAPI:
     active_settings = settings or Settings()
-    active_inference_engine = configured_inference_engine(
-        active_settings,
-        inference_engine,
-    )
     if active_settings.auth_backend == "firebase":
         assert active_settings.firebase_project_id is not None
         active_token_verifier = token_verifier or FirebaseIdentityTokenVerifier(
@@ -181,7 +164,6 @@ def create_app(
         capture_service=CaptureService(
             repository=repository,
             object_store=object_store,
-            inference=active_inference_engine,
         ),
     )
     app = FastAPI(title="Gemini FoodLog API", version="0.1.0")
@@ -539,27 +521,6 @@ def create_app(
             content_type=content_type,
             image=content,
             metadata=envelope,
-        )
-
-    @app.post(
-        "/v1/browser-cameras/{camera_id}/captures",
-        response_model=CaptureAccepted,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    async def upload_browser_capture(
-        camera_id: str,
-        image: UploadFile,
-        idempotency_key: str = Header(min_length=8, max_length=128),
-        user_id: str = Depends(request_user_id),
-    ) -> CaptureAccepted:
-        content, content_type = await validated_image_content(image)
-        return await container.capture_service.accept_browser_capture(
-            owner_user_id=user_id,
-            camera_id=camera_id,
-            idempotency_key=idempotency_key,
-            content_type=content_type,
-            image=content,
-            process_immediately=active_settings.environment != "production",
         )
 
     @app.get("/v1/journal", response_model=list[MealEntry])

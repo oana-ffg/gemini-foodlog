@@ -46,20 +46,6 @@
         "title": "Account",
         "type": "object"
       },
-      "Body_upload_browser_capture_v1_browser_cameras__camera_id__captures_post": {
-        "properties": {
-          "image": {
-            "contentMediaType": "application/octet-stream",
-            "title": "Image",
-            "type": "string"
-          }
-        },
-        "required": [
-          "image"
-        ],
-        "title": "Body_upload_browser_capture_v1_browser_cameras__camera_id__captures_post",
-        "type": "object"
-      },
       "Body_upload_capture_v1_captures_post": {
         "properties": {
           "image": {
@@ -1140,82 +1126,6 @@
           }
         },
         "summary": "Create Browser Camera"
-      }
-    },
-    "/v1/browser-cameras/{camera_id}/captures": {
-      "post": {
-        "operationId": "upload_browser_capture_v1_browser_cameras__camera_id__captures_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "camera_id",
-            "required": true,
-            "schema": {
-              "title": "Camera Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "idempotency-key",
-            "required": true,
-            "schema": {
-              "maxLength": 128,
-              "minLength": 8,
-              "title": "Idempotency-Key",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_upload_browser_capture_v1_browser_cameras__camera_id__captures_post"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CaptureAccepted"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Upload Browser Capture"
       }
     },
     "/v1/captures": {

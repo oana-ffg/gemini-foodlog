@@ -57,20 +57,20 @@ This slice uses the production contracts and tenant boundary. It is not a throwa
 
 ### 1.4 Current implementation checkpoint
 
-As of 2026-08-25, the repository has a deliberately zero-model-cost local checkpoint and private backend smoke preview:
+As of 2026-08-25, the repository has a deliberately zero-model-cost implementation checkpoint plus a separately deployed historical preview:
 
-- a React/Vite browser-camera UI with manual frame analysis and journal display;
-- a FastAPI ingestion API with non-production header authentication, a 25-account cap, a 200-image trial quota, idempotent capture acceptance, content validation, and authorization-checked image access;
-- concurrency-safe in-memory repository and object-store adapters;
+- a Firebase-authenticated React/Vite application with a protected standalone manual camera route and journal display;
+- one shared FastAPI capture endpoint for browser, simulator, and physical clients, with Firebase or revocable device authentication, a 25-account cap, a 200-image trial quota, strict versioned metadata, idempotent durable capture acceptance, content validation, and authorization-checked image access;
+- production Firestore and private Cloud Storage adapters plus concurrency-safe in-memory test adapters;
 - immutable meal revisions, raw idempotent confirmation/correction records, and tenant-scoped clarification questions whose answers revise the original meal instead of creating a duplicate;
 - a prototype clarification inbox, meal feedback controls, and revision history in the web application; the generic standalone inbox is rejected UX and is not the production design;
-- tenant-isolation, retry/rollback, quota, content-validation, feedback, question, and end-to-end fixture tests;
+- tenant-isolation, retry/rollback, quota, content-validation, feedback, question, and deterministic domain tests;
 - a Google ADK `Agent` and `App` definition that is imported in tests without calling a model;
 - six immutable synthetic still-image fixtures generated with OpenAI image generation, not Veo: three deterministic ground-truth frames and three degraded distant-camera ambiguity tests.
 
-Known fixture hashes produce deterministic local journal results. Unknown valid images are marked uncertain. Local and preview modes never call Gemini, and production startup fails closed because the GCP storage, identity, and worker adapters are not implemented.
+Application ingestion never maps fixture hashes to results and has no in-process inference hook. Deterministic tests seed their known inference result explicitly after exercising the same shared capture endpoint. Real processing will occur only through the durable worker and Gemini path described below. Production startup fails closed without the configured GCP storage and Firebase identity settings.
 
-Commit `ada2235` is deployed as the private Cloud Run service `foodlog-preview-api` in `europe-west1`. It uses IAM plus a Secret Manager application secret, a dedicated runtime identity, zero minimum instances, and a one-instance maximum. The authenticated smoke test created one ephemeral test account and camera, accepted two OpenAI-generated synthetic fixtures, produced the expected confident steak and chicken journal entries, and returned the stored private image bytes exactly. Cloud Logging showed no server errors. The React UI is not hosted, all preview state is in memory, and this is explicitly not the durable production slice.
+Commit `ada2235` remains deployed as the private historical Cloud Run service `foodlog-preview-api` in `europe-west1`. It uses IAM plus a Secret Manager application secret, a dedicated runtime identity, zero minimum instances, and a one-instance maximum. Its authenticated smoke test created one ephemeral test account and camera, accepted two OpenAI-generated synthetic fixtures, produced the expected confident steak and chicken journal entries, and returned the stored private image bytes exactly. Cloud Logging showed no server errors. That isolated old revision still uses volatile preview state; its legacy upload route has been removed from the current application and generated OpenAPI and it is not the durable production slice.
 
 The dedicated Google Cloud project `gemini-foodlog-2026` is the only project linked to the dedicated `Gemini FoodLog Hackathon` billing account. The promotion is active with DKK 984.25 remaining and expires on 2026-09-24. A DKK 400 monthly gross-spend budget alerts at 25%, 50%, and 75% (DKK 100, 200, and 300); it excludes credits when measuring spend so the warning still works while the promotion pays the bill. No model call has been made, and the unrelated local gcloud default remains `ffutils`. Exact live identifiers and evidence are recorded in `infra/preview/README.md`.
 
