@@ -90,6 +90,8 @@ The current slice provisions an ephemeral account and browser camera, accepts au
 
 Google ADK is installed and the FoodLog agent definition is import-tested without invoking a model. The backend commit has been deployed privately to Cloud Run with IAM plus an application secret, scale-to-zero, a one-instance maximum, and a DKK 400 gross-spend budget alert. An authenticated live test created an ephemeral account, accepted two synthetic captures, reconstructed both expected meals, and returned the private image bytes exactly. The web UI is not hosted yet. Production configuration still fails closed until the private GCS, Firestore, real authentication, and asynchronous worker adapters exist. See the working [MVP architecture and decision record](./docs/mvp-architecture.md), [credit-expiry runbook](./docs/credit-expiry-runbook.md), and [verified preview record](./infra/preview/README.md). The original proposal is preserved verbatim in [CORE_IDEA.md](./CORE_IDEA.md).
 
+The source-controlled [MVP backlog](./docs/mvp-backlog.html) lists every currently known build, deployment, testing, human-validation, and release task in intended phases with explicit dependencies. Mock and preview work is deliberately separated from production capabilities.
+
 ## Run the local slice
 
 Requirements: Node.js 24+, npm, Python 3.12+, and [uv](https://docs.astral.sh/uv/).

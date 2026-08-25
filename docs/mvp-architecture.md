@@ -5,6 +5,7 @@
 - **Source concept:** [CORE_IDEA.md](../CORE_IDEA.md) preserves the original proposal verbatim.
 - **Deferred work:** [post-hackathon-backlog.md](post-hackathon-backlog.md) is the canonical post-hackathon list.
 - **Credit expiry:** [credit-expiry-runbook.md](credit-expiry-runbook.md) records the zero-out-of-pocket shutdown boundary.
+- **Build status:** [mvp-backlog.html](mvp-backlog.html) is the source-controlled task order and evidence gate board.
 
 This document records the MVP decisions made so far, the reasons behind them, and the details that remain open. It is deliberately more specific than the project-level instructions. Implementation status is called out explicitly; planned sections are not deployment claims.
 
