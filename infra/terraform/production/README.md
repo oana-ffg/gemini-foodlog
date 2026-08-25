@@ -52,6 +52,44 @@ uses deletion policy `PREVENT`, and the live database also has delete protection
 enabled. Point-in-time recovery remains disabled during the prototype to avoid
 unnecessary retained-version storage; the standard one-hour version window remains.
 
+## App Engine inbound-mail bootstrap
+
+The App Engine application is a one-time project property rather than a resource in
+the pinned Google Terraform provider. It was initialized on 25 August 2026 in
+`europe-west`, the App Engine location that maps to the existing `eur3` Firestore
+multi-region. The location cannot be changed. The app-level default identity is the
+dedicated keyless `foodlog-mail@gemini-foodlog-2026.iam.gserviceaccount.com` service
+account and the app-level SSL policy requires TLS 1.2.
+
+The exact completed bootstrap command was:
+
+```sh
+gcloud app create \
+  --project=gemini-foodlog-2026 \
+  --region=europe-west \
+  --service-account=foodlog-mail@gemini-foodlog-2026.iam.gserviceaccount.com \
+  --ssl-policy=TLS_VERSION_1_2 \
+  --quiet
+```
+
+Terraform owns the required App Engine Admin API but deliberately does not attempt to
+recreate or relocate the application. No App Engine service or version is deployed by
+this bootstrap; the bounded default-service MIME gateway is added by its dedicated
+mail-ingestion task.
+
+Initialization also created the platform-managed EU buckets
+`gemini-foodlog-2026.appspot.com` and `staging.gemini-foodlog-2026.appspot.com`.
+Neither policy contains a public principal. They retain the App Engine defaults for
+code and deployment staging only; raw inbound messages must use the separate private
+raw-mail bucket above. The staging bucket deletes live objects after fifteen days.
+
+Google also created the unused App Engine default service account with project Editor.
+That automatic grant was removed immediately after verifying that the app-level
+default is `foodlog-mail`, no App Engine version exists, and the default account has no
+user-managed keys. The pre-existing Compute default account remains the identity used
+by manual Cloud Build; replacing it is part of the repository-scoped Workload Identity
+Federation and CI deployment work, not this bootstrap.
+
 ## Private object storage
 
 `storage.tf` owns four application buckets. All are `EU` multi-region buckets with
