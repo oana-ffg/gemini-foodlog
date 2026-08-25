@@ -51,3 +51,20 @@ The default Firestore database is provisioned in Native mode in `eur3`. Terrafor
 uses deletion policy `PREVENT`, and the live database also has delete protection
 enabled. Point-in-time recovery remains disabled during the prototype to avoid
 unnecessary retained-version storage; the standard one-hour version window remains.
+
+## Private object storage
+
+`storage.tf` owns four application buckets. All are `EU` multi-region buckets with
+uniform bucket-level access and public-access prevention enforced:
+
+- `gemini-foodlog-2026-media-163029863855` stores uploaded images;
+- `gemini-foodlog-2026-raw-mail-163029863855` stores original inbound messages;
+- `gemini-foodlog-2026-traces-163029863855` stores full agent traces;
+- `gemini-foodlog-2026-exports-163029863855` stores temporary user exports.
+
+Images, raw mail, and traces intentionally have no deletion lifecycle during the
+prototype and retain deleted objects for seven days as accidental-deletion recovery.
+The export bucket deletes live objects after one day and disables soft delete so a
+temporary export does not remain recoverable after its lifecycle expires. Bucket IAM
+is authoritative: only the project owner has access until the least-privilege runtime
+identities are added by `INF-006`.

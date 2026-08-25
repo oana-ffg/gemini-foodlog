@@ -1,0 +1,91 @@
+locals {
+  retained_buckets = {
+    media = {
+      name    = "gemini-foodlog-2026-media-163029863855"
+      purpose = "private-media"
+    }
+    raw_mail = {
+      name    = "gemini-foodlog-2026-raw-mail-163029863855"
+      purpose = "private-raw-mail"
+    }
+    traces = {
+      name    = "gemini-foodlog-2026-traces-163029863855"
+      purpose = "private-ai-traces"
+    }
+  }
+}
+
+resource "google_storage_bucket" "retained" {
+  for_each = local.retained_buckets
+
+  name                        = each.value.name
+  project                     = var.project_id
+  location                    = var.storage_location
+  storage_class               = "STANDARD"
+  public_access_prevention    = "enforced"
+  uniform_bucket_level_access = true
+
+  labels = merge(local.common_labels, {
+    purpose = each.value.purpose
+  })
+
+  soft_delete_policy {
+    retention_duration_seconds = 604800
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [
+    google_project_service.required["storage.googleapis.com"],
+  ]
+}
+
+resource "google_storage_bucket_iam_policy" "retained" {
+  for_each = google_storage_bucket.retained
+
+  bucket      = each.value.name
+  policy_data = data.google_iam_policy.oana_storage_admin.policy_data
+}
+
+resource "google_storage_bucket" "exports" {
+  name                        = "gemini-foodlog-2026-exports-163029863855"
+  project                     = var.project_id
+  location                    = var.storage_location
+  storage_class               = "STANDARD"
+  public_access_prevention    = "enforced"
+  uniform_bucket_level_access = true
+
+  labels = merge(local.common_labels, {
+    purpose = "private-temporary-exports"
+  })
+
+  lifecycle_rule {
+    action {
+      type = "Delete"
+    }
+
+    condition {
+      age        = 1
+      with_state = "LIVE"
+    }
+  }
+
+  soft_delete_policy {
+    retention_duration_seconds = 0
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [
+    google_project_service.required["storage.googleapis.com"],
+  ]
+}
+
+resource "google_storage_bucket_iam_policy" "exports" {
+  bucket      = google_storage_bucket.exports.name
+  policy_data = data.google_iam_policy.oana_storage_admin.policy_data
+}

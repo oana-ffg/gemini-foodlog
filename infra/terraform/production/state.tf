@@ -23,7 +23,7 @@ resource "google_storage_bucket" "terraform_state" {
   }
 }
 
-data "google_iam_policy" "terraform_state" {
+data "google_iam_policy" "oana_storage_admin" {
   binding {
     role = "roles/storage.admin"
 
@@ -35,5 +35,10 @@ data "google_iam_policy" "terraform_state" {
 
 resource "google_storage_bucket_iam_policy" "terraform_state" {
   bucket      = google_storage_bucket.terraform_state.name
-  policy_data = data.google_iam_policy.terraform_state.policy_data
+  policy_data = data.google_iam_policy.oana_storage_admin.policy_data
+}
+
+moved {
+  from = data.google_iam_policy.terraform_state
+  to   = data.google_iam_policy.oana_storage_admin
 }
