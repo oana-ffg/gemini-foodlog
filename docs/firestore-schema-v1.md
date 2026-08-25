@@ -72,7 +72,7 @@ belong in private Cloud Storage rather than Firestore.
 | `knowledge/{knowledge_id}` | Revisable household facts and hypotheses | statement <= 2,000 chars, `kind`, confidence, status, evidence refs <= 50, supersedes ID, learned-from feedback/question IDs; conflicts create revisions, not silent replacement. |
 | `purchases/{purchase_id}` | Normalized invoice/order | merchant, order/reference hash, purchased/delivery timestamps, currency, bounded totals, `raw_mail_id`; line items are separate documents. |
 | `purchases/{purchase_id}/items/{item_id}` | One purchased product | normalized name <= 500 chars, quantity/unit, amount, category, source text <= 1,000 chars. |
-| `raw_mail/{mail_id}` | MIME metadata and immutable object link | sender/recipient, message-ID hash, subject <= 500 chars, received timestamp, `object_key`, content SHA-256, parser status; MIME bytes stay in GCS. |
+| `raw_mail/{mail_id}` | MIME transport metadata and immutable object link | recipient, nullable sender <= 500 chars, nullable subject <= 500 chars, nullable normalized message-ID hash, content SHA-256, byte size, server-derived `object_key`, transport status (`reserved`, `stored`, or `published`), bounded publish attempt/provider IDs, and timestamps; MIME bytes stay in GCS and parsing adds separate normalized purchase evidence. |
 | `traces/{trace_id}` | Agent-run index | event/job IDs, model and prompt versions, status, started/completed timestamps, token/cost counters, immutable GCS `object_key` and SHA-256; full trace stays in GCS. |
 | `jobs/{job_id}` | Durable asynchronous work state | `kind`, subject ID and revision, status, attempt count, `available_at`, lease token/owner/expiry, last error code/message <= 2,000 chars; payload <= 20 scalar/reference keys. |
 | `exports/{export_id}` | User data-export state | status, requested/completed/expiry timestamps, temporary GCS object key, byte size, SHA-256; object expires after one day. |
@@ -95,6 +95,11 @@ belong in private Cloud Storage rather than Firestore.
    frames, line items, and revisions use subcollections.
 7. Firestore documents remain comfortably below its 1 MiB limit; application writes
    reject the tighter bounds above before serialization.
+8. Inbound mail reserves its deterministic account-scoped transport identity before
+   object upload, moves through stored/published states, and retries unfinished
+   publication. A reused Message-ID with different bytes falls back to a
+   content-qualified identity so conflicting evidence is preserved rather than
+   overwritten or dropped.
 
 ## Query and index contract
 

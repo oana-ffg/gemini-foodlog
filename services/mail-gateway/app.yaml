@@ -1,0 +1,29 @@
+runtime: python313
+service_account: foodlog-mail@gemini-foodlog-2026.iam.gserviceaccount.com
+entrypoint: gunicorn -b :$PORT --workers 1 --threads 8 --timeout 60 main:app
+instance_class: F1
+app_engine_apis: true
+
+inbound_services:
+  - mail
+
+automatic_scaling:
+  min_instances: 0
+  max_instances: 1
+  max_concurrent_requests: 8
+
+env_variables:
+  FOODLOG_MAIL_GCP_PROJECT_ID: gemini-foodlog-2026
+  FOODLOG_MAIL_INBOUND_DOMAIN: gemini-foodlog-2026.appspotmail.com
+  FOODLOG_MAIL_RAW_BUCKET: gemini-foodlog-2026-raw-mail-163029863855
+  FOODLOG_MAIL_TOPIC: projects/gemini-foodlog-2026/topics/foodlog-mail-events
+
+handlers:
+  - url: /_ah/mail/.+
+    script: auto
+    login: admin
+    auth_fail_action: unauthorized
+  - url: /.*
+    script: auto
+    login: admin
+    auth_fail_action: unauthorized

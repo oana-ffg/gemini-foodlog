@@ -1,0 +1,8 @@
+.gcloudignore
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+firestore-debug.log
+tests/

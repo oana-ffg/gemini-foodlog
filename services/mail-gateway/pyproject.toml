@@ -1,0 +1,37 @@
+[project]
+name = "gemini-foodlog-mail-gateway"
+version = "0.1.0"
+description = "Thin App Engine inbound MIME persistence boundary for Gemini FoodLog"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  "google-api-core[grpc]>=2.34,<2.35",
+  "google-cloud-firestore>=2.29,<3",
+  "google-cloud-pubsub>=2.39,<3",
+  "google-cloud-storage>=3.13,<4",
+  "gunicorn>=23,<24",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.4,<9",
+  "pyyaml>=6,<7",
+  "ruff>=0.12,<1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mail_gateway"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
