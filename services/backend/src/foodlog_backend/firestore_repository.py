@@ -69,7 +69,12 @@ from .models import (
     event_inference_job_id,
     utc_now,
 )
-from .repository import inference_from_meal, revised_inference, validate_enqueueable_job
+from .repository import (
+    inference_from_meal,
+    revised_inference,
+    validate_capture_scope,
+    validate_enqueueable_job,
+)
 
 ENTITLEMENT_MODE_VALUES = frozenset(item.value for item in EntitlementMode)
 
@@ -794,6 +799,14 @@ class FirestoreRepository:
         object_key: str,
         metadata: CaptureEnvelopeV1 | None = None,
     ) -> tuple[CaptureRecord, Account, bool]:
+        validate_capture_scope(
+            account=account,
+            camera=camera,
+            capture_id=capture_id,
+            content_type=content_type,
+            object_key=object_key,
+            metadata=metadata,
+        )
         key_hash = sha256(idempotency_key.encode()).hexdigest()
         created_at = utc_now()
         capture = CaptureRecord(
@@ -809,15 +822,34 @@ class FirestoreRepository:
         )
         capture_ref = self._collection(account.id, "captures").document(capture.id)
         idempotency_ref = self._collection(account.id, "capture_idempotency").document(key_hash)
+        account_ref = self._account(account.id)
+        camera_ref = self._collection(account.id, "cameras").document(camera.id)
         entitlement_ref = self._entitlement(account.id)
         transaction = self._client.transaction()
 
         @firestore.async_transactional
         async def reserve(transaction):
             duplicate = await idempotency_ref.get(transaction=transaction)
+            account_snapshot = await account_ref.get(transaction=transaction)
+            camera_snapshot = await camera_ref.get(transaction=transaction)
             entitlement = await entitlement_ref.get(transaction=transaction)
-            if not entitlement.exists:
+            if (
+                not account_snapshot.exists
+                or not entitlement.exists
+                or account_snapshot.get("status") != "active"
+                or account_snapshot.get("owner_user_id") != account.owner_user_id
+            ):
                 raise AccountNotProvisioned
+            if (
+                not camera_snapshot.exists
+                or camera_snapshot.get("account_id") != account.id
+                or camera_snapshot.get("kind") != camera.kind
+                or (
+                    isinstance(camera, DeviceCamera)
+                    and camera_snapshot.get("status") != DeviceCameraStatus.ACTIVE.value
+                )
+            ):
+                raise CameraNotFound
             entitlement_data = entitlement.to_dict() or {}
             if duplicate.exists:
                 existing = (
@@ -880,9 +912,16 @@ class FirestoreRepository:
 
         return await reserve(transaction)
 
-    async def cancel_capture(self, capture: CaptureRecord) -> None:
-        capture_ref = self._collection(capture.account_id, "captures").document(capture.id)
-        entitlement_ref = self._entitlement(capture.account_id)
+    async def cancel_capture(
+        self,
+        *,
+        account_id: str,
+        capture: CaptureRecord,
+    ) -> None:
+        if capture.account_id != account_id:
+            raise CrossAccountAccess
+        capture_ref = self._collection(account_id, "captures").document(capture.id)
+        entitlement_ref = self._entitlement(account_id)
         transaction = self._client.transaction()
 
         @firestore.async_transactional
@@ -891,10 +930,16 @@ class FirestoreRepository:
             entitlement = await entitlement_ref.get(transaction=transaction)
             if not stored.exists:
                 return
+            if (
+                stored.get("account_id") != account_id
+                or stored.get("idempotency_hash")
+                != sha256(capture.idempotency_key.encode()).hexdigest()
+            ):
+                raise CaptureNotFound
             key_hash = stored.get("idempotency_hash")
             transaction.delete(capture_ref)
             transaction.delete(
-                self._collection(capture.account_id, "capture_idempotency").document(key_hash)
+                self._collection(account_id, "capture_idempotency").document(key_hash)
             )
             transaction.update(
                 entitlement_ref,
@@ -906,9 +951,7 @@ class FirestoreRepository:
 
         await cancel(transaction)
 
-    async def mark_stored(self, capture_id: str, account_id: str | None = None) -> None:
-        if account_id is None:
-            raise ValueError("Firestore capture updates require account scope")
+    async def mark_stored(self, *, account_id: str, capture_id: str) -> None:
         capture_ref = self._collection(account_id, "captures").document(capture_id)
         transaction = self._client.transaction()
 
@@ -945,9 +988,7 @@ class FirestoreRepository:
 
         await store(transaction)
 
-    async def mark_processed(self, capture_id: str, account_id: str | None = None) -> None:
-        if account_id is None:
-            raise ValueError("Firestore capture updates require account scope")
+    async def mark_processed(self, *, account_id: str, capture_id: str) -> None:
         reference = self._collection(account_id, "captures").document(capture_id)
         snapshot = await reference.get()
         if not snapshot.exists:
@@ -1334,12 +1375,14 @@ class FirestoreRepository:
 
         return await group(transaction)
 
-    async def save_meal(self, meal: MealEntry) -> MealEntry:
-        meal_ref = self._collection(meal.account_id, "meals").document(meal.id)
-        capture_ref = self._collection(meal.account_id, "captures").document(meal.capture_id)
+    async def save_meal(self, *, account_id: str, meal: MealEntry) -> MealEntry:
+        if meal.account_id != account_id:
+            raise CrossAccountAccess
+        meal_ref = self._collection(account_id, "meals").document(meal.id)
+        capture_ref = self._collection(account_id, "captures").document(meal.capture_id)
         revision = MealRevision(
             id=str(uuid4()),
-            account_id=meal.account_id,
+            account_id=account_id,
             meal_id=meal.id,
             number=1,
             status=meal.status,
@@ -1352,12 +1395,12 @@ class FirestoreRepository:
         @firestore.async_transactional
         async def save(transaction):
             capture = await capture_ref.get(transaction=transaction)
-            if not capture.exists:
+            if not capture.exists or capture.get("account_id") != account_id:
                 raise CaptureNotFound
             existing_id = (capture.to_dict() or {}).get("meal_id")
             if existing_id:
                 existing = (
-                    await self._collection(meal.account_id, "meals")
+                    await self._collection(account_id, "meals")
                     .document(existing_id)
                     .get(transaction=transaction)
                 )
@@ -1372,16 +1415,30 @@ class FirestoreRepository:
         return await save(transaction)
 
     async def open_question(
-        self, *, meal: MealEntry, prompt: str, reason: str
+        self,
+        *,
+        account_id: str,
+        meal: MealEntry,
+        prompt: str,
+        reason: str,
     ) -> ClarificationQuestion:
-        reference = self._collection(meal.account_id, "questions").document(meal.id)
+        if meal.account_id != account_id:
+            raise CrossAccountAccess
+        meal_snapshot = await self._collection(account_id, "meals").document(meal.id).get()
+        if not meal_snapshot.exists or meal_snapshot.get("account_id") != account_id:
+            raise MealNotFound
+        stored_meal = _model(meal_snapshot, MealEntry)
+        reference = self._collection(account_id, "questions").document(stored_meal.id)
         existing = await reference.get()
         if existing.exists:
-            return _model(existing, ClarificationQuestion)
+            question = _model(existing, ClarificationQuestion)
+            if question.account_id != account_id:
+                raise QuestionNotFound
+            return question
         question = ClarificationQuestion(
-            id=meal.id,
-            account_id=meal.account_id,
-            meal_id=meal.id,
+            id=stored_meal.id,
+            account_id=account_id,
+            meal_id=stored_meal.id,
             prompt=prompt,
             reason=reason,
         )

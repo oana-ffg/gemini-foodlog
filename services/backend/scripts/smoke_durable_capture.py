@@ -48,7 +48,7 @@ async def smoke(args: argparse.Namespace) -> None:
     if created_results:
         await store.put(capture.object_key, image, capture.content_type)
     assert sha256(await store.get(capture.object_key)).hexdigest() == content_sha256
-    await repository.mark_processed(capture.id, account.id)
+    await repository.mark_processed(account_id=account.id, capture_id=capture.id)
 
     stored = await repository.capture_for_owner(args.owner_id, capture.id)
     assert stored.status.value == "processed"
@@ -64,7 +64,7 @@ async def smoke(args: argparse.Namespace) -> None:
         object_key=f"accounts/{account.id}/captures/{rollback_id}.png",
     )
     assert created and reserved_account.accepted_image_count == 2
-    await repository.cancel_capture(rollback)
+    await repository.cancel_capture(account_id=account.id, capture=rollback)
     assert (await repository.account_for_owner(args.owner_id)).accepted_image_count == 1
     try:
         await repository.capture_for_owner(args.owner_id, rollback.id)

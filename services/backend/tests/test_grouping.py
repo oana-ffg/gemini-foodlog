@@ -62,7 +62,7 @@ async def add_capture(
         metadata=metadata,
     )
     assert created is True
-    await repository.mark_stored(capture.id, account.id)
+    await repository.mark_stored(account_id=account.id, capture_id=capture.id)
 
 
 async def claim_and_group(

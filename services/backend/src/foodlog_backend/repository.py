@@ -81,6 +81,26 @@ def validate_enqueueable_job(job: DurableJob) -> None:
         raise ValueError("New job revisions must start as clean pending work")
 
 
+def validate_capture_scope(
+    *,
+    account: Account,
+    camera: BrowserCamera | DeviceCamera,
+    capture_id: str,
+    content_type: str,
+    object_key: str,
+    metadata: CaptureEnvelopeV1 | None,
+) -> None:
+    if camera.account_id != account.id:
+        raise CrossAccountAccess
+    if metadata is not None and metadata.camera_id != camera.id:
+        raise CameraNotFound
+    extension = {"image/jpeg": "jpg", "image/png": "png"}.get(content_type)
+    if extension is None:
+        raise ValueError("Unsupported capture content type")
+    if object_key != f"accounts/{account.id}/captures/{capture_id}.{extension}":
+        raise CrossAccountAccess
+
+
 class Repository(Protocol):
     async def provision_account(self, owner_user_id: str) -> Account: ...
 
@@ -196,11 +216,16 @@ class Repository(Protocol):
         metadata: CaptureEnvelopeV1 | None = None,
     ) -> tuple[CaptureRecord, Account, bool]: ...
 
-    async def cancel_capture(self, capture: CaptureRecord) -> None: ...
+    async def cancel_capture(
+        self,
+        *,
+        account_id: str,
+        capture: CaptureRecord,
+    ) -> None: ...
 
-    async def mark_stored(self, capture_id: str, account_id: str | None = None) -> None: ...
+    async def mark_stored(self, *, account_id: str, capture_id: str) -> None: ...
 
-    async def mark_processed(self, capture_id: str, account_id: str | None = None) -> None: ...
+    async def mark_processed(self, *, account_id: str, capture_id: str) -> None: ...
 
     async def enqueue_job(self, job: DurableJob) -> DurableJob: ...
 
@@ -250,10 +275,15 @@ class Repository(Protocol):
         policy: GroupingPolicy,
     ) -> CaptureGroupingResult | None: ...
 
-    async def save_meal(self, meal: MealEntry) -> MealEntry: ...
+    async def save_meal(self, *, account_id: str, meal: MealEntry) -> MealEntry: ...
 
     async def open_question(
-        self, *, meal: MealEntry, prompt: str, reason: str
+        self,
+        *,
+        account_id: str,
+        meal: MealEntry,
+        prompt: str,
+        reason: str,
     ) -> ClarificationQuestion: ...
 
     async def list_meals(self, owner_user_id: str) -> list[MealEntry]: ...
@@ -728,7 +758,35 @@ class InMemoryRepository:
         object_key: str,
         metadata: CaptureEnvelopeV1 | None = None,
     ) -> tuple[CaptureRecord, Account, bool]:
+        validate_capture_scope(
+            account=account,
+            camera=camera,
+            capture_id=capture_id,
+            content_type=content_type,
+            object_key=object_key,
+            metadata=metadata,
+        )
         async with self._lock:
+            stored_account = self._accounts.get(account.id)
+            if (
+                stored_account is None
+                or stored_account.owner_user_id != account.owner_user_id
+            ):
+                raise AccountNotProvisioned
+            stored_camera: BrowserCamera | DeviceCamera | None
+            if isinstance(camera, DeviceCamera):
+                stored_camera = self._device_cameras.get(camera.id)
+                if (
+                    stored_camera is not None
+                    and stored_camera.status != DeviceCameraStatus.ACTIVE
+                ):
+                    raise CameraNotFound
+            else:
+                stored_camera = self._cameras.get(camera.id)
+            if stored_camera is None:
+                raise CameraNotFound
+            if stored_camera.account_id != account.id:
+                raise CrossAccountAccess
             duplicate_id = self._capture_by_idempotency.get((account.id, idempotency_key))
             if duplicate_id:
                 duplicate = self._captures[duplicate_id]
@@ -744,7 +802,6 @@ class InMemoryRepository:
                     self._accounts[account.id].model_copy(deep=True),
                     False,
                 )
-            stored_account = self._accounts[account.id]
             if (
                 stored_account.entitlement_mode == EntitlementMode.TRIAL
                 and stored_account.trial_image_limit is not None
@@ -766,11 +823,21 @@ class InMemoryRepository:
             self._capture_by_idempotency[(account.id, idempotency_key)] = capture.id
             return capture.model_copy(deep=True), stored_account.model_copy(deep=True), True
 
-    async def cancel_capture(self, capture: CaptureRecord) -> None:
+    async def cancel_capture(
+        self,
+        *,
+        account_id: str,
+        capture: CaptureRecord,
+    ) -> None:
+        if capture.account_id != account_id:
+            raise CrossAccountAccess
         async with self._lock:
-            stored = self._captures.pop(capture.id, None)
+            stored = self._captures.get(capture.id)
             if not stored:
                 return
+            if stored.account_id != account_id:
+                raise CaptureNotFound
+            self._captures.pop(capture.id)
             self._capture_by_idempotency.pop((stored.account_id, stored.idempotency_key), None)
             meal_id = self._meal_by_capture.pop(stored.id, None)
             if meal_id:
@@ -793,10 +860,10 @@ class InMemoryRepository:
             account = self._accounts[stored.account_id]
             account.accepted_image_count -= 1
 
-    async def mark_stored(self, capture_id: str, account_id: str | None = None) -> None:
+    async def mark_stored(self, *, account_id: str, capture_id: str) -> None:
         async with self._lock:
             capture = self._captures.get(capture_id)
-            if not capture:
+            if not capture or capture.account_id != account_id:
                 raise CaptureNotFound
             if capture.status == CaptureStatus.ACCEPTED:
                 capture.status = CaptureStatus.STORED
@@ -810,10 +877,10 @@ class InMemoryRepository:
                     )
                 )
 
-    async def mark_processed(self, capture_id: str, account_id: str | None = None) -> None:
+    async def mark_processed(self, *, account_id: str, capture_id: str) -> None:
         async with self._lock:
             capture = self._captures.get(capture_id)
-            if not capture:
+            if not capture or capture.account_id != account_id:
                 raise CaptureNotFound
             capture.status = CaptureStatus.PROCESSED
 
@@ -1118,11 +1185,19 @@ class InMemoryRepository:
                 segment_created=segment_created,
             )
 
-    async def save_meal(self, meal: MealEntry) -> MealEntry:
+    async def save_meal(self, *, account_id: str, meal: MealEntry) -> MealEntry:
+        if meal.account_id != account_id:
+            raise CrossAccountAccess
         async with self._lock:
+            capture = self._captures.get(meal.capture_id)
+            if capture is None or capture.account_id != account_id:
+                raise CaptureNotFound
             existing_id = self._meal_by_capture.get(meal.capture_id)
             if existing_id:
-                return self._meals[existing_id].model_copy(deep=True)
+                existing = self._meals[existing_id]
+                if existing.account_id != account_id:
+                    raise MealNotFound
+                return existing.model_copy(deep=True)
             self._meals[meal.id] = meal
             self._meal_by_capture[meal.capture_id] = meal.id
             self._meal_revisions[meal.id] = [
@@ -1142,18 +1217,27 @@ class InMemoryRepository:
     async def open_question(
         self,
         *,
+        account_id: str,
         meal: MealEntry,
         prompt: str,
         reason: str,
     ) -> ClarificationQuestion:
+        if meal.account_id != account_id:
+            raise CrossAccountAccess
         async with self._lock:
+            stored_meal = self._meals.get(meal.id)
+            if stored_meal is None or stored_meal.account_id != account_id:
+                raise MealNotFound
             existing_id = self._question_by_meal.get(meal.id)
             if existing_id:
-                return self._questions[existing_id].model_copy(deep=True)
+                existing = self._questions[existing_id]
+                if existing.account_id != account_id:
+                    raise QuestionNotFound
+                return existing.model_copy(deep=True)
             question = ClarificationQuestion(
                 id=str(uuid4()),
-                account_id=meal.account_id,
-                meal_id=meal.id,
+                account_id=account_id,
+                meal_id=stored_meal.id,
                 prompt=prompt,
                 reason=reason,
             )

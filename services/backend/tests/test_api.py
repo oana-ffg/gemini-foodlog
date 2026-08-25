@@ -278,7 +278,8 @@ def post_fixture_capture(
         repository = client.app.state.container.repository
         inference = await FixtureInferenceEngine().infer(image, "image/png")
         meal = await repository.save_meal(
-            MealEntry(
+            account_id=camera["account_id"],
+            meal=MealEntry(
                 **inference.model_dump(),
                 id=str(uuid4()),
                 account_id=camera["account_id"],
@@ -287,11 +288,15 @@ def post_fixture_capture(
         )
         if inference.clarification_question and inference.clarification_reason:
             await repository.open_question(
+                account_id=camera["account_id"],
                 meal=meal,
                 prompt=inference.clarification_question,
                 reason=inference.clarification_reason,
             )
-        await repository.mark_processed(response.json()["capture_id"], camera["account_id"])
+        await repository.mark_processed(
+            account_id=camera["account_id"],
+            capture_id=response.json()["capture_id"],
+        )
 
     asyncio.run(seed_deterministic_result())
     return response
@@ -407,15 +412,12 @@ def test_shared_ingestion_retains_an_uploaded_object_for_finalize_retry(
     original_mark_stored = repository.mark_stored
     finalize_attempts = 0
 
-    async def fail_first_finalize(
-        capture_id: str,
-        account_id: str | None = None,
-    ) -> None:
+    async def fail_first_finalize(*, account_id: str, capture_id: str) -> None:
         nonlocal finalize_attempts
         finalize_attempts += 1
         if finalize_attempts == 1:
             raise RuntimeError("simulated Firestore finalization failure")
-        await original_mark_stored(capture_id, account_id)
+        await original_mark_stored(account_id=account_id, capture_id=capture_id)
 
     monkeypatch.setattr(repository, "mark_stored", fail_first_finalize)
     request = {

@@ -102,6 +102,21 @@ def test_firestore_paths_are_account_scoped() -> None:
 
     assert repository._collection("account-a", "captures").path == ("accounts/account-a/captures")
     assert repository._entitlement("account-a").path == ("accounts/account-a/entitlements/current")
+    for collection in (
+        "cameras",
+        "captures",
+        "capture_idempotency",
+        "events",
+        "event_heads",
+        "feedback",
+        "jobs",
+        "meals",
+        "questions",
+        "segments",
+    ):
+        assert repository._collection("account-b", collection).path == (
+            f"accounts/account-b/{collection}"
+        )
 
 
 def test_firestore_activity_event_preserves_its_materialized_update_time() -> None:

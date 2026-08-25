@@ -59,7 +59,10 @@ class CaptureService:
                 image,
                 content_type,
             )
-            await self._repository.mark_stored(capture.id, capture.account_id)
+            await self._repository.mark_stored(
+                account_id=capture.account_id,
+                capture_id=capture.id,
+            )
             await self._event_publisher.publish(
                 CaptureStoredEventV1(
                     account_id=capture.account_id,
@@ -73,7 +76,10 @@ class CaptureService:
             # finalization without requiring broad object-delete permission.
             if created and not object_created:
                 try:
-                    await self._repository.cancel_capture(capture)
+                    await self._repository.cancel_capture(
+                        account_id=capture.account_id,
+                        capture=capture,
+                    )
                 except Exception as cleanup_error:
                     cleanup_errors.append(cleanup_error)
             if cleanup_errors:

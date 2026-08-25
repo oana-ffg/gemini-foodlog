@@ -40,7 +40,7 @@ async def stored_capture_job(repository: InMemoryRepository) -> DurableJob:
         object_key=f"accounts/{account.id}/captures/capture-for-job-0001.jpg",
     )
     assert created is True
-    await repository.mark_stored(capture.id, account.id)
+    await repository.mark_stored(account_id=account.id, capture_id=capture.id)
     job = await repository.job_for_account(
         account.id,
         capture_grouping_job_id(capture.id),
@@ -57,7 +57,9 @@ def test_storing_a_capture_transactionally_enqueues_one_grouping_job() -> None:
     repository = build_repository()
     job = asyncio.run(stored_capture_job(repository))
 
-    asyncio.run(repository.mark_stored(job.subject_id, job.account_id))
+    asyncio.run(
+        repository.mark_stored(account_id=job.account_id, capture_id=job.subject_id)
+    )
     stored = asyncio.run(repository.job_for_account(job.account_id, job.id))
 
     assert stored is not None
