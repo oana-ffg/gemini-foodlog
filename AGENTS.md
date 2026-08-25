@@ -10,7 +10,7 @@
 
 ## Repository workflow
 
-- Treat `docs/mvp-backlog.html` as the live execution record. Before implementation or infrastructure work begins, mark the exact task `In Progress`. Whenever work on that task stops, immediately move it to the evidence-backed next state and record the current evidence or blocker. Never leave active work marked `Todo` or completed work marked `In Progress`.
+- Treat `docs/mvp-backlog.html` as the live execution record. Before doing any task work—including research, implementation, configuration, deployment, or testing—mark the exact task `In Progress` and save that change so it is immediately visible after refreshing the page. Keep the status accurate throughout the work. Whenever work on that task stops, immediately move it to the evidence-backed next state and record the current evidence or blocker. Never leave active work marked `Todo` or completed work marked `In Progress`.
 - Commit each completed backlog task after its relevant validation passes. For substantial or risky work, also commit at earlier coherent safe checkpoints so validated progress is not left vulnerable to loss.
 - Keep commits cohesive and preserve unrelated user changes; do not absorb unrelated work merely to make a checkpoint.
 
