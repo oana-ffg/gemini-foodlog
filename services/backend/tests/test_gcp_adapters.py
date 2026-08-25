@@ -1,9 +1,10 @@
 import asyncio
 
 import pytest
+from google.api_core.exceptions import PreconditionFailed
 from pydantic import ValidationError
 
-from foodlog_backend.app import create_app
+from foodlog_backend.app import configured_inference_engine
 from foodlog_backend.firestore_repository import FirestoreRepository
 from foodlog_backend.inference import FixtureInferenceEngine
 from foodlog_backend.models import EntitlementMode, utc_now
@@ -46,8 +47,15 @@ class FakeBlob:
     ) -> None:
         assert if_generation_match == 0
         if self.key in self.objects:
-            raise AssertionError("test adapter forbids overwrite")
+            raise PreconditionFailed("object already exists")
         self.objects[self.key] = (content, content_type)
+
+    @property
+    def content_type(self) -> str:
+        return self.objects[self.key][1]
+
+    def reload(self) -> None:
+        return None
 
     def download_as_bytes(self) -> bytes:
         return self.objects[self.key][0]
@@ -134,13 +142,32 @@ def test_gcs_adapter_writes_once_and_round_trips_private_bytes() -> None:
     )
     key = "accounts/account-a/captures/capture-a.jpg"
 
-    asyncio.run(store.put(key, b"image-bytes", "image/jpeg"))
+    created = asyncio.run(store.put(key, b"image-bytes", "image/jpeg"))
+    duplicate = asyncio.run(store.put(key, b"image-bytes", "image/jpeg"))
 
     assert client.selected_bucket == "private-media"
+    assert created is True
+    assert duplicate is False
     assert asyncio.run(store.get(key)) == b"image-bytes"
     assert client.bucket_instance.objects[key][1] == "image/jpeg"
     asyncio.run(store.delete(key))
     assert key not in client.bucket_instance.objects
+
+
+def test_gcs_adapter_never_accepts_different_bytes_for_an_existing_key() -> None:
+    client = FakeStorageClient()
+    store = GCSObjectStore(
+        project_id="test-project",
+        bucket_name="private-media",
+        client=client,  # type: ignore[arg-type]
+    )
+    key = "accounts/account-a/captures/capture-a.jpg"
+    asyncio.run(store.put(key, b"original", "image/jpeg"))
+
+    with pytest.raises(ValueError, match="different content"):
+        asyncio.run(store.put(key, b"replacement", "image/jpeg"))
+
+    assert asyncio.run(store.get(key)) == b"original"
 
 
 def test_production_cannot_select_partial_or_volatile_storage() -> None:
@@ -160,7 +187,7 @@ def test_production_cannot_select_partial_or_volatile_storage() -> None:
     assert settings.storage_backend == "gcp"
 
 
-def test_production_requires_explicit_non_fixture_inference() -> None:
+def test_production_ingestion_has_no_implicit_inference_and_refuses_fixtures() -> None:
     settings = Settings(
         environment="production",
         auth_backend="firebase",
@@ -169,7 +196,6 @@ def test_production_requires_explicit_non_fixture_inference() -> None:
         firebase_project_id="gemini-foodlog-2026",
         media_bucket="gemini-foodlog-2026-media-163029863855",
     )
-    with pytest.raises(ValueError, match="Production requires"):
-        create_app(settings)
-    with pytest.raises(ValueError, match="Production requires"):
-        create_app(settings, inference_engine=FixtureInferenceEngine())
+    assert configured_inference_engine(settings, None) is None
+    with pytest.raises(ValueError, match="refuses the fixture"):
+        configured_inference_engine(settings, FixtureInferenceEngine())

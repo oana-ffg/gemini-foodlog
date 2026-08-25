@@ -22,11 +22,13 @@ The request is `multipart/form-data` with:
 - `metadata`: UTF-8 JSON matching
   [`capture-envelope-v1.schema.json`](../contracts/capture-envelope-v1.schema.json);
 - `image`: one non-empty JPEG or PNG whose actual bytes match its declared media
-  type, dimensions match the envelope, and encoded size is at most 5 MiB;
+  type, fully decodes within 4096×4096 pixels, dimensions match the envelope, and
+  encoded size is at most 5 MiB;
 - `Idempotency-Key`: an 8–128 character client-generated header reused only when
   retrying the exact same camera frame and metadata.
 
-`captured_at` includes a UTC offset. `sequence_id` identifies a client boot or
+`captured_at` includes a UTC offset and cannot be more than five minutes ahead of
+the server. Older offline-queued captures remain valid. `sequence_id` identifies a client boot or
 delivery sequence and `sequence_number` increases within it. The optional
 `burst_id` and `burst_frame_index` are supplied together for a motion burst.
 Periodic frames outside a burst omit both. Motion data is optional, explicitly

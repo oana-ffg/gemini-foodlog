@@ -1,13 +1,17 @@
 import asyncio
+import json
 from base64 import b64decode
+from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from PIL import Image
 
-from foodlog_backend.app import create_app
+from foodlog_backend.app import create_app, image_dimensions
 from foodlog_backend.errors import AccountCapacityReached
 from foodlog_backend.inference import FixtureInferenceEngine, verify_fixture_files
-from foodlog_backend.models import MealInference
+from foodlog_backend.models import CaptureEnvelopeV1, MealInference, utc_now
 from foodlog_backend.settings import Settings
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -193,6 +197,269 @@ def provision(client: TestClient, user: str = "owner-a") -> tuple[dict, dict]:
     )
     assert camera.status_code == 200
     return account.json(), camera.json()
+
+
+def capture_metadata(
+    camera_id: str,
+    image: bytes,
+    *,
+    client_kind: str = "browser",
+) -> dict[str, object]:
+    dimensions = image_dimensions(image, "image/png")
+    assert dimensions is not None
+    return {
+        "schema_version": 1,
+        "camera_id": camera_id,
+        "captured_at": utc_now().isoformat(),
+        "client_kind": client_kind,
+        "client_version": "foodlog-test/0.1.0",
+        "sequence_id": "test-sequence-0001",
+        "sequence_number": 1,
+        "width": dimensions[0],
+        "height": dimensions[1],
+    }
+
+
+def shared_capture_request(
+    *,
+    headers: dict[str, str],
+    metadata: dict[str, object],
+    image: bytes,
+) -> dict:
+    return {
+        "headers": headers,
+        "data": {"metadata": json.dumps(metadata)},
+        "files": {"image": ("capture.png", image, "image/png")},
+    }
+
+
+def test_shared_browser_ingestion_stores_metadata_and_bytes_without_inference() -> None:
+    with build_client() as client:
+        _, camera = provision(client)
+        image = (FIXTURES / "synthetic-steak-airfryer.png").read_bytes()
+        metadata = capture_metadata(camera["id"], image)
+        request = shared_capture_request(
+            headers={**USER_HEADER, "Idempotency-Key": "shared-browser-capture-0001"},
+            metadata=metadata,
+            image=image,
+        )
+        accepted = client.post("/v1/captures", **request)
+        retry = client.post("/v1/captures", **request)
+        changed_metadata = {**metadata, "sequence_number": 2}
+        conflict = client.post(
+            "/v1/captures",
+            **shared_capture_request(
+                headers={
+                    **USER_HEADER,
+                    "Idempotency-Key": "shared-browser-capture-0001",
+                },
+                metadata=changed_metadata,
+                image=image,
+            ),
+        )
+        journal = client.get("/v1/journal", headers=USER_HEADER)
+        stored_image = client.get(
+            f"/v1/captures/{accepted.json()['capture_id']}/image",
+            headers=USER_HEADER,
+        )
+        repository = client.app.state.container.repository
+        stored_capture = repository._captures[accepted.json()["capture_id"]]
+
+    assert accepted.status_code == retry.status_code == 202
+    assert accepted.json()["duplicate"] is False
+    assert retry.json()["duplicate"] is True
+    assert retry.json()["accepted_image_count"] == 1
+    assert conflict.status_code == 409
+    assert journal.json() == []
+    assert stored_image.content == image
+    assert stored_capture.status == "stored"
+    assert stored_capture.metadata == CaptureEnvelopeV1.model_validate(metadata)
+
+
+def test_shared_ingestion_recovers_an_interrupted_reserved_capture() -> None:
+    app = create_app(Settings(environment="test"))
+    with TestClient(app) as client:
+        account, camera = provision(client)
+        image = (FIXTURES / "synthetic-steak-airfryer.png").read_bytes()
+        metadata = capture_metadata(camera["id"], image)
+        envelope = CaptureEnvelopeV1.model_validate(metadata)
+        repository = client.app.state.container.repository
+        stored_account = asyncio.run(repository.account_for_owner("owner-a"))
+        stored_camera = asyncio.run(
+            repository.camera_for_owner("owner-a", camera["id"])
+        )
+        interrupted_capture_id = "interrupted-reservation-capture"
+        interrupted_object_key = (
+            f"accounts/{account['id']}/captures/{interrupted_capture_id}.png"
+        )
+        reserved, _, created = asyncio.run(
+            repository.reserve_capture(
+                capture_id=interrupted_capture_id,
+                account=stored_account,
+                camera=stored_camera,
+                idempotency_key="interrupted-reservation-0001",
+                content_type="image/png",
+                content_sha256=sha256(image).hexdigest(),
+                object_key=interrupted_object_key,
+                metadata=envelope,
+            )
+        )
+        assert created is True
+        assert reserved.status == "accepted"
+
+        recovered = client.post(
+            "/v1/captures",
+            **shared_capture_request(
+                headers={
+                    **USER_HEADER,
+                    "Idempotency-Key": "interrupted-reservation-0001",
+                },
+                metadata=metadata,
+                image=image,
+            ),
+        )
+        stored_image = client.get(
+            f"/v1/captures/{interrupted_capture_id}/image",
+            headers=USER_HEADER,
+        )
+
+    assert recovered.status_code == 202
+    assert recovered.json()["capture_id"] == interrupted_capture_id
+    assert recovered.json()["duplicate"] is True
+    assert recovered.json()["accepted_image_count"] == 1
+    assert stored_image.content == image
+    assert repository._captures[interrupted_capture_id].status == "stored"
+
+
+def test_shared_device_ingestion_uses_credential_scope_and_honors_revocation() -> None:
+    owner_headers = {"X-FoodLog-Local-User": "device-capture-owner"}
+    with build_client() as client:
+        account = client.post("/v1/accounts", headers=owner_headers)
+        assert account.status_code == 200
+        issued = client.post(
+            "/v1/device-cameras",
+            headers=owner_headers,
+            json={"name": "Physical kitchen camera"},
+        )
+        assert issued.status_code == 200
+        camera = issued.json()["camera"]
+        credential = issued.json()["credential"]
+        image = (FIXTURES / "synthetic-chicken-airfryer.png").read_bytes()
+        metadata = capture_metadata(camera["id"], image, client_kind="physical")
+        accepted = client.post(
+            "/v1/captures",
+            **shared_capture_request(
+                headers={
+                    "Authorization": f"FoodLogCamera {credential}",
+                    "Idempotency-Key": "shared-device-capture-0001",
+                },
+                metadata=metadata,
+                image=image,
+            ),
+        )
+        wrong_camera = client.post(
+            "/v1/captures",
+            **shared_capture_request(
+                headers={
+                    "Authorization": f"FoodLogCamera {credential}",
+                    "Idempotency-Key": "shared-device-capture-0002",
+                },
+                metadata={**metadata, "camera_id": "different-camera"},
+                image=image,
+            ),
+        )
+        revoked = client.post(
+            f"/v1/device-cameras/{camera['id']}/revoke",
+            headers=owner_headers,
+        )
+        after_revoke = client.post(
+            "/v1/captures",
+            **shared_capture_request(
+                headers={
+                    "Authorization": f"FoodLogCamera {credential}",
+                    "Idempotency-Key": "shared-device-capture-0003",
+                },
+                metadata=metadata,
+                image=image,
+            ),
+        )
+        stored_image = client.get(
+            f"/v1/captures/{accepted.json()['capture_id']}/image",
+            headers=owner_headers,
+        )
+
+    assert accepted.status_code == 202
+    assert wrong_camera.status_code == 403
+    assert wrong_camera.json() == {"detail": "camera_identity_mismatch"}
+    assert revoked.status_code == 200
+    assert after_revoke.status_code == 401
+    assert stored_image.content == image
+
+
+def test_shared_ingestion_rejects_invalid_metadata_dimensions_and_image_structure() -> None:
+    with build_client() as client:
+        _, camera = provision(client)
+        image = (FIXTURES / "synthetic-leftover-pasta.png").read_bytes()
+        metadata = capture_metadata(camera["id"], image)
+        invalid_metadata = client.post(
+            "/v1/captures",
+            headers={**USER_HEADER, "Idempotency-Key": "invalid-metadata-0001"},
+            data={"metadata": "{not-json"},
+            files={"image": ("capture.png", image, "image/png")},
+        )
+        wrong_dimensions = client.post(
+            "/v1/captures",
+            **shared_capture_request(
+                headers={**USER_HEADER, "Idempotency-Key": "wrong-dimensions-0001"},
+                metadata={**metadata, "width": int(metadata["width"]) + 1},
+                image=image,
+            ),
+        )
+        truncated = client.post(
+            "/v1/captures",
+            **shared_capture_request(
+                headers={**USER_HEADER, "Idempotency-Key": "truncated-image-0001"},
+                metadata=metadata,
+                image=b"\x89PNG\r\n\x1a\ntruncated",
+            ),
+        )
+        wrong_kind = client.post(
+            "/v1/captures",
+            **shared_capture_request(
+                headers={**USER_HEADER, "Idempotency-Key": "wrong-kind-0001"},
+                metadata={**metadata, "client_kind": "physical"},
+                image=image,
+            ),
+        )
+        future_timestamp = client.post(
+            "/v1/captures",
+            **shared_capture_request(
+                headers={**USER_HEADER, "Idempotency-Key": "future-time-0001"},
+                metadata={**metadata, "captured_at": "2099-01-01T00:00:00Z"},
+                image=image,
+            ),
+        )
+
+    assert invalid_metadata.status_code == 422
+    assert invalid_metadata.json() == {"detail": "invalid_capture_metadata"}
+    assert wrong_dimensions.status_code == 422
+    assert wrong_dimensions.json() == {"detail": "image_dimensions_mismatch"}
+    assert truncated.status_code == 415
+    assert truncated.json() == {"detail": "Image dimensions could not be read"}
+    assert wrong_kind.status_code == 422
+    assert wrong_kind.json() == {"detail": "camera_client_kind_mismatch"}
+    assert future_timestamp.status_code == 422
+    assert future_timestamp.json() == {"detail": "captured_at_too_far_in_future"}
+
+
+def test_image_validation_fully_decodes_jpeg_and_rejects_truncation() -> None:
+    buffer = BytesIO()
+    Image.new("RGB", (3, 2), color=(120, 80, 40)).save(buffer, format="JPEG")
+    jpeg = buffer.getvalue()
+
+    assert image_dimensions(jpeg, "image/jpeg") == (3, 2)
+    assert image_dimensions(jpeg[:-8], "image/jpeg") is None
+    assert image_dimensions(jpeg, "image/png") is None
 
 
 def test_fixture_capture_creates_explainable_journal_entry() -> None:

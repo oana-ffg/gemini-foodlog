@@ -50,7 +50,7 @@ def test_capture_envelope_accepts_the_shared_device_shape() -> None:
         ("sequence_id", "short"),
         ("sequence_number", -1),
         ("width", 0),
-        ("height", 8193),
+        ("height", 4097),
     ],
 )
 def test_capture_envelope_rejects_invalid_bounded_fields(

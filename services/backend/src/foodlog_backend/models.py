@@ -51,6 +51,7 @@ class QuestionStatus(StrEnum):
 
 class CaptureStatus(StrEnum):
     ACCEPTED = "accepted"
+    STORED = "stored"
     PROCESSED = "processed"
 
 
@@ -210,8 +211,8 @@ class CaptureEnvelopeV1(BaseModel):
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
     )
     burst_frame_index: int | None = Field(default=None, ge=0, le=2_147_483_647)
-    width: int = Field(ge=1, le=8_192)
-    height: int = Field(ge=1, le=8_192)
+    width: int = Field(ge=1, le=4_096)
+    height: int = Field(ge=1, le=4_096)
     motion: MotionMetadataV1 | None = None
 
     @field_validator("captured_at")
@@ -236,6 +237,7 @@ class CaptureRecord(BaseModel):
     content_type: str
     content_sha256: str
     object_key: str
+    metadata: CaptureEnvelopeV1 | None = None
     status: CaptureStatus = CaptureStatus.ACCEPTED
     created_at: datetime = Field(default_factory=utc_now)
 

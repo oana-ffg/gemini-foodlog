@@ -27,6 +27,7 @@ from .errors import (
 from .models import (
     Account,
     BrowserCamera,
+    CaptureEnvelopeV1,
     CaptureRecord,
     CaptureStatus,
     ClarificationQuestion,
@@ -479,6 +480,22 @@ class FirestoreRepository:
 
         return await revoke(transaction)
 
+    async def device_camera_for_identity(
+        self,
+        *,
+        account_id: str,
+        camera_id: str,
+    ) -> DeviceCamera:
+        snapshot = await self._collection(account_id, "cameras").document(camera_id).get()
+        if (
+            not snapshot.exists
+            or snapshot.get("account_id") != account_id
+            or snapshot.get("kind") != "device"
+            or snapshot.get("status") != DeviceCameraStatus.ACTIVE.value
+        ):
+            raise CameraNotFound
+        return _model(snapshot, DeviceCamera)
+
     async def _account_in_transaction(
         self,
         transaction,
@@ -560,11 +577,12 @@ class FirestoreRepository:
         *,
         capture_id: str,
         account: Account,
-        camera: BrowserCamera,
+        camera: BrowserCamera | DeviceCamera,
         idempotency_key: str,
         content_type: str,
         content_sha256: str,
         object_key: str,
+        metadata: CaptureEnvelopeV1 | None = None,
     ) -> tuple[CaptureRecord, Account, bool]:
         key_hash = sha256(idempotency_key.encode()).hexdigest()
         created_at = utc_now()
@@ -576,6 +594,7 @@ class FirestoreRepository:
             content_type=content_type,
             content_sha256=content_sha256,
             object_key=object_key,
+            metadata=metadata,
             created_at=created_at,
         )
         capture_ref = self._collection(account.id, "captures").document(capture.id)
@@ -603,6 +622,7 @@ class FirestoreRepository:
                     record.camera_id != camera.id
                     or record.content_type != content_type
                     or record.content_sha256 != content_sha256
+                    or record.metadata != metadata
                 ):
                     raise IdempotencyConflict
                 return record, self._account_with_entitlement(account, entitlement), False
@@ -677,6 +697,32 @@ class FirestoreRepository:
             )
 
         await cancel(transaction)
+
+    async def mark_stored(self, capture_id: str, account_id: str | None = None) -> None:
+        if account_id is None:
+            raise ValueError("Firestore capture updates require account scope")
+        capture_ref = self._collection(account_id, "captures").document(capture_id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def store(transaction):
+            snapshot = await capture_ref.get(transaction=transaction)
+            if not snapshot.exists:
+                raise CaptureNotFound
+            if snapshot.get("status") != CaptureStatus.ACCEPTED.value:
+                return
+            key_hash = snapshot.get("idempotency_hash")
+            now = utc_now()
+            transaction.update(
+                capture_ref,
+                {"status": CaptureStatus.STORED.value, "updated_at": now},
+            )
+            transaction.update(
+                self._collection(account_id, "capture_idempotency").document(key_hash),
+                {"state": "stored", "updated_at": now},
+            )
+
+        await store(transaction)
 
     async def mark_processed(self, capture_id: str, account_id: str | None = None) -> None:
         if account_id is None:

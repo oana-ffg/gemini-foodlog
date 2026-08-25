@@ -23,6 +23,7 @@ from .errors import (
 from .models import (
     Account,
     BrowserCamera,
+    CaptureEnvelopeV1,
     CaptureRecord,
     CaptureStatus,
     ClarificationQuestion,
@@ -95,6 +96,13 @@ class Repository(Protocol):
         camera_id: str,
     ) -> DeviceCamera: ...
 
+    async def device_camera_for_identity(
+        self,
+        *,
+        account_id: str,
+        camera_id: str,
+    ) -> DeviceCamera: ...
+
     async def create_browser_camera(self, owner_user_id: str, name: str) -> BrowserCamera: ...
 
     async def camera_for_owner(self, owner_user_id: str, camera_id: str) -> BrowserCamera: ...
@@ -104,14 +112,17 @@ class Repository(Protocol):
         *,
         capture_id: str,
         account: Account,
-        camera: BrowserCamera,
+        camera: BrowserCamera | DeviceCamera,
         idempotency_key: str,
         content_type: str,
         content_sha256: str,
         object_key: str,
+        metadata: CaptureEnvelopeV1 | None = None,
     ) -> tuple[CaptureRecord, Account, bool]: ...
 
     async def cancel_capture(self, capture: CaptureRecord) -> None: ...
+
+    async def mark_stored(self, capture_id: str, account_id: str | None = None) -> None: ...
 
     async def mark_processed(self, capture_id: str, account_id: str | None = None) -> None: ...
 
@@ -378,6 +389,22 @@ class InMemoryRepository:
                     )
             return revoked_camera.model_copy(deep=True)
 
+    async def device_camera_for_identity(
+        self,
+        *,
+        account_id: str,
+        camera_id: str,
+    ) -> DeviceCamera:
+        async with self._lock:
+            camera = self._device_cameras.get(camera_id)
+            if (
+                camera is None
+                or camera.account_id != account_id
+                or camera.status != DeviceCameraStatus.ACTIVE
+            ):
+                raise CameraNotFound
+            return camera.model_copy(deep=True)
+
     async def create_browser_camera(self, owner_user_id: str, name: str) -> BrowserCamera:
         account = await self.account_for_owner(owner_user_id)
         async with self._lock:
@@ -404,11 +431,12 @@ class InMemoryRepository:
         *,
         capture_id: str,
         account: Account,
-        camera: BrowserCamera,
+        camera: BrowserCamera | DeviceCamera,
         idempotency_key: str,
         content_type: str,
         content_sha256: str,
         object_key: str,
+        metadata: CaptureEnvelopeV1 | None = None,
     ) -> tuple[CaptureRecord, Account, bool]:
         async with self._lock:
             duplicate_id = self._capture_by_idempotency.get((account.id, idempotency_key))
@@ -418,6 +446,7 @@ class InMemoryRepository:
                     duplicate.camera_id != camera.id
                     or duplicate.content_type != content_type
                     or duplicate.content_sha256 != content_sha256
+                    or duplicate.metadata != metadata
                 ):
                     raise IdempotencyConflict
                 return (
@@ -440,6 +469,7 @@ class InMemoryRepository:
                 content_type=content_type,
                 content_sha256=content_sha256,
                 object_key=object_key,
+                metadata=metadata,
             )
             stored_account.accepted_image_count += 1
             self._captures[capture.id] = capture
@@ -472,6 +502,14 @@ class InMemoryRepository:
                     self._questions.pop(question_id, None)
             account = self._accounts[stored.account_id]
             account.accepted_image_count -= 1
+
+    async def mark_stored(self, capture_id: str, account_id: str | None = None) -> None:
+        async with self._lock:
+            capture = self._captures.get(capture_id)
+            if not capture:
+                raise CaptureNotFound
+            if capture.status == CaptureStatus.ACCEPTED:
+                capture.status = CaptureStatus.STORED
 
     async def mark_processed(self, capture_id: str, account_id: str | None = None) -> None:
         async with self._lock:

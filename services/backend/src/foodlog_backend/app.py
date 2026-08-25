@@ -1,11 +1,16 @@
+import warnings
 from dataclasses import dataclass
+from datetime import timedelta
 from hashlib import sha256
+from io import BytesIO
 from secrets import compare_digest, token_urlsafe
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, Form, Header, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from PIL import Image
+from pydantic import ValidationError
 
 from .auth import (
     FirebaseIdentityTokenVerifier,
@@ -36,6 +41,7 @@ from .models import (
     BrowserCamera,
     BrowserCameraCreate,
     CaptureAccepted,
+    CaptureEnvelopeV1,
     ClarificationQuestion,
     DeviceCamera,
     DeviceCameraCreate,
@@ -53,6 +59,7 @@ from .models import (
     VerifiedDeviceIdentity,
     WaitlistEntry,
     WaitlistJoinRequest,
+    utc_now,
 )
 from .repository import InMemoryRepository, Repository
 from .service import CaptureService
@@ -61,6 +68,9 @@ from .storage import GCSObjectStore, InMemoryObjectStore, ObjectStore
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png"}
+IMAGE_FORMATS = {"image/jpeg": "JPEG", "image/png": "PNG"}
+MAX_IMAGE_DIMENSION = 4_096
+MAX_CAPTURE_FUTURE_SKEW = timedelta(minutes=5)
 DEVICE_TOKEN_PREFIX = "flc_v1_"
 DEVICE_TOKEN_VERSION = 1
 
@@ -71,6 +81,51 @@ def detected_image_type(content: bytes) -> str | None:
     if content.startswith(b"\xff\xd8\xff"):
         return "image/jpeg"
     return None
+
+
+def configured_inference_engine(
+    settings: Settings,
+    inference_engine: InferenceEngine | None,
+) -> InferenceEngine | None:
+    if settings.environment == "production":
+        if isinstance(inference_engine, FixtureInferenceEngine):
+            raise ValueError("Production refuses the fixture inference engine")
+        return inference_engine
+    return inference_engine or FixtureInferenceEngine()
+
+
+def image_dimensions(content: bytes, content_type: str) -> tuple[int, int] | None:
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(content)) as decoded:
+                if decoded.format != IMAGE_FORMATS.get(content_type):
+                    return None
+                width, height = decoded.size
+                if not (1 <= width <= MAX_IMAGE_DIMENSION):
+                    return None
+                if not (1 <= height <= MAX_IMAGE_DIMENSION):
+                    return None
+                decoded.load()
+                return width, height
+    except (
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+        OSError,
+        ValueError,
+    ):
+        return None
+
+
+async def validated_image_content(image: UploadFile) -> tuple[bytes, str]:
+    if image.content_type not in SUPPORTED_IMAGE_TYPES:
+        raise HTTPException(status_code=415, detail="Only JPEG and PNG images are accepted")
+    content = await image.read(MAX_IMAGE_BYTES + 1)
+    if not content or len(content) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Image is empty or exceeds 5 MiB")
+    if detected_image_type(content) != image.content_type:
+        raise HTTPException(status_code=415, detail="Declared and actual image types differ")
+    return content, image.content_type
 
 
 @dataclass
@@ -87,12 +142,10 @@ def create_app(
     token_verifier: IdentityTokenVerifier | None = None,
 ) -> FastAPI:
     active_settings = settings or Settings()
-    if active_settings.environment == "production" and (
-        inference_engine is None or isinstance(inference_engine, FixtureInferenceEngine)
-    ):
-        raise ValueError(
-            "Production requires an explicitly configured non-fixture inference engine"
-        )
+    active_inference_engine = configured_inference_engine(
+        active_settings,
+        inference_engine,
+    )
     if active_settings.auth_backend == "firebase":
         assert active_settings.firebase_project_id is not None
         active_token_verifier = token_verifier or FirebaseIdentityTokenVerifier(
@@ -128,7 +181,7 @@ def create_app(
         capture_service=CaptureService(
             repository=repository,
             object_store=object_store,
-            inference=inference_engine or FixtureInferenceEngine(),
+            inference=active_inference_engine,
         ),
     )
     app = FastAPI(title="Gemini FoodLog API", version="0.1.0")
@@ -239,6 +292,33 @@ def create_app(
                 detail="A valid camera credential is required",
                 headers={"WWW-Authenticate": "FoodLogCamera"},
             ) from error
+
+    async def firebase_capture_identity(
+        authorization: str | None = Header(default=None),
+    ) -> VerifiedIdentity | VerifiedDeviceIdentity:
+        scheme = authorization.split(maxsplit=1)[0].casefold() if authorization else ""
+        if scheme == "foodlogcamera":
+            return await request_device_identity(authorization)
+        return await firebase_request_identity(authorization)
+
+    async def local_capture_identity(
+        authorization: str | None = Header(default=None),
+        x_foodlog_local_user: str | None = Header(default=None),
+        x_foodlog_preview_secret: str | None = Header(default=None),
+    ) -> VerifiedIdentity | VerifiedDeviceIdentity:
+        scheme = authorization.split(maxsplit=1)[0].casefold() if authorization else ""
+        if scheme == "foodlogcamera":
+            return await request_device_identity(authorization)
+        return await local_request_identity(
+            x_foodlog_local_user=x_foodlog_local_user,
+            x_foodlog_preview_secret=x_foodlog_preview_secret,
+        )
+
+    request_capture_identity = (
+        firebase_capture_identity
+        if active_settings.auth_backend == "firebase"
+        else local_capture_identity
+    )
 
     @app.exception_handler(AccountCapacityReached)
     async def account_capacity_handler(*_: object) -> Response:
@@ -389,6 +469,79 @@ def create_app(
         return DeviceSession(camera_id=identity.camera_id)
 
     @app.post(
+        "/v1/captures",
+        response_model=CaptureAccepted,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def upload_capture(
+        metadata: Annotated[str, Form(min_length=2, max_length=4_096)],
+        image: UploadFile,
+        idempotency_key: Annotated[str, Header(min_length=8, max_length=128)],
+        principal: Annotated[
+            VerifiedIdentity | VerifiedDeviceIdentity,
+            Depends(request_capture_identity),
+        ],
+    ) -> CaptureAccepted:
+        try:
+            envelope = CaptureEnvelopeV1.model_validate_json(metadata)
+        except (ValidationError, ValueError) as error:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="invalid_capture_metadata",
+            ) from error
+        if envelope.captured_at > utc_now() + MAX_CAPTURE_FUTURE_SKEW:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="captured_at_too_far_in_future",
+            )
+        content, content_type = await validated_image_content(image)
+        dimensions = image_dimensions(content, content_type)
+        if dimensions is None:
+            raise HTTPException(status_code=415, detail="Image dimensions could not be read")
+        if dimensions != (envelope.width, envelope.height):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="image_dimensions_mismatch",
+            )
+
+        if isinstance(principal, VerifiedDeviceIdentity):
+            if envelope.camera_id != principal.camera_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="camera_identity_mismatch",
+                )
+            if envelope.client_kind == "browser":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="camera_client_kind_mismatch",
+                )
+            owner_user_id = principal.owner_user_id
+            camera = await container.repository.device_camera_for_identity(
+                account_id=principal.account_id,
+                camera_id=principal.camera_id,
+            )
+        else:
+            if envelope.client_kind != "browser":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="camera_client_kind_mismatch",
+                )
+            owner_user_id = principal.uid
+            camera = await container.repository.camera_for_owner(
+                principal.uid,
+                envelope.camera_id,
+            )
+
+        return await container.capture_service.accept_capture(
+            owner_user_id=owner_user_id,
+            camera=camera,
+            idempotency_key=idempotency_key,
+            content_type=content_type,
+            image=content,
+            metadata=envelope,
+        )
+
+    @app.post(
         "/v1/browser-cameras/{camera_id}/captures",
         response_model=CaptureAccepted,
         status_code=status.HTTP_202_ACCEPTED,
@@ -399,19 +552,14 @@ def create_app(
         idempotency_key: str = Header(min_length=8, max_length=128),
         user_id: str = Depends(request_user_id),
     ) -> CaptureAccepted:
-        if image.content_type not in SUPPORTED_IMAGE_TYPES:
-            raise HTTPException(status_code=415, detail="Only JPEG and PNG images are accepted")
-        content = await image.read(MAX_IMAGE_BYTES + 1)
-        if not content or len(content) > MAX_IMAGE_BYTES:
-            raise HTTPException(status_code=413, detail="Image is empty or exceeds 5 MiB")
-        if detected_image_type(content) != image.content_type:
-            raise HTTPException(status_code=415, detail="Declared and actual image types differ")
+        content, content_type = await validated_image_content(image)
         return await container.capture_service.accept_browser_capture(
             owner_user_id=user_id,
             camera_id=camera_id,
             idempotency_key=idempotency_key,
-            content_type=image.content_type,
+            content_type=content_type,
             image=content,
+            process_immediately=active_settings.environment != "production",
         )
 
     @app.get("/v1/journal", response_model=list[MealEntry])
