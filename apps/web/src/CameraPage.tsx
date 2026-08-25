@@ -5,81 +5,14 @@ import {
   provisionAccount,
   uploadCapture,
   type Account,
-  type BrowserCaptureMetadata,
   type BrowserCamera,
 } from "./api";
 import { SessionControls } from "./auth";
-import {
-  advanceMotionCadence,
-  analyseMotion,
-  initialMotionCadenceState,
-  type MotionCaptureDecision,
-  type MotionPhase,
-} from "./motion";
-
-const MAX_CAPTURE_EDGE = 1920;
-const MOTION_SAMPLE_WIDTH = 64;
-const MOTION_SAMPLE_HEIGHT = 48;
-const MOTION_SAMPLE_INTERVAL_MS = 250;
-const MAX_MEMORY_QUEUE_DEPTH = 30;
-
-interface QueuedCapture {
-  image: Blob;
-  idempotencyKey: string;
-  metadata: BrowserCaptureMetadata;
-}
+import { captureFrame } from "./cameraFrames";
+import { MAX_MEMORY_QUEUE_DEPTH, useMotionCapture } from "./useMotionCapture";
 
 function stopStream(stream: MediaStream | null): void {
   stream?.getTracks().forEach((track) => track.stop());
-}
-
-function outputDimensions(width: number, height: number): { width: number; height: number } {
-  const scale = Math.min(1, MAX_CAPTURE_EDGE / Math.max(width, height));
-  return {
-    width: Math.max(1, Math.round(width * scale)),
-    height: Math.max(1, Math.round(height * scale)),
-  };
-}
-
-async function captureFrame(video: HTMLVideoElement): Promise<{
-  image: Blob;
-  width: number;
-  height: number;
-}> {
-  if (video.videoWidth === 0 || video.videoHeight === 0) {
-    throw new Error("The camera has not produced a frame yet.");
-  }
-
-  const { width, height } = outputDimensions(video.videoWidth, video.videoHeight);
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("This browser cannot prepare a camera image.");
-  context.drawImage(video, 0, 0, width, height);
-
-  const image = await new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => blob ? resolve(blob) : reject(new Error("The snapshot could not be encoded.")),
-      "image/jpeg",
-      0.82,
-    );
-  });
-  return { image, width, height };
-}
-
-function sampleMotionFrame(
-  video: HTMLVideoElement,
-  canvas: HTMLCanvasElement,
-): Uint8ClampedArray {
-  canvas.width = MOTION_SAMPLE_WIDTH;
-  canvas.height = MOTION_SAMPLE_HEIGHT;
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  if (!context) throw new Error("This browser cannot inspect camera motion.");
-  context.drawImage(video, 0, 0, MOTION_SAMPLE_WIDTH, MOTION_SAMPLE_HEIGHT);
-  return new Uint8ClampedArray(
-    context.getImageData(0, 0, MOTION_SAMPLE_WIDTH, MOTION_SAMPLE_HEIGHT).data,
-  );
 }
 
 export default function CameraPage() {
@@ -87,57 +20,16 @@ export default function CameraPage() {
   const streamRef = useRef<MediaStream | null>(null);
   const sequenceIdRef = useRef(`browser-${crypto.randomUUID()}`);
   const sequenceNumberRef = useRef(0);
-  const mountedRef = useRef(true);
-  const motionModeRef = useRef(false);
-  const motionTimerRef = useRef<number | null>(null);
-  const motionSampleBusyRef = useRef(false);
-  const motionCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const previousMotionFrameRef = useRef<Uint8ClampedArray | null>(null);
-  const motionCadenceRef = useRef(initialMotionCadenceState());
-  const deliveryActiveRef = useRef(false);
-  const captureQueueRef = useRef<QueuedCapture[]>([]);
   const [account, setAccount] = useState<Account>();
   const [camera, setCamera] = useState<BrowserCamera>();
   const [cameraName, setCameraName] = useState("");
   const [running, setRunning] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [motionMode, setMotionMode] = useState(false);
-  const [motionPhase, setMotionPhase] = useState<MotionPhase>("idle");
-  const [queueDepth, setQueueDepth] = useState(0);
-  const [deliveryActive, setDeliveryActive] = useState(false);
   const [message, setMessage] = useState(
     "Register this phone or browser before starting its camera.",
   );
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      if (motionTimerRef.current !== null) window.clearInterval(motionTimerRef.current);
-      stopStream(streamRef.current);
-    };
-  }, []);
-
-  const stopMotionSampling = () => {
-    if (motionTimerRef.current !== null) {
-      window.clearInterval(motionTimerRef.current);
-      motionTimerRef.current = null;
-    }
-    motionModeRef.current = false;
-    previousMotionFrameRef.current = null;
-    motionCadenceRef.current = initialMotionCadenceState();
-    if (mountedRef.current) {
-      setMotionMode(false);
-      setMotionPhase("idle");
-    }
-  };
-
-  const updateQueueDepth = () => {
-    if (mountedRef.current) setQueueDepth(captureQueueRef.current.length);
-  };
-
   const updateAccountQuota = (accepted: Awaited<ReturnType<typeof uploadCapture>>) => {
-    if (!mountedRef.current) return;
     setAccount((current) => current ? {
       ...current,
       accepted_image_count: accepted.accepted_image_count,
@@ -146,117 +38,22 @@ export default function CameraPage() {
     } : current);
   };
 
-  const drainCaptureQueue = async () => {
-    if (deliveryActiveRef.current) return;
-    deliveryActiveRef.current = true;
-    if (mountedRef.current) setDeliveryActive(true);
-
-    while (captureQueueRef.current.length > 0) {
-      const queued = captureQueueRef.current[0];
-      if (!camera) break;
-      try {
-        const accepted = await uploadCapture(
-          camera.id,
-          queued.image,
-          queued.idempotencyKey,
-          queued.metadata,
-        );
-        captureQueueRef.current.shift();
-        updateQueueDepth();
-        updateAccountQuota(accepted);
-        if (mountedRef.current) {
-          setMessage(
-            `Motion frame stored. ${captureQueueRef.current.length} queued for delivery.`,
-          );
-        }
-      } catch (error: unknown) {
-        stopMotionSampling();
-        if (mountedRef.current) {
-          setMessage(
-            `Motion capture paused because delivery failed: ${
-              error instanceof Error ? error.message : "unknown upload error"
-            }. The captured frames remain queued in this tab.`,
-          );
-        }
-        break;
-      }
-    }
-
-    deliveryActiveRef.current = false;
-    if (mountedRef.current) setDeliveryActive(false);
-  };
-
-  const enqueueMotionCapture = async (decision: MotionCaptureDecision) => {
-    if (!videoRef.current) return;
-    if (captureQueueRef.current.length >= MAX_MEMORY_QUEUE_DEPTH) {
-      stopMotionSampling();
-      setMessage(
-        `Motion capture paused because the temporary queue reached ${MAX_MEMORY_QUEUE_DEPTH} frames. Keep this tab open and retry delivery.`,
-      );
-      return;
-    }
-
-    const frame = await captureFrame(videoRef.current);
+  const takeSequenceNumber = () => {
     const sequenceNumber = sequenceNumberRef.current;
     sequenceNumberRef.current += 1;
-    captureQueueRef.current.push({
-      image: frame.image,
-      idempotencyKey: crypto.randomUUID(),
-      metadata: {
-        capturedAt: new Date().toISOString(),
-        sequenceId: sequenceIdRef.current,
-        sequenceNumber,
-        width: frame.width,
-        height: frame.height,
-        burstId: decision.burstId,
-        burstFrameIndex: decision.burstFrameIndex,
-        motion: decision.motion,
-      },
-    });
-    updateQueueDepth();
-    void drainCaptureQueue();
+    return sequenceNumber;
   };
 
-  const sampleForMotion = async () => {
-    const video = videoRef.current;
-    if (
-      !motionModeRef.current
-      || motionSampleBusyRef.current
-      || !video
-      || video.videoWidth === 0
-      || video.videoHeight === 0
-    ) return;
+  const motion = useMotionCapture({
+    videoRef,
+    camera,
+    sequenceId: sequenceIdRef.current,
+    takeSequenceNumber,
+    onAccepted: updateAccountQuota,
+    onMessage: setMessage,
+  });
 
-    motionSampleBusyRef.current = true;
-    try {
-      motionCanvasRef.current ??= document.createElement("canvas");
-      const currentFrame = sampleMotionFrame(video, motionCanvasRef.current);
-      const previousFrame = previousMotionFrameRef.current;
-      previousMotionFrameRef.current = currentFrame;
-      if (!previousFrame) {
-        setMessage("Motion mode is watching locally. Nothing has been uploaded yet.");
-        return;
-      }
-
-      const analysis = analyseMotion(previousFrame, currentFrame);
-      const result = advanceMotionCadence(
-        motionCadenceRef.current,
-        Date.now(),
-        analysis,
-        () => `motion-${crypto.randomUUID()}`,
-      );
-      motionCadenceRef.current = result.state;
-      setMotionPhase(result.state.phase);
-      if (result.capture) await enqueueMotionCapture(result.capture);
-    } catch (error: unknown) {
-      stopMotionSampling();
-      setMessage(
-        error instanceof Error ? error.message : "Motion detection stopped unexpectedly.",
-      );
-    } finally {
-      motionSampleBusyRef.current = false;
-    }
-  };
+  useEffect(() => () => stopStream(streamRef.current), []);
 
   const registerCamera = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -308,38 +105,28 @@ export default function CameraPage() {
   };
 
   const startMotionMode = () => {
-    if (!camera || !running || !videoRef.current || motionModeRef.current) return;
-    previousMotionFrameRef.current = null;
-    motionCadenceRef.current = initialMotionCadenceState();
-    motionModeRef.current = true;
-    setMotionMode(true);
-    setMotionPhase("idle");
-    setMessage("Starting local motion detection…");
-    void sampleForMotion();
-    motionTimerRef.current = window.setInterval(
-      () => void sampleForMotion(),
-      MOTION_SAMPLE_INTERVAL_MS,
-    );
+    if (!camera || !running || !videoRef.current || motion.active) return;
+    motion.start();
   };
 
   const useManualMode = () => {
-    stopMotionSampling();
+    motion.stop();
     setMessage(
-      captureQueueRef.current.length > 0
-        ? `Manual mode selected. ${captureQueueRef.current.length} captured motion frames are still queued in this tab.`
+      motion.queueDepth > 0
+        ? `Manual mode selected. ${motion.queueDepth} captured motion frames are still queued in this tab.`
         : "Manual mode selected. Nothing is uploaded until you press Send snapshot.",
     );
   };
 
   const pauseCamera = () => {
-    stopMotionSampling();
+    motion.stop();
     stopStream(streamRef.current);
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     setRunning(false);
     setMessage(
-      captureQueueRef.current.length > 0
-        ? `Camera paused. ${captureQueueRef.current.length} already captured frames remain queued for delivery.`
+      motion.queueDepth > 0
+        ? `Camera paused. ${motion.queueDepth} already captured frames remain queued for delivery.`
         : "Camera paused. No images are being captured or uploaded.",
     );
   };
@@ -351,7 +138,7 @@ export default function CameraPage() {
     setMessage("Uploading this snapshot securely…");
     try {
       const frame = await captureFrame(videoRef.current);
-      const sequenceNumber = sequenceNumberRef.current;
+      const sequenceNumber = takeSequenceNumber();
       const accepted = await uploadCapture(
         camera.id,
         frame.image,
@@ -364,7 +151,6 @@ export default function CameraPage() {
           height: frame.height,
         },
       );
-      sequenceNumberRef.current += 1;
       updateAccountQuota(accepted);
       setMessage(
         accepted.duplicate
@@ -379,8 +165,7 @@ export default function CameraPage() {
   };
 
   const retryQueuedUploads = () => {
-    setMessage("Retrying queued motion frames…");
-    void drainCaptureQueue();
+    motion.retry();
   };
 
   return (
@@ -434,15 +219,15 @@ export default function CameraPage() {
         <div className="manual-camera__controls">
           <h2 id="manual-camera-title">Camera controls</h2>
           <p role="status">{message}</p>
-          {motionMode || queueDepth > 0 ? (
+          {motion.active || motion.queueDepth > 0 ? (
             <dl className="motion-status">
               <div>
                 <dt>Motion state</dt>
-                <dd>{motionMode ? (motionPhase === "idle" ? "watching" : motionPhase) : "paused"}</dd>
+                <dd>{motion.active ? (motion.phase === "idle" ? "watching" : motion.phase) : "paused"}</dd>
               </div>
               <div>
                 <dt>Delivery</dt>
-                <dd>{deliveryActive ? "uploading" : `${queueDepth} queued`}</dd>
+                <dd>{motion.delivering ? "uploading" : `${motion.queueDepth} queued`}</dd>
               </div>
             </dl>
           ) : null}
@@ -456,20 +241,20 @@ export default function CameraPage() {
                 Pause camera
               </button>
             )}
-            {running && !motionMode ? (
+            {running && !motion.active ? (
               <button type="button" className="button--quiet" onClick={startMotionMode} disabled={busy}>
                 Start motion mode
               </button>
             ) : null}
-            {running && motionMode ? (
+            {running && motion.active ? (
               <button type="button" className="button--quiet" onClick={useManualMode}>
                 Use manual mode
               </button>
             ) : null}
-            <button type="button" onClick={sendSnapshot} disabled={!running || busy || motionMode}>
+            <button type="button" onClick={sendSnapshot} disabled={!running || busy || motion.active}>
               {busy && running ? "Sending…" : "Send snapshot"}
             </button>
-            {queueDepth > 0 && !deliveryActive ? (
+            {motion.queueDepth > 0 && !motion.delivering ? (
               <button type="button" className="button--quiet" onClick={retryQueuedUploads}>
                 Retry queued uploads
               </button>
