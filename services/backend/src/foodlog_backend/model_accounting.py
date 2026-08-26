@@ -39,7 +39,7 @@ class ModelInvocationSpec:
     prompt_version: str | None
     max_prompt_tokens: int
     max_output_tokens: int
-    max_provider_attempts: int
+    max_billable_calls: int
     retry_attempt: int
     evaluation: bool
 
@@ -52,9 +52,9 @@ class ModelInvocationSpec:
         if min(
             self.max_prompt_tokens,
             self.max_output_tokens,
-            self.max_provider_attempts,
+            self.max_billable_calls,
         ) <= 0:
-            raise ValueError("model invocation ceilings and provider attempts must be positive")
+            raise ValueError("model invocation ceilings and billable calls must be positive")
         if self.retry_attempt < 0:
             raise ValueError("retry_attempt cannot be negative")
 
@@ -75,6 +75,28 @@ class AccountedModelInvocation[ResultT]:
     result: ResultT
     reservation: ModelSpendReservation
     usage: ModelUsageRecord
+
+
+class ModelInvocationExecutionError(Exception):
+    def __init__(
+        self,
+        *,
+        error_code: str,
+        invocation_id: str | None = None,
+        model_version: str | None = None,
+        prompt_tokens: int = 0,
+        response_tokens: int = 0,
+        thinking_tokens: int = 0,
+        total_tokens: int = 0,
+    ) -> None:
+        super().__init__(error_code)
+        self.error_code = error_code
+        self.invocation_id = invocation_id
+        self.model_version = model_version
+        self.prompt_tokens = prompt_tokens
+        self.response_tokens = response_tokens
+        self.thinking_tokens = thinking_tokens
+        self.total_tokens = total_tokens
 
 
 def usd_nanos_to_conservative_dkk_micros(usd_nanos: int) -> int:
@@ -108,7 +130,7 @@ def conservative_reservation_dkk_micros(spec: ModelInvocationSpec) -> int:
         thinking_tokens=0,
     )
     return usd_nanos_to_conservative_dkk_micros(
-        per_attempt_usd_nanos * spec.max_provider_attempts
+        per_attempt_usd_nanos * spec.max_billable_calls
     )
 
 
@@ -142,7 +164,7 @@ async def execute_accounted_model_invocation[ResultT](
         prompt_version=spec.prompt_version,
         max_prompt_tokens=spec.max_prompt_tokens,
         max_output_tokens=spec.max_output_tokens,
-        max_provider_attempts=spec.max_provider_attempts,
+        max_billable_calls=spec.max_billable_calls,
         retry_attempt=spec.retry_attempt,
         evaluation=spec.evaluation,
     )
@@ -157,27 +179,42 @@ async def execute_accounted_model_invocation[ResultT](
     try:
         completed = await invoke()
     except Exception as error:
+        partial = error if isinstance(error, ModelInvocationExecutionError) else None
+        prompt_tokens = partial.prompt_tokens if partial is not None else 0
+        response_tokens = partial.response_tokens if partial is not None else 0
+        thinking_tokens = partial.thinking_tokens if partial is not None else 0
+        total_tokens = partial.total_tokens if partial is not None else 0
+        actual_usd_nanos = model_cost_usd_nanos(
+            model=spec.model,
+            prompt_tokens=prompt_tokens,
+            response_tokens=response_tokens,
+            thinking_tokens=thinking_tokens,
+        )
         await repository.record_model_usage(
             ModelUsageRecord(
                 id=reservation.id,
                 reservation_id=reservation.id,
                 account_id=spec.account_id,
                 event_id=spec.event_id,
+                invocation_id=partial.invocation_id if partial is not None else None,
                 model=spec.model,
+                model_version=partial.model_version if partial is not None else None,
                 region=spec.region,
                 prompt_version=spec.prompt_version,
                 purpose=spec.purpose,
                 retry_attempt=spec.retry_attempt,
                 evaluation=spec.evaluation,
                 outcome="failed",
-                prompt_tokens=0,
-                response_tokens=0,
-                thinking_tokens=0,
-                total_tokens=0,
-                actual_usd_nanos=0,
-                actual_dkk_micros=0,
+                prompt_tokens=prompt_tokens,
+                response_tokens=response_tokens,
+                thinking_tokens=thinking_tokens,
+                total_tokens=total_tokens,
+                actual_usd_nanos=actual_usd_nanos,
+                actual_dkk_micros=usd_nanos_to_conservative_dkk_micros(
+                    actual_usd_nanos
+                ),
                 reserved_dkk_micros=reservation.reserved_dkk_micros,
-                error_code=type(error).__name__,
+                error_code=(partial.error_code if partial is not None else type(error).__name__),
             )
         )
         raise

@@ -14,6 +14,7 @@ from foodlog_backend.errors import (
 from foodlog_backend.firestore_repository import FirestoreRepository
 from foodlog_backend.model_accounting import (
     CompletedModelInvocation,
+    ModelInvocationExecutionError,
     ModelInvocationSpec,
     conservative_reservation_dkk_micros,
     execute_accounted_model_invocation,
@@ -34,7 +35,7 @@ def invocation_spec(invocation_key: str = "accounted-call-0001") -> ModelInvocat
         prompt_version="food-event-v4",
         max_prompt_tokens=1_000,
         max_output_tokens=100,
-        max_provider_attempts=1,
+        max_billable_calls=1,
         retry_attempt=0,
         evaluation=False,
     )
@@ -141,9 +142,17 @@ def test_limit_rejection_and_failed_call_never_hide_or_repeat_spend_state() -> N
         )
 
         async def fail() -> CompletedModelInvocation[str]:
-            raise TimeoutError("provider timeout")
+            raise ModelInvocationExecutionError(
+                error_code="TimeoutError",
+                invocation_id="failed-provider-invocation",
+                model_version="gemini-3.6-flash-001",
+                prompt_tokens=100,
+                response_tokens=10,
+                thinking_tokens=5,
+                total_tokens=115,
+            )
 
-        with pytest.raises(TimeoutError):
+        with pytest.raises(ModelInvocationExecutionError):
             await execute_accounted_model_invocation(
                 repository=failure_repository,
                 spec=failed_spec,
@@ -156,7 +165,8 @@ def test_limit_rejection_and_failed_call_never_hide_or_repeat_spend_state() -> N
         assert usage is not None
         assert usage.outcome == "failed"
         assert usage.error_code == "TimeoutError"
-        assert usage.actual_dkk_micros == 0
+        assert usage.actual_dkk_micros == 1_155
+        assert usage.prompt_tokens == 100
         assert usage.retry_attempt == 1
 
     asyncio.run(scenario())

@@ -506,7 +506,7 @@ class ModelSpendReservation(BaseModel):
     prompt_version: str | None = Field(default=None, min_length=1, max_length=120)
     max_prompt_tokens: int | None = Field(default=None, ge=1)
     max_output_tokens: int | None = Field(default=None, ge=1)
-    max_provider_attempts: int = Field(default=1, ge=1, le=10)
+    max_billable_calls: int = Field(default=1, ge=1, le=10)
     retry_attempt: int = Field(default=0, ge=0, le=20)
     evaluation: bool = False
     status: Literal["reserved"] = "reserved"
@@ -559,16 +559,17 @@ class ModelUsageRecord(BaseModel):
                 raise ValueError("successful model usage requires positive actual cost")
             if self.error_code is not None:
                 raise ValueError("successful model usage cannot include an error code")
-        elif (
+        elif self.error_code is None:
+            raise ValueError("failed model usage requires an error code")
+        elif bool(self.actual_usd_nanos) != bool(self.actual_dkk_micros):
+            raise ValueError("failed model usage costs must both be zero or both be positive")
+        elif self.total_tokens == 0 and (
             self.prompt_tokens
             or self.response_tokens
             or self.thinking_tokens
-            or self.total_tokens
             or self.actual_usd_nanos
-            or self.actual_dkk_micros
-            or self.error_code is None
         ):
-            raise ValueError("failed model usage requires zero usage and an error code")
+            raise ValueError("failed model usage cannot cost tokens when total tokens are zero")
         if self.actual_dkk_micros > self.reserved_dkk_micros:
             raise ValueError("actual model cost exceeds its reservation")
         return self
