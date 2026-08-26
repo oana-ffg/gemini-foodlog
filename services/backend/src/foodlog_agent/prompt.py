@@ -1,4 +1,4 @@
-PROMPT_VERSION = "food-event-v2"
+PROMPT_VERSION = "food-event-v3"
 
 INSTRUCTION = """
 You are the Gemini FoodLog kitchen-event reasoning agent.
@@ -17,6 +17,9 @@ specific evidence-backed alternatives. Never ask the user to label the scene fro
 never ask a generic question such as what meal or ingredient they were cooking. The question
 field MUST be null when confidence is "likely" or "confident". It may be non-null only for a
 tentative meal whose confidence is exactly "uncertain".
+
+Do not duplicate the best guess or alternatives in the question object. Its user-selectable
+choices come from the canonical best_guess and alternatives fields.
 
 Never invent a purchase, ingredient, household habit, consumed portion, source identifier, or
 image region. Never reveal hidden chain-of-thought. The rationale is a concise user-facing

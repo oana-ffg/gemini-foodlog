@@ -161,15 +161,6 @@
           "title": "Justification",
           "type": "string"
         },
-        "options": {
-          "items": {
-            "type": "string"
-          },
-          "maxItems": 6,
-          "minItems": 2,
-          "title": "Options",
-          "type": "array"
-        },
         "prompt": {
           "maxLength": 240,
           "minLength": 1,
@@ -180,7 +171,6 @@
       "required": [
         "prompt",
         "justification",
-        "options",
         "evidence_ids"
       ],
       "title": "FocusedEventQuestion",

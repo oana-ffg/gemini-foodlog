@@ -76,7 +76,7 @@ def test_non_confirmable_states_reject_the_meal_confirmation_action(kind: str) -
         ActivityMealInferenceV1.model_validate(payload)
 
 
-def test_unknown_activity_rejects_a_question_even_when_it_names_options() -> None:
+def test_unknown_activity_rejects_a_question_even_when_it_names_hypotheses() -> None:
     payload = base_payload()
     payload.update(
         kind="unknown_activity",
@@ -142,8 +142,8 @@ def test_model_facing_schema_reduces_complexity_without_weakening_validation() -
             "distinguish specific hypotheses",
         ),
         (
-            lambda value: value["question"].update(options=["Air-fried steak", "Duck"]),
-            "existing hypotheses",
+            lambda value: value.update(alternatives=[]),
+            "at least one named alternative",
         ),
     ],
 )

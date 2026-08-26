@@ -67,7 +67,6 @@ def base_payload() -> dict[str, object]:
         "question": {
             "prompt": "Was this the recently purchased steak or lamb from elsewhere?",
             "justification": "The answer distinguishes the two supported red-meat hypotheses.",
-            "options": ["Air-fried steak", "Air-fried lamb"],
             "evidence_ids": ["obs_meat", "ctx_order"],
         },
         "allowed_actions": ["confirm_guess", "correct", "discard_not_cooking"],

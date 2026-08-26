@@ -113,7 +113,6 @@ class InferenceMealComponent(InferenceModel):
 class FocusedEventQuestion(InferenceModel):
     prompt: str = Field(min_length=1, max_length=240)
     justification: BoundedText
-    options: list[str] = Field(min_length=2, max_length=6)
     evidence_ids: list[Identifier] = Field(min_length=1, max_length=16)
 
     @model_validator(mode="after")
@@ -128,8 +127,6 @@ class FocusedEventQuestion(InferenceModel):
         )
         if any(phrase in normalized for phrase in forbidden):
             raise ValueError("question must distinguish specific hypotheses, not request a label")
-        if len({option.casefold() for option in self.options}) != len(self.options):
-            raise ValueError("question options must be unique")
         return self
 
 
@@ -219,14 +216,8 @@ class ActivityMealInferenceV1(InferenceModel):
                 raise ValueError("only a tentative meal may ask a focused event question")
             if self.confidence != InferenceConfidence.UNCERTAIN:
                 raise ValueError("a focused event question requires uncertain confidence")
-            hypotheses = {
-                self.best_guess,
-                *(alternative.label for alternative in self.alternatives),
-            }
-            if self.best_guess not in self.question.options:
-                raise ValueError("question options must include the current best guess")
-            if not set(self.question.options) <= hypotheses:
-                raise ValueError("question options must name existing hypotheses")
+            if not self.alternatives:
+                raise ValueError("a focused event question requires at least one named alternative")
         return self
 
     @staticmethod
