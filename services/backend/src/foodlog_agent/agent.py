@@ -5,7 +5,7 @@ from google.adk.apps import App
 from google.adk.models import Gemini
 from google.genai import types
 
-from foodlog_agent.inference_schema import ActivityMealInferenceV1
+from foodlog_agent.inference_schema import ActivityMealInferenceModelOutputV1
 from foodlog_agent.prompt import INSTRUCTION
 from foodlog_backend.model_probe import DEFAULT_MODEL
 
@@ -19,7 +19,7 @@ root_agent = Agent(
     ),
     instruction=INSTRUCTION,
     tools=[],
-    output_schema=ActivityMealInferenceV1,
+    output_schema=ActivityMealInferenceModelOutputV1,
     generate_content_config=types.GenerateContentConfig(
         max_output_tokens=2_048,
         thinking_config=types.ThinkingConfig(

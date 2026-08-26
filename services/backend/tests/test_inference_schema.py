@@ -6,7 +6,10 @@ from copy import deepcopy
 import pytest
 from pydantic import ValidationError
 
-from foodlog_agent.inference_schema import ActivityMealInferenceV1
+from foodlog_agent.inference_schema import (
+    ActivityMealInferenceModelOutputV1,
+    ActivityMealInferenceV1,
+)
 from tests.inference_fixtures import base_payload
 
 
@@ -98,6 +101,19 @@ def test_zero_sized_image_region_is_rejected_without_vertex_exclusive_minimum() 
 
 def test_model_facing_schema_avoids_unsupported_exclusive_minimum() -> None:
     assert "exclusiveMinimum" not in json.dumps(ActivityMealInferenceV1.model_json_schema())
+
+
+def test_model_facing_schema_reduces_complexity_without_weakening_validation() -> None:
+    strict_schema = json.dumps(ActivityMealInferenceV1.model_json_schema())
+    model_schema = json.dumps(ActivityMealInferenceModelOutputV1.model_json_schema())
+    for keyword in ("maxLength", "maxItems", "minimum", "pattern", "title"):
+        assert keyword in strict_schema
+        assert keyword not in model_schema
+
+    invalid_payload = base_payload()
+    invalid_payload["source_capture_ids"] = []
+    with pytest.raises(ValidationError):
+        ActivityMealInferenceModelOutputV1.model_validate(invalid_payload)
 
 
 @pytest.mark.parametrize(

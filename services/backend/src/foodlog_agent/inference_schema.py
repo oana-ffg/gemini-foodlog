@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    model_validator,
+)
 
 Identifier = Annotated[
     str,
@@ -230,3 +236,39 @@ class ActivityMealInferenceV1(InferenceModel):
         unknown = set(references) - known_ids
         if unknown:
             raise ValueError(f"unknown evidence references: {sorted(unknown)}")
+
+
+_MODEL_SCHEMA_COMPLEXITY_KEYWORDS = frozenset(
+    {
+        "additionalProperties",
+        "maxItems",
+        "maxLength",
+        "maximum",
+        "minItems",
+        "minLength",
+        "minimum",
+        "pattern",
+        "title",
+    }
+)
+
+
+def _model_facing_schema(value: Any) -> Any:
+    """Remove constraints Vertex need not enforce; Pydantic still validates all of them."""
+    if isinstance(value, dict):
+        return {
+            key: _model_facing_schema(item)
+            for key, item in value.items()
+            if key not in _MODEL_SCHEMA_COMPLEXITY_KEYWORDS
+        }
+    if isinstance(value, list):
+        return [_model_facing_schema(item) for item in value]
+    return value
+
+
+class ActivityMealInferenceModelOutputV1(ActivityMealInferenceV1):
+    """Strict inference result with a complexity-reduced Vertex response schema."""
+
+    @classmethod
+    def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return _model_facing_schema(super().model_json_schema(*args, **kwargs))
