@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import os
 from datetime import timedelta
+from hashlib import sha256
 
 import pytest
 from google.cloud.firestore_v1.async_client import AsyncClient
 
-from foodlog_backend.errors import QuestionAlreadyAnswered
+from foodlog_backend.errors import IdempotencyConflict, QuestionAlreadyAnswered
 from foodlog_backend.firestore_repository import FirestoreRepository
 from foodlog_backend.firestore_repository_smoke import (
     SMOKE_ACCOUNT_ID,
@@ -172,6 +173,48 @@ def test_firestore_meal_question_feedback_and_revisions_are_atomic() -> None:
         assert answered[0].answer == successes[0].question.answer
         assert len(feedback) == 2
         assert all("idempotency_key" not in snapshot.to_dict() for snapshot in feedback)
+        confirmation_ref = (
+            client.collection("accounts")
+            .document(account.id)
+            .collection("feedback")
+            .document(sha256(b"firestore-contract-confirm").hexdigest())
+        )
+        confirmation_snapshot = await confirmation_ref.get()
+        confirmation_raw = confirmation_snapshot.to_dict() or {}
+        assert confirmation_raw["actual_meal"] is None
+        assert confirmation_raw["explanation"] is None
+        assert confirmation_raw["question_id"] is None
+        assert confirmation_raw["idempotency_hash"] == confirmation_snapshot.id
+
+        answer_ref = (
+            client.collection("accounts")
+            .document(account.id)
+            .collection("feedback")
+            .document(successes[0].feedback.id)
+        )
+        answer_raw = (await answer_ref.get()).to_dict() or {}
+        assert answer_raw["actual_meal"] == successes[0].question.answer
+        assert answer_raw["explanation"] == successes[0].question.learning_tip
+        assert answer_raw["question_id"] == successes[0].question.id
+
+        confirmation_retry_again = await repository.record_meal_feedback(
+            owner_user_id=owner_user_id,
+            meal_id=meal.id,
+            request=confirmation_request,
+            idempotency_key="firestore-contract-confirm",
+        )
+        assert confirmation_retry_again == confirmation
+        assert (await confirmation_ref.get()).to_dict() == confirmation_raw
+        with pytest.raises(IdempotencyConflict):
+            await repository.record_meal_feedback(
+                owner_user_id=owner_user_id,
+                meal_id=meal.id,
+                request=MealFeedbackRequest(
+                    kind=MealFeedbackKind.CORRECT,
+                    actual_meal="Different payload",
+                ),
+                idempotency_key="firestore-contract-confirm",
+            )
         client.close()
 
     asyncio.run(scenario())

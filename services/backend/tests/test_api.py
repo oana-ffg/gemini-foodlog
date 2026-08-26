@@ -893,6 +893,70 @@ def test_correction_keeps_original_inference_and_supports_unresolved_feedback() 
         assert revisions[2]["status"] == "contradicted"
 
 
+def test_raw_partial_corrections_are_exact_immutable_and_idempotent() -> None:
+    with build_client() as client:
+        _, camera = provision(client)
+        image = (FIXTURES / "synthetic-steak-airfryer.png").read_bytes()
+        post_fixture_capture(
+            client,
+            camera=camera,
+            image=image,
+            idempotency_key="raw-feedback-capture-0001",
+        )
+        meal = client.get("/v1/journal", headers=USER_HEADER).json()[0]
+        cases = [
+            ("raw-wrong-only-0001", {"kind": "correct"}, None, None),
+            (
+                "raw-actual-only-0001",
+                {"kind": "correct", "actual_meal": "Sirloin steak"},
+                "Sirloin steak",
+                None,
+            ),
+            (
+                "raw-explanation-only-0001",
+                {"kind": "correct", "explanation": "The package had a green label."},
+                None,
+                "The package had a green label.",
+            ),
+            (
+                "raw-complete-0001",
+                {
+                    "kind": "correct",
+                    "actual_meal": "Ribeye steak",
+                    "explanation": "The thick marbling distinguishes this cut.",
+                },
+                "Ribeye steak",
+                "The thick marbling distinguishes this cut.",
+            ),
+        ]
+        for key, payload, actual_meal, explanation in cases:
+            request = {
+                "headers": {**USER_HEADER, "Idempotency-Key": key},
+                "json": payload,
+            }
+            first = client.post(f"/v1/meals/{meal['id']}/feedback", **request)
+            retry = client.post(f"/v1/meals/{meal['id']}/feedback", **request)
+            assert first.status_code == retry.status_code == 200
+            assert first.json() == retry.json()
+            assert first.json()["feedback"]["actual_meal"] == actual_meal
+            assert first.json()["feedback"]["explanation"] == explanation
+
+        conflict = client.post(
+            f"/v1/meals/{meal['id']}/feedback",
+            headers={**USER_HEADER, "Idempotency-Key": cases[-1][0]},
+            json={"kind": "correct", "actual_meal": "A different value"},
+        )
+        assert conflict.status_code == 409
+        assert conflict.json() == {
+            "detail": "idempotency_key_reused_with_different_payload"
+        }
+        revisions = client.get(
+            f"/v1/meals/{meal['id']}/revisions",
+            headers=USER_HEADER,
+        ).json()
+        assert [revision["number"] for revision in revisions] == [1, 2, 3, 4, 5]
+
+
 def test_uncertain_question_answer_revises_meal_and_closes_inbox() -> None:
     with build_client() as client:
         _, camera = provision(client)
@@ -921,6 +985,11 @@ def test_uncertain_question_answer_revises_meal_and_closes_inbox() -> None:
 
         assert first.status_code == retry.status_code == 200
         assert first.json()["revision"]["id"] == retry.json()["revision"]["id"]
+        assert first.json()["feedback"]["actual_meal"] == "Vegetable soup"
+        assert first.json()["feedback"]["explanation"] == (
+            "The blue pot is normally used for soup."
+        )
+        assert first.json()["feedback"]["question_id"] == question["id"]
         assert client.get("/v1/questions", headers=USER_HEADER).json() == []
         answered = client.get(
             "/v1/questions?question_status=answered",

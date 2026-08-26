@@ -402,7 +402,7 @@ def create_app(
     async def idempotency_conflict_handler(*_: object) -> Response:
         return Response(
             status_code=status.HTTP_409_CONFLICT,
-            content='{"detail":"idempotency_key_reused_with_different_capture"}',
+            content='{"detail":"idempotency_key_reused_with_different_payload"}',
             media_type="application/json",
         )
 

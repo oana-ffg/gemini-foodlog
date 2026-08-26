@@ -2394,18 +2394,32 @@ class FirestoreRepository:
         idempotency_key: str,
     ) -> QuestionAnswerResult:
         account = await self.account_for_owner(owner_user_id)
-        result, question = await self._record_feedback(
-            account_id=account.id,
-            meal_id=question_id,
-            request=MealFeedbackRequest(
-                kind=MealFeedbackKind.CORRECT,
-                actual_meal=request.answer,
-                explanation=request.learning_tip,
-            ),
-            idempotency_key=idempotency_key,
-            question_id=question_id,
-            question_answer=request,
+        feedback_request = MealFeedbackRequest(
+            kind=MealFeedbackKind.CORRECT,
+            actual_meal=request.answer,
+            explanation=request.learning_tip,
         )
+
+        async def record_once():
+            return await self._record_feedback(
+                account_id=account.id,
+                meal_id=question_id,
+                request=feedback_request,
+                idempotency_key=idempotency_key,
+                question_id=question_id,
+                question_answer=request,
+            )
+
+        try:
+            result, question = await record_once()
+        except ValueError as error:
+            if str(error) != "Failed to commit transaction in 5 attempts.":
+                raise
+            # The Firestore client can exhaust its internal retries under a direct
+            # competing-answer race. One fresh bounded transaction observes the
+            # committed winner and returns either its exact retry or the domain
+            # QuestionAlreadyAnswered result instead of leaking an opaque 500.
+            result, question = await record_once()
         if question is None:
             raise ValueError("Question transaction returned no question")
         return QuestionAnswerResult(
