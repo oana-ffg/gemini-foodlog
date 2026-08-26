@@ -22,6 +22,8 @@ from .errors import (
     MealNotFound,
     ModelSpendLimitExceeded,
     ModelSpendReservationConflict,
+    ModelUsageConflict,
+    ModelUsageExceedsReservation,
     PurchaseDocumentConflict,
     PurchaseIdentityConflict,
     QuestionAlreadyAnswered,
@@ -73,6 +75,7 @@ from .models import (
     MealRevisionSource,
     MealStatus,
     ModelSpendReservation,
+    ModelUsageRecord,
     NotificationOutboxStatus,
     Purchase,
     PurchaseDocument,
@@ -402,6 +405,15 @@ class Repository(Protocol):
         reservation: ModelSpendReservation,
     ) -> ModelSpendReservation: ...
 
+    async def model_usage_for_reservation(
+        self,
+        *,
+        account_id: str,
+        reservation_id: str,
+    ) -> ModelUsageRecord | None: ...
+
+    async def record_model_usage(self, usage: ModelUsageRecord) -> ModelUsageRecord: ...
+
     async def save_meal(self, *, account_id: str, meal: MealEntry) -> MealEntry: ...
 
     async def open_question(
@@ -465,7 +477,9 @@ class InMemoryRepository:
         self._unlimited_owner_user_ids = frozenset(unlimited_owner_user_ids or set())
         self._model_spend_limit_dkk_micros = model_spend_limit_dkk_micros
         self._model_spend_reserved_dkk_micros = 0
+        self._model_spend_actual_dkk_micros = 0
         self._model_spend_reservations: dict[str, ModelSpendReservation] = {}
+        self._model_usage: dict[str, ModelUsageRecord] = {}
         self._accounts: dict[str, Account] = {}
         self._account_by_owner: dict[str, str] = {}
         self._notification_outbox: dict[str, AccountCreatedOutbox] = {}
@@ -1599,10 +1613,8 @@ class InMemoryRepository:
                 raise AccountNotProvisioned
             existing = self._model_spend_reservations.get(reservation.id)
             if existing is not None:
-                if (
-                    existing.account_id != reservation.account_id
-                    or existing.event_id != reservation.event_id
-                    or existing.reserved_dkk_micros != reservation.reserved_dkk_micros
+                if existing.model_dump(exclude={"created_at"}) != reservation.model_dump(
+                    exclude={"created_at"}
                 ):
                     raise ModelSpendReservationConflict
                 return existing.model_copy(deep=True)
@@ -1615,6 +1627,49 @@ class InMemoryRepository:
             stored = reservation.model_copy(deep=True)
             self._model_spend_reservations[stored.id] = stored
             self._model_spend_reserved_dkk_micros = proposed_total
+            return stored.model_copy(deep=True)
+
+    async def model_usage_for_reservation(
+        self,
+        *,
+        account_id: str,
+        reservation_id: str,
+    ) -> ModelUsageRecord | None:
+        async with self._lock:
+            usage = self._model_usage.get(reservation_id)
+            if usage is None or usage.account_id != account_id:
+                return None
+            return usage.model_copy(deep=True)
+
+    async def record_model_usage(self, usage: ModelUsageRecord) -> ModelUsageRecord:
+        async with self._lock:
+            reservation = self._model_spend_reservations.get(usage.reservation_id)
+            if reservation is None or reservation.account_id != usage.account_id:
+                raise ModelUsageConflict
+            if (
+                usage.id != reservation.id
+                or usage.event_id != reservation.event_id
+                or usage.reserved_dkk_micros != reservation.reserved_dkk_micros
+                or usage.model != reservation.model
+                or usage.region != reservation.region
+                or usage.purpose != reservation.purpose
+                or usage.prompt_version != reservation.prompt_version
+                or usage.retry_attempt != reservation.retry_attempt
+                or usage.evaluation != reservation.evaluation
+            ):
+                raise ModelUsageConflict
+            if usage.actual_dkk_micros > reservation.reserved_dkk_micros:
+                raise ModelUsageExceedsReservation
+            existing = self._model_usage.get(usage.reservation_id)
+            if existing is not None:
+                if existing.model_dump(exclude={"created_at"}) != usage.model_dump(
+                    exclude={"created_at"}
+                ):
+                    raise ModelUsageConflict
+                return existing.model_copy(deep=True)
+            stored = usage.model_copy(deep=True)
+            self._model_usage[stored.reservation_id] = stored
+            self._model_spend_actual_dkk_micros += stored.actual_dkk_micros
             return stored.model_copy(deep=True)
 
     async def save_meal(self, *, account_id: str, meal: MealEntry) -> MealEntry:

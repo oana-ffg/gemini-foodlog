@@ -500,6 +500,15 @@ class ModelSpendReservation(BaseModel):
     account_id: str = Field(min_length=1, max_length=128)
     event_id: str = Field(min_length=1, max_length=160)
     reserved_dkk_micros: int = Field(ge=1)
+    model: str = Field(default="unknown", min_length=1, max_length=120)
+    region: str = Field(default="unknown", min_length=1, max_length=80)
+    purpose: str = Field(default="unspecified", min_length=1, max_length=80)
+    prompt_version: str | None = Field(default=None, min_length=1, max_length=120)
+    max_prompt_tokens: int | None = Field(default=None, ge=1)
+    max_output_tokens: int | None = Field(default=None, ge=1)
+    max_provider_attempts: int = Field(default=1, ge=1, le=10)
+    retry_attempt: int = Field(default=0, ge=0, le=20)
+    evaluation: bool = False
     status: Literal["reserved"] = "reserved"
     created_at: datetime = Field(default_factory=utc_now)
 
@@ -509,6 +518,60 @@ class ModelSpendReservation(BaseModel):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("model spend reservation timestamp must include a UTC offset")
         return value
+
+
+class ModelUsageRecord(BaseModel):
+    id: str = Field(
+        min_length=8,
+        max_length=160,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    reservation_id: str = Field(min_length=8, max_length=160)
+    account_id: str = Field(min_length=1, max_length=128)
+    event_id: str = Field(min_length=1, max_length=160)
+    invocation_id: str | None = Field(default=None, min_length=1, max_length=200)
+    model: str = Field(min_length=1, max_length=120)
+    model_version: str | None = Field(default=None, min_length=1, max_length=160)
+    region: str = Field(min_length=1, max_length=80)
+    prompt_version: str | None = Field(default=None, min_length=1, max_length=120)
+    purpose: str = Field(min_length=1, max_length=80)
+    retry_attempt: int = Field(ge=0, le=20)
+    evaluation: bool
+    outcome: Literal["succeeded", "failed"]
+    prompt_tokens: int = Field(ge=0)
+    response_tokens: int = Field(ge=0)
+    thinking_tokens: int = Field(ge=0)
+    total_tokens: int = Field(ge=0)
+    actual_usd_nanos: int = Field(ge=0)
+    actual_dkk_micros: int = Field(ge=0)
+    reserved_dkk_micros: int = Field(ge=1)
+    error_code: str | None = Field(default=None, min_length=1, max_length=160)
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def usage_outcome_is_consistent(self) -> "ModelUsageRecord":
+        if self.created_at.tzinfo is None or self.created_at.utcoffset() is None:
+            raise ValueError("model usage timestamp must include a UTC offset")
+        if self.outcome == "succeeded":
+            if min(self.prompt_tokens, self.response_tokens, self.total_tokens) <= 0:
+                raise ValueError("successful model usage requires positive token counts")
+            if self.actual_usd_nanos <= 0 or self.actual_dkk_micros <= 0:
+                raise ValueError("successful model usage requires positive actual cost")
+            if self.error_code is not None:
+                raise ValueError("successful model usage cannot include an error code")
+        elif (
+            self.prompt_tokens
+            or self.response_tokens
+            or self.thinking_tokens
+            or self.total_tokens
+            or self.actual_usd_nanos
+            or self.actual_dkk_micros
+            or self.error_code is None
+        ):
+            raise ValueError("failed model usage requires zero usage and an error code")
+        if self.actual_dkk_micros > self.reserved_dkk_micros:
+            raise ValueError("actual model cost exceeds its reservation")
+        return self
 
 
 class MealComponent(BaseModel):

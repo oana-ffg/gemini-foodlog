@@ -78,6 +78,18 @@ class ModelSpendReservationConflict(FoodLogError):
     pass
 
 
+class ModelUsageConflict(FoodLogError):
+    pass
+
+
+class ModelUsageExceedsReservation(FoodLogError):
+    pass
+
+
+class ModelInvocationAlreadyReconciled(FoodLogError):
+    pass
+
+
 class IdempotencyConflict(FoodLogError):
     pass
 

@@ -50,7 +50,8 @@ single entitlement counter safe; sharded counters are deferred until demonstrate
 write contention exists.
 
 `system/model_spend` is the global Gemini hard-stop ledger. It stores currency
-`DKK`, integer `limit_dkk_micros`, integer `reserved_dkk_micros`, and timestamps.
+`DKK`, integer `limit_dkk_micros`, integer `reserved_dkk_micros`, reconciled
+`actual_dkk_micros`, `reconciled_reservation_count`, and timestamps.
 `system/model_spend/reservations/{reservation_id}` stores immutable account/event
 scope, the reserved micro-DKK amount, status, and creation time. A Firestore
 transaction reads the account, ledger, and idempotent reservation before atomically
@@ -75,6 +76,7 @@ belong in private Cloud Storage rather than Firestore.
 | `media/{media_id}` | Immutable private-object linkage | `capture_id`, server-derived `object_key`, generation, size, content type, SHA-256, `retention_class`; no public or signed URL. |
 | `segments/{segment_id}` | One bounded capture burst inside an event | deterministic source identity, `event_id`, `camera_id`, first/last capture timestamps, and `capture_count`; frame IDs remain on capture documents rather than in a growing array. |
 | `events/{event_id}` | Multi-frame kitchen activity | `camera_ids` <= 8, `status`, current subject revision, first/last capture timestamps, `capture_count`, nullable `meal_id`, grouping-policy version; frame IDs are queried from captures rather than accumulated in an array. |
+| `model_usage/{reservation_id}` | Immutable per-invocation spend reconciliation | Reservation, account, and event scope; model/version, region, prompt version, purpose, retry/evaluation flags, success/failure outcome, integer token counts, integer USD nanos, conservative/actual DKK micros, bounded error code, and creation time. Raw prompts, responses, secrets, and chain-of-thought are forbidden. |
 | `event_heads/{camera_id}` and `event_heads/account-affinity` | Transactional temporal-grouping pointers | latest event ID for one account camera or across the account plus update time; internal state only, never agent evidence. The account pointer lets temporally related evidence from different cameras join one event without any global or cross-tenant query. |
 | `meals/{meal_id}` | Current materialized journal view | `event_id`, tentative `title`, `classification` (`guess`, `unknown`, or `not_cooking`), confidence, review state, bounded components/observations/alternatives, rationale <= 8,000 chars, `current_revision`, `occurred_at`; a truly unknown record cannot be confirmed as correct. |
 | `meals/{meal_id}/revisions/{revision_id}` | Immutable inference/correction history | revision number, source, status, complete bounded inference snapshot, `feedback_id`, `trace_id`; unique revision number per meal. |

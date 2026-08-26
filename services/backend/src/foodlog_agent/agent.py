@@ -12,12 +12,13 @@ from foodlog_agent.prompt import INSTRUCTION
 from foodlog_backend.model_probe import DEFAULT_MODEL
 
 MODEL = os.environ.get("FOODLOG_MODEL", DEFAULT_MODEL)
+MAX_PROVIDER_ATTEMPTS = 1
 
 root_agent = Agent(
     name="food_event_reasoner",
     model=Gemini(
         model=MODEL,
-        retry_options=types.HttpRetryOptions(attempts=3),
+        retry_options=types.HttpRetryOptions(attempts=MAX_PROVIDER_ATTEMPTS),
     ),
     instruction=INSTRUCTION,
     tools=[event_evidence_tool, load_artifacts],

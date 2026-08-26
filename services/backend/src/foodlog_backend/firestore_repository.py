@@ -27,6 +27,8 @@ from .errors import (
     MealNotFound,
     ModelSpendLimitExceeded,
     ModelSpendReservationConflict,
+    ModelUsageConflict,
+    ModelUsageExceedsReservation,
     PurchaseIdentityConflict,
     QuestionAlreadyAnswered,
     QuestionNotFound,
@@ -73,6 +75,7 @@ from .models import (
     MealRevision,
     MealRevisionSource,
     ModelSpendReservation,
+    ModelUsageRecord,
     NotificationOutboxStatus,
     Purchase,
     PurchaseDocument,
@@ -1834,10 +1837,8 @@ class FirestoreRepository:
                 raise AccountNotProvisioned
             if existing_snapshot.exists:
                 existing = _model(existing_snapshot, ModelSpendReservation)
-                if (
-                    existing.account_id != reservation.account_id
-                    or existing.event_id != reservation.event_id
-                    or existing.reserved_dkk_micros != reservation.reserved_dkk_micros
+                if existing.model_dump(exclude={"created_at"}) != reservation.model_dump(
+                    exclude={"created_at"}
                 ):
                     raise ModelSpendReservationConflict
                 return existing
@@ -1882,6 +1883,92 @@ class FirestoreRepository:
             return reservation
 
         return await reserve(transaction)
+
+    async def model_usage_for_reservation(
+        self,
+        *,
+        account_id: str,
+        reservation_id: str,
+    ) -> ModelUsageRecord | None:
+        snapshot = await (
+            self._collection(account_id, "model_usage").document(reservation_id).get()
+        )
+        if not snapshot.exists:
+            return None
+        usage = _model(snapshot, ModelUsageRecord)
+        if usage.account_id != account_id or usage.reservation_id != reservation_id:
+            raise ModelUsageConflict
+        return usage
+
+    async def record_model_usage(self, usage: ModelUsageRecord) -> ModelUsageRecord:
+        ledger_ref = self._model_spend_ledger()
+        reservation_ref = ledger_ref.collection("reservations").document(usage.reservation_id)
+        usage_ref = self._collection(usage.account_id, "model_usage").document(usage.id)
+        account_ref = self._account(usage.account_id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def record(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
+            ledger_snapshot = await ledger_ref.get(transaction=transaction)
+            reservation_snapshot = await reservation_ref.get(transaction=transaction)
+            existing_snapshot = await usage_ref.get(transaction=transaction)
+            if (
+                not account_snapshot.exists
+                or account_snapshot.get("status") != "active"
+                or account_snapshot.get("id") != usage.account_id
+            ):
+                raise AccountNotProvisioned
+            if not ledger_snapshot.exists or not reservation_snapshot.exists:
+                raise ModelUsageConflict
+            reservation = _model(reservation_snapshot, ModelSpendReservation)
+            if (
+                usage.id != reservation.id
+                or usage.account_id != reservation.account_id
+                or usage.event_id != reservation.event_id
+                or usage.reserved_dkk_micros != reservation.reserved_dkk_micros
+                or usage.model != reservation.model
+                or usage.region != reservation.region
+                or usage.purpose != reservation.purpose
+                or usage.prompt_version != reservation.prompt_version
+                or usage.retry_attempt != reservation.retry_attempt
+                or usage.evaluation != reservation.evaluation
+            ):
+                raise ModelUsageConflict
+            if usage.actual_dkk_micros > reservation.reserved_dkk_micros:
+                raise ModelUsageExceedsReservation
+            if existing_snapshot.exists:
+                existing = _model(existing_snapshot, ModelUsageRecord)
+                if existing.model_dump(exclude={"created_at"}) != usage.model_dump(
+                    exclude={"created_at"}
+                ):
+                    raise ModelUsageConflict
+                return existing
+
+            ledger_data = ledger_snapshot.to_dict() or {}
+            actual_total = ledger_data.get("actual_dkk_micros", 0)
+            reconciled_count = ledger_data.get("reconciled_reservation_count", 0)
+            if (
+                not isinstance(actual_total, int)
+                or isinstance(actual_total, bool)
+                or actual_total < 0
+                or not isinstance(reconciled_count, int)
+                or isinstance(reconciled_count, bool)
+                or reconciled_count < 0
+            ):
+                raise ValueError("Model spend reconciliation ledger is invalid")
+            transaction.create(usage_ref, _document(usage))
+            transaction.update(
+                ledger_ref,
+                {
+                    "actual_dkk_micros": actual_total + usage.actual_dkk_micros,
+                    "reconciled_reservation_count": reconciled_count + 1,
+                    "updated_at": usage.created_at,
+                },
+            )
+            return usage
+
+        return await record(transaction)
 
     async def save_meal(self, *, account_id: str, meal: MealEntry) -> MealEntry:
         if meal.account_id != account_id:

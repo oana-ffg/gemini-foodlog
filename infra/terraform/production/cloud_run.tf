@@ -238,7 +238,7 @@ resource "google_cloud_run_v2_job" "adk_agent_smoke" {
         name    = "agent-smoke"
         image   = var.api_container_image
         command = ["python"]
-        args    = ["-m", "foodlog_agent.smoke", "--confirm-billable-smoke"]
+        args    = ["-m", "foodlog_agent.smoke"]
 
         env {
           name  = "FOODLOG_MODEL"
