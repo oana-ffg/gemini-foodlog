@@ -83,7 +83,9 @@ belong in private Cloud Storage rather than Firestore.
 | `questions/{question_id}` | Agent-surfaced event or pattern question | `kind` (`event_clarification` or `pattern_hypothesis`), optional `meal_id`/`event_id`, prompt <= 500 chars, reason <= 2,000 chars, evidence refs <= 20, concrete choices for event questions, tentative claim for pattern questions, source revision, response linkage, and `status` (`open`, `answered`, or `superseded`). Generic “what meal were you cooking?” questions are not permitted: event corrections belong on the meal card. |
 | `question_responses/{sha256_key}` | Immutable user response to an agent question | question ID, `kind` (`confirm`, `correct`, or `reject`), optional exact correction <= 500 chars and explanation <= 4,000 chars, optional derived meal-feedback ID, and `idempotency_hash`; the raw response remains separate from later meal or knowledge derivations. |
 | `feedback/{feedback_id}` | Immutable user confirmation/correction/discard | optional `meal_id`/`question_id`, `kind`, legacy whole-meal actual value, optional exact correction target and base revision, explanation <= 4,000 chars, `idempotency_hash`; never overwrites the original inference. |
-| `knowledge/{knowledge_id}` | Revisable household facts and hypotheses | statement <= 2,000 chars, `kind`, confidence, status, evidence refs <= 50, supersedes ID, learned-from feedback/question IDs; conflicts create revisions, not silent replacement. |
+| `knowledge/{knowledge_id}` | Current household-wiki page projection | deterministic account/topic identity, normalized topic key, human-readable title and statement, lifecycle (`inferred`, `reinforced`, `confirmed`, `contradicted`, or `retired`), belief strength (`weak`, `moderate`, or `strong`), and current revision ID/number. |
+| `knowledge/{knowledge_id}/revisions/{revision_id}` | Immutable household-wiki history | complete title/statement/lifecycle/strength snapshot, source (`agent_inference`, `user_feedback`, `user_statement`, or `question_response`), bounded evidence references with support/contradiction/context roles, human-readable reason, base revision, previous revision ID, and creation time. Every revision after the first must cite its immediate predecessor as provenance. |
+| `knowledge_revision_requests/{sha256_key}` | Exactly-once wiki revision identity | page/revision IDs, canonical request hash, and creation time; contains no raw idempotency key. |
 | `purchases/{purchase_id}` | One retailer purchase lifecycle | merchant, bounded `revision_count`, creation/update timestamps; order/invoice aliases and source documents remain separate so the root never grows arrays. |
 | `purchase_identities/{sha256_merchant_kind_reference}` | Exact business-identity alias | purchase ID, merchant, kind (`order` or `invoice`), reference hash, creation time; aliases are account-scoped, contain no plaintext reference, and conflicting aliases never trigger an automatic merge. |
 | `purchase_documents/{raw_mail_id}` | One immutable normalized source-document identity | purchase ID, raw-mail/content hashes, merchant, document kind, revision number, and optional normalized retailer-labelled order/invoice references; an exact transport retry returns this document while changed interpretation conflicts. |
@@ -110,21 +112,24 @@ belong in private Cloud Storage rather than Firestore.
    path. The transaction rejects stale bases or invalid paths, copies every unrelated
    component and evidence field forward, appends one revision, and only then updates
    the materialized meal view.
-6. Every reference is verified to remain inside the same account before commit.
-7. Growing arrays are forbidden. Evidence lists have explicit caps; full evidence,
+6. A household-wiki write atomically verifies its expected base revision, allowed
+   lifecycle transition, and direct predecessor evidence before appending an immutable
+   revision and updating the page projection. A retired page cannot silently reactivate.
+7. Every reference is verified to remain inside the same account before commit.
+8. Growing arrays are forbidden. Evidence lists have explicit caps; full evidence,
    frames, line items, and revisions use subcollections.
-8. Firestore documents remain comfortably below its 1 MiB limit; application writes
+9. Firestore documents remain comfortably below its 1 MiB limit; application writes
    reject the tighter bounds above before serialization.
-9. Inbound mail reserves its deterministic account-scoped transport identity before
+10. Inbound mail reserves its deterministic account-scoped transport identity before
    object upload, moves through stored/published states, and retries unfinished
    publication. A reused Message-ID with different bytes falls back to a
    content-qualified identity so conflicting evidence is preserved rather than
    overwritten or dropped.
-10. Inbound MIME bytes are always `untrusted_external`. The gateway validates bounded
+11. Inbound MIME bytes are always `untrusted_external`. The gateway validates bounded
    structure and supported passive content before storage, publishes no message body
    or attachment content, and never promotes email text into executable agent
    instructions.
-11. Purchase identity uses only explicit account/merchant/order/invoice aliases. A
+12. Purchase identity uses only explicit account/merchant/order/invoice aliases. A
     raw-message retry is one immutable source document; later documents sharing an
     exact alias append revisions. Identifier-free or merely similar documents remain
     separate, and a message bridging aliases already owned by different purchases

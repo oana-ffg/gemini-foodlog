@@ -25,6 +25,7 @@ from .errors import (
     InboundAddressStateConflict,
     InvalidDeviceCredential,
     JobIdentityConflict,
+    KnowledgePageNotFound,
     MealNotFound,
     ModelSpendLimitExceeded,
     ModelSpendReservationConflict,
@@ -69,6 +70,10 @@ from .models import (
     InboundMailRoute,
     JobKind,
     JobStatus,
+    KnowledgePage,
+    KnowledgeRevision,
+    KnowledgeRevisionDraft,
+    KnowledgeRevisionResult,
     LaunchMailConsent,
     MealEntry,
     MealFeedback,
@@ -105,13 +110,18 @@ from .repository import (
     event_question_from_hypothesis,
     event_question_id,
     inference_from_meal,
+    knowledge_page_id,
+    knowledge_revision_request_hash,
     materialize_activity_hypothesis,
+    materialize_knowledge_page,
+    normalize_knowledge_topic,
     pattern_question_id,
     purchase_identity_aliases,
     revised_inference,
     validate_capture_scope,
     validate_enqueueable_job,
     validate_focused_question_prompt,
+    validate_knowledge_revision,
     validate_purchase_document_retry,
     validate_purchase_identity_alias,
 )
@@ -2363,6 +2373,143 @@ class FirestoreRepository:
             .order_by("number")
         )
         return [_model(snapshot, MealRevision) async for snapshot in query.stream()]
+
+    async def record_knowledge_revision(
+        self,
+        *,
+        account_id: str,
+        topic_key: str,
+        expected_revision_number: int | None,
+        draft: KnowledgeRevisionDraft,
+        idempotency_key: str,
+    ) -> KnowledgeRevisionResult:
+        normalized_topic = normalize_knowledge_topic(topic_key)
+        page_id = knowledge_page_id(account_id, normalized_topic)
+        revision_id = sha256(idempotency_key.encode()).hexdigest()
+        request_hash = knowledge_revision_request_hash(
+            topic_key=normalized_topic,
+            expected_revision_number=expected_revision_number,
+            draft=draft,
+        )
+        account_ref = self._account(account_id)
+        page_ref = self._collection(account_id, "knowledge").document(page_id)
+        revision_ref = page_ref.collection("revisions").document(revision_id)
+        request_ref = self._collection(account_id, "knowledge_revision_requests").document(
+            revision_id
+        )
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def record(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
+            request_snapshot = await request_ref.get(transaction=transaction)
+            page_snapshot = await page_ref.get(transaction=transaction)
+            if not account_snapshot.exists:
+                raise AccountNotProvisioned
+
+            if request_snapshot.exists:
+                request_data = request_snapshot.to_dict() or {}
+                if (
+                    request_data.get("account_id") != account_id
+                    or request_data.get("page_id") != page_id
+                    or request_data.get("revision_id") != revision_id
+                    or request_data.get("request_hash") != request_hash
+                ):
+                    raise IdempotencyConflict
+                revision_snapshot = await revision_ref.get(transaction=transaction)
+                if not page_snapshot.exists or not revision_snapshot.exists:
+                    raise ValueError("knowledge revision idempotency record is incomplete")
+                current_page = _model(page_snapshot, KnowledgePage)
+                revision = _model(revision_snapshot, KnowledgeRevision)
+                return KnowledgeRevisionResult(
+                    page=materialize_knowledge_page(
+                        topic_key=normalized_topic,
+                        revision=revision,
+                        created_at=current_page.created_at,
+                    ),
+                    revision=revision,
+                )
+
+            previous = None
+            existing_page = None
+            if page_snapshot.exists:
+                existing_page = _model(page_snapshot, KnowledgePage)
+                if existing_page.account_id != account_id:
+                    raise KnowledgePageNotFound
+                previous_snapshot = await (
+                    page_ref.collection("revisions")
+                    .document(existing_page.current_revision_id)
+                    .get(transaction=transaction)
+                )
+                if not previous_snapshot.exists:
+                    raise ValueError("current knowledge revision is missing")
+                previous = _model(previous_snapshot, KnowledgeRevision)
+
+            validate_knowledge_revision(
+                previous=previous,
+                expected_revision_number=expected_revision_number,
+                draft=draft,
+            )
+            created_at = utc_now()
+            revision = KnowledgeRevision(
+                **draft.model_dump(),
+                id=revision_id,
+                account_id=account_id,
+                page_id=page_id,
+                number=1 if previous is None else previous.number + 1,
+                base_revision_number=(previous.number if previous is not None else None),
+                previous_revision_id=(previous.id if previous is not None else None),
+                created_at=created_at,
+            )
+            page = materialize_knowledge_page(
+                topic_key=normalized_topic,
+                revision=revision,
+                created_at=(existing_page.created_at if existing_page else created_at),
+            )
+            transaction.create(revision_ref, _document(revision))
+            transaction.set(page_ref, _document(page))
+            transaction.create(
+                request_ref,
+                {
+                    "schema_version": 1,
+                    "account_id": account_id,
+                    "page_id": page_id,
+                    "revision_id": revision_id,
+                    "request_hash": request_hash,
+                    "created_at": created_at,
+                },
+            )
+            return KnowledgeRevisionResult(page=page, revision=revision)
+
+        return await record(transaction)
+
+    async def knowledge_page_for_owner(
+        self,
+        owner_user_id: str,
+        page_id: str,
+    ) -> KnowledgePage:
+        account = await self.account_for_owner(owner_user_id)
+        snapshot = await self._collection(account.id, "knowledge").document(page_id).get()
+        if not snapshot.exists:
+            raise KnowledgePageNotFound
+        page = _model(snapshot, KnowledgePage)
+        if page.account_id != account.id:
+            raise KnowledgePageNotFound
+        return page
+
+    async def list_knowledge_revisions(
+        self,
+        owner_user_id: str,
+        page_id: str,
+    ) -> list[KnowledgeRevision]:
+        page = await self.knowledge_page_for_owner(owner_user_id, page_id)
+        query = (
+            self._collection(page.account_id, "knowledge")
+            .document(page.id)
+            .collection("revisions")
+            .order_by("number")
+        )
+        return [_model(snapshot, KnowledgeRevision) async for snapshot in query.stream()]
 
     async def record_meal_feedback(
         self,

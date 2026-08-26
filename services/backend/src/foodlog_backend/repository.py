@@ -1,8 +1,10 @@
 import asyncio
+import json
 from collections.abc import Iterable
 from datetime import datetime
 from hashlib import sha256
 from typing import Protocol
+from unicodedata import normalize as unicode_normalize
 from uuid import uuid4
 
 from .errors import (
@@ -18,8 +20,12 @@ from .errors import (
     InboundAddressCollision,
     InboundAddressStateConflict,
     InvalidDeviceCredential,
+    InvalidKnowledgeProvenance,
+    InvalidKnowledgeTransition,
     InvalidMealCorrectionTarget,
     JobIdentityConflict,
+    KnowledgePageNotFound,
+    KnowledgeRevisionConflict,
     MealNotFound,
     MealRevisionConflict,
     ModelSpendLimitExceeded,
@@ -69,6 +75,12 @@ from .models import (
     IngredientCorrection,
     JobKind,
     JobStatus,
+    KnowledgeEvidenceKind,
+    KnowledgeLifecycle,
+    KnowledgePage,
+    KnowledgeRevision,
+    KnowledgeRevisionDraft,
+    KnowledgeRevisionResult,
     LaunchMailConsent,
     MealComponent,
     MealEntry,
@@ -116,6 +128,113 @@ def event_question_id(meal_id: str, revision_number: int) -> str:
 def pattern_question_id(account_id: str, tentative_claim: str) -> str:
     normalized = " ".join(tentative_claim.casefold().split())
     return sha256(f"pattern-question-v1:{account_id}:{normalized}".encode()).hexdigest()
+
+
+def normalize_knowledge_topic(value: str) -> str:
+    normalized = " ".join(unicode_normalize("NFKC", value).casefold().split())
+    if not normalized or len(normalized) > 160:
+        raise ValueError("knowledge topic must contain 1-160 normalized characters")
+    return normalized
+
+
+def knowledge_page_id(account_id: str, topic_key: str) -> str:
+    normalized = normalize_knowledge_topic(topic_key)
+    return sha256(f"knowledge-page-v1:{account_id}:{normalized}".encode()).hexdigest()
+
+
+def knowledge_revision_request_hash(
+    *,
+    topic_key: str,
+    expected_revision_number: int | None,
+    draft: KnowledgeRevisionDraft,
+) -> str:
+    payload = {
+        "topic_key": normalize_knowledge_topic(topic_key),
+        "expected_revision_number": expected_revision_number,
+        "draft": draft.model_dump(mode="json"),
+    }
+    return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+_KNOWLEDGE_TRANSITIONS = {
+    KnowledgeLifecycle.INFERRED: frozenset(
+        {
+            KnowledgeLifecycle.INFERRED,
+            KnowledgeLifecycle.REINFORCED,
+            KnowledgeLifecycle.CONFIRMED,
+            KnowledgeLifecycle.CONTRADICTED,
+            KnowledgeLifecycle.RETIRED,
+        }
+    ),
+    KnowledgeLifecycle.REINFORCED: frozenset(
+        {
+            KnowledgeLifecycle.REINFORCED,
+            KnowledgeLifecycle.CONFIRMED,
+            KnowledgeLifecycle.CONTRADICTED,
+            KnowledgeLifecycle.RETIRED,
+        }
+    ),
+    KnowledgeLifecycle.CONFIRMED: frozenset(
+        {
+            KnowledgeLifecycle.CONFIRMED,
+            KnowledgeLifecycle.CONTRADICTED,
+            KnowledgeLifecycle.RETIRED,
+        }
+    ),
+    KnowledgeLifecycle.CONTRADICTED: frozenset(
+        {
+            KnowledgeLifecycle.INFERRED,
+            KnowledgeLifecycle.REINFORCED,
+            KnowledgeLifecycle.CONFIRMED,
+            KnowledgeLifecycle.CONTRADICTED,
+            KnowledgeLifecycle.RETIRED,
+        }
+    ),
+    KnowledgeLifecycle.RETIRED: frozenset(),
+}
+
+
+def validate_knowledge_revision(
+    *,
+    previous: KnowledgeRevision | None,
+    expected_revision_number: int | None,
+    draft: KnowledgeRevisionDraft,
+) -> None:
+    if previous is None:
+        if expected_revision_number is not None:
+            raise KnowledgeRevisionConflict
+        return
+    if expected_revision_number != previous.number:
+        raise KnowledgeRevisionConflict
+    if draft.lifecycle not in _KNOWLEDGE_TRANSITIONS[previous.lifecycle]:
+        raise InvalidKnowledgeTransition
+    if not any(
+        evidence.kind == KnowledgeEvidenceKind.KNOWLEDGE_REVISION
+        and evidence.id == previous.id
+        for evidence in draft.evidence
+    ):
+        raise InvalidKnowledgeProvenance
+
+
+def materialize_knowledge_page(
+    *,
+    topic_key: str,
+    revision: KnowledgeRevision,
+    created_at: datetime,
+) -> KnowledgePage:
+    return KnowledgePage(
+        id=revision.page_id,
+        account_id=revision.account_id,
+        topic_key=normalize_knowledge_topic(topic_key),
+        title=revision.title,
+        statement=revision.statement,
+        lifecycle=revision.lifecycle,
+        belief_strength=revision.belief_strength,
+        current_revision_number=revision.number,
+        current_revision_id=revision.id,
+        created_at=created_at,
+        updated_at=revision.created_at,
+    )
 
 
 def validate_focused_question_prompt(prompt: str) -> None:
@@ -577,6 +696,28 @@ class Repository(Protocol):
 
     async def list_meal_revisions(self, owner_user_id: str, meal_id: str) -> list[MealRevision]: ...
 
+    async def record_knowledge_revision(
+        self,
+        *,
+        account_id: str,
+        topic_key: str,
+        expected_revision_number: int | None,
+        draft: KnowledgeRevisionDraft,
+        idempotency_key: str,
+    ) -> KnowledgeRevisionResult: ...
+
+    async def knowledge_page_for_owner(
+        self,
+        owner_user_id: str,
+        page_id: str,
+    ) -> KnowledgePage: ...
+
+    async def list_knowledge_revisions(
+        self,
+        owner_user_id: str,
+        page_id: str,
+    ) -> list[KnowledgeRevision]: ...
+
     async def record_meal_feedback(
         self,
         *,
@@ -659,6 +800,11 @@ class InMemoryRepository:
         self._meals: dict[str, MealEntry] = {}
         self._meal_by_capture: dict[str, str] = {}
         self._meal_revisions: dict[str, list[MealRevision]] = {}
+        self._knowledge_pages: dict[str, KnowledgePage] = {}
+        self._knowledge_revisions: dict[str, list[KnowledgeRevision]] = {}
+        self._knowledge_revision_requests: dict[
+            tuple[str, str], tuple[str, KnowledgeRevisionResult]
+        ] = {}
         self._feedback: dict[str, MealFeedback] = {}
         self._feedback_by_idempotency: dict[tuple[str, str], str] = {}
         self._revision_by_feedback: dict[str, MealRevision] = {}
@@ -2102,6 +2248,91 @@ class InMemoryRepository:
         await self.meal_for_owner(owner_user_id, meal_id)
         async with self._lock:
             return [revision.model_copy(deep=True) for revision in self._meal_revisions[meal_id]]
+
+    async def record_knowledge_revision(
+        self,
+        *,
+        account_id: str,
+        topic_key: str,
+        expected_revision_number: int | None,
+        draft: KnowledgeRevisionDraft,
+        idempotency_key: str,
+    ) -> KnowledgeRevisionResult:
+        request_hash = knowledge_revision_request_hash(
+            topic_key=topic_key,
+            expected_revision_number=expected_revision_number,
+            draft=draft,
+        )
+        async with self._lock:
+            if account_id not in self._accounts:
+                raise AccountNotProvisioned
+            duplicate = self._knowledge_revision_requests.get(
+                (account_id, idempotency_key)
+            )
+            if duplicate is not None:
+                stored_hash, result = duplicate
+                if stored_hash != request_hash:
+                    raise IdempotencyConflict
+                return result.model_copy(deep=True)
+
+            normalized_topic = normalize_knowledge_topic(topic_key)
+            page_id = knowledge_page_id(account_id, normalized_topic)
+            revisions = self._knowledge_revisions.get(page_id, [])
+            previous = revisions[-1] if revisions else None
+            validate_knowledge_revision(
+                previous=previous,
+                expected_revision_number=expected_revision_number,
+                draft=draft,
+            )
+            created_at = utc_now()
+            revision = KnowledgeRevision(
+                **draft.model_dump(),
+                id=sha256(idempotency_key.encode()).hexdigest(),
+                account_id=account_id,
+                page_id=page_id,
+                number=1 if previous is None else previous.number + 1,
+                base_revision_number=(previous.number if previous is not None else None),
+                previous_revision_id=(previous.id if previous is not None else None),
+                created_at=created_at,
+            )
+            existing_page = self._knowledge_pages.get(page_id)
+            page = materialize_knowledge_page(
+                topic_key=normalized_topic,
+                revision=revision,
+                created_at=(existing_page.created_at if existing_page else created_at),
+            )
+            result = KnowledgeRevisionResult(page=page, revision=revision)
+            self._knowledge_pages[page_id] = page
+            self._knowledge_revisions.setdefault(page_id, []).append(revision)
+            self._knowledge_revision_requests[(account_id, idempotency_key)] = (
+                request_hash,
+                result,
+            )
+            return result.model_copy(deep=True)
+
+    async def knowledge_page_for_owner(
+        self,
+        owner_user_id: str,
+        page_id: str,
+    ) -> KnowledgePage:
+        account = await self.account_for_owner(owner_user_id)
+        async with self._lock:
+            page = self._knowledge_pages.get(page_id)
+            if page is None or page.account_id != account.id:
+                raise KnowledgePageNotFound
+            return page.model_copy(deep=True)
+
+    async def list_knowledge_revisions(
+        self,
+        owner_user_id: str,
+        page_id: str,
+    ) -> list[KnowledgeRevision]:
+        await self.knowledge_page_for_owner(owner_user_id, page_id)
+        async with self._lock:
+            return [
+                revision.model_copy(deep=True)
+                for revision in self._knowledge_revisions[page_id]
+            ]
 
     async def record_meal_feedback(
         self,

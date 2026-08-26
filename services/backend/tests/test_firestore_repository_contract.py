@@ -10,6 +10,8 @@ from google.cloud.firestore_v1.async_client import AsyncClient
 
 from foodlog_backend.errors import (
     IdempotencyConflict,
+    KnowledgePageNotFound,
+    KnowledgeRevisionConflict,
     MealRevisionConflict,
     QuestionAlreadyAnswered,
     QuestionNotFound,
@@ -31,6 +33,14 @@ from foodlog_backend.models import (
     DurableJob,
     JobKind,
     JobStatus,
+    KnowledgeBeliefStrength,
+    KnowledgeEvidenceKind,
+    KnowledgeEvidenceReference,
+    KnowledgeEvidenceRole,
+    KnowledgeLifecycle,
+    KnowledgeRevisionDraft,
+    KnowledgeRevisionResult,
+    KnowledgeRevisionSource,
     MealComponent,
     MealEntry,
     MealFeedbackKind,
@@ -281,6 +291,145 @@ def test_firestore_meal_question_feedback_and_revisions_are_atomic() -> None:
                 meal_id=meal.id,
                 request=targeted_request,
                 idempotency_key="firestore-contract-stale-targeted",
+            )
+        client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.skipif(
+    "FIRESTORE_EMULATOR_HOST" not in os.environ,
+    reason="requires the Firestore emulator",
+)
+def test_firestore_knowledge_revisions_are_atomic_provenanced_and_tenant_scoped() -> None:
+    async def scenario() -> None:
+        project_id = "gemini-foodlog-knowledge-contract-test"
+        client = AsyncClient(project=project_id)
+        repository = FirestoreRepository(
+            project_id=project_id,
+            public_account_limit=25,
+            trial_image_limit=200,
+            client=client,
+        )
+        owner = await repository.provision_account("knowledge-contract-owner")
+        await repository.provision_account("knowledge-contract-foreign-owner")
+        initial_draft = KnowledgeRevisionDraft(
+            title="Thursday dinner pattern",
+            statement="Steak may often be eaten on Thursdays.",
+            lifecycle=KnowledgeLifecycle.INFERRED,
+            belief_strength=KnowledgeBeliefStrength.WEAK,
+            source=KnowledgeRevisionSource.AGENT_INFERENCE,
+            evidence=[
+                KnowledgeEvidenceReference(
+                    kind=KnowledgeEvidenceKind.MEAL_REVISION,
+                    id="knowledge-contract-meal-001",
+                    role=KnowledgeEvidenceRole.SUPPORTS,
+                )
+            ],
+            reason="One observed Thursday meal supports a tentative pattern.",
+        )
+        initial = await repository.record_knowledge_revision(
+            account_id=owner.id,
+            topic_key="Thursday dinner pattern",
+            expected_revision_number=None,
+            draft=initial_draft,
+            idempotency_key="knowledge-contract-initial",
+        )
+        initial_retry = await repository.record_knowledge_revision(
+            account_id=owner.id,
+            topic_key="  thursday   dinner pattern ",
+            expected_revision_number=None,
+            draft=initial_draft,
+            idempotency_key="knowledge-contract-initial",
+        )
+        assert initial_retry == initial
+
+        drafts = [
+            KnowledgeRevisionDraft(
+                title="Thursday dinner pattern",
+                statement=statement,
+                lifecycle=KnowledgeLifecycle.REINFORCED,
+                belief_strength=KnowledgeBeliefStrength.MODERATE,
+                source=KnowledgeRevisionSource.AGENT_INFERENCE,
+                evidence=[
+                    KnowledgeEvidenceReference(
+                        kind=KnowledgeEvidenceKind.KNOWLEDGE_REVISION,
+                        id=initial.revision.id,
+                        role=KnowledgeEvidenceRole.CONTEXT,
+                    ),
+                    KnowledgeEvidenceReference(
+                        kind=KnowledgeEvidenceKind.MEAL_REVISION,
+                        id=f"knowledge-contract-meal-00{index + 2}",
+                        role=KnowledgeEvidenceRole.SUPPORTS,
+                    ),
+                ],
+                reason="A second observed meal reinforces the tentative pattern.",
+            )
+            for index, statement in enumerate(
+                [
+                    "Steak is often eaten on Thursdays.",
+                    "Red meat is often eaten on Thursdays.",
+                ]
+            )
+        ]
+        outcomes = await asyncio.gather(
+            *(
+                repository.record_knowledge_revision(
+                    account_id=owner.id,
+                    topic_key=initial.page.topic_key,
+                    expected_revision_number=1,
+                    draft=candidate,
+                    idempotency_key=f"knowledge-contract-competing-{index}",
+                )
+                for index, candidate in enumerate(drafts)
+            ),
+            return_exceptions=True,
+        )
+        successes = [item for item in outcomes if isinstance(item, KnowledgeRevisionResult)]
+        failures = [item for item in outcomes if isinstance(item, Exception)]
+        assert len(successes) == 1, repr(outcomes)
+        assert len(failures) == 1, repr(outcomes)
+        assert isinstance(failures[0], KnowledgeRevisionConflict)
+        winner_index = outcomes.index(successes[0])
+        winner = successes[0]
+        winner_retry = await repository.record_knowledge_revision(
+            account_id=owner.id,
+            topic_key=initial.page.topic_key,
+            expected_revision_number=1,
+            draft=drafts[winner_index],
+            idempotency_key=f"knowledge-contract-competing-{winner_index}",
+        )
+        assert winner_retry == winner
+
+        page = await repository.knowledge_page_for_owner(
+            "knowledge-contract-owner", initial.page.id
+        )
+        revisions = await repository.list_knowledge_revisions(
+            "knowledge-contract-owner", initial.page.id
+        )
+        assert page.current_revision_number == 2
+        assert page.current_revision_id == winner.revision.id
+        assert [revision.number for revision in revisions] == [1, 2]
+        assert revisions[0].statement == initial_draft.statement
+        assert revisions[1].previous_revision_id == revisions[0].id
+        assert any(
+            item.kind == KnowledgeEvidenceKind.KNOWLEDGE_REVISION
+            and item.id == revisions[0].id
+            for item in revisions[1].evidence
+        )
+
+        account_ref = client.collection("accounts").document(owner.id)
+        request_documents = [
+            snapshot
+            async for snapshot in account_ref.collection(
+                "knowledge_revision_requests"
+            ).stream()
+        ]
+        assert len(request_documents) == 2
+        assert all("idempotency_key" not in item.to_dict() for item in request_documents)
+        with pytest.raises(KnowledgePageNotFound):
+            await repository.knowledge_page_for_owner(
+                "knowledge-contract-foreign-owner", initial.page.id
             )
         client.close()
 

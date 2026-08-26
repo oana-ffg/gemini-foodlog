@@ -77,6 +77,43 @@ class QuestionEvidenceKind(StrEnum):
     INFERENCE_EVIDENCE = "inference_evidence"
 
 
+class KnowledgeLifecycle(StrEnum):
+    INFERRED = "inferred"
+    REINFORCED = "reinforced"
+    CONFIRMED = "confirmed"
+    CONTRADICTED = "contradicted"
+    RETIRED = "retired"
+
+
+class KnowledgeBeliefStrength(StrEnum):
+    WEAK = "weak"
+    MODERATE = "moderate"
+    STRONG = "strong"
+
+
+class KnowledgeRevisionSource(StrEnum):
+    AGENT_INFERENCE = "agent_inference"
+    USER_FEEDBACK = "user_feedback"
+    USER_STATEMENT = "user_statement"
+    QUESTION_RESPONSE = "question_response"
+
+
+class KnowledgeEvidenceKind(StrEnum):
+    CAPTURE = "capture"
+    MEAL_REVISION = "meal_revision"
+    FEEDBACK = "feedback"
+    QUESTION_RESPONSE = "question_response"
+    PURCHASE_DOCUMENT = "purchase_document"
+    USER_CONTEXT_NOTE = "user_context_note"
+    KNOWLEDGE_REVISION = "knowledge_revision"
+
+
+class KnowledgeEvidenceRole(StrEnum):
+    SUPPORTS = "supports"
+    CONTRADICTS = "contradicts"
+    CONTEXT = "context"
+
+
 class CaptureStatus(StrEnum):
     ACCEPTED = "accepted"
     STORED = "stored"
@@ -747,6 +784,73 @@ class MealRevision(BaseModel):
 class MealFeedbackResult(BaseModel):
     feedback: MealFeedback
     revision: MealRevision
+
+
+class KnowledgeEvidenceReference(BaseModel):
+    kind: KnowledgeEvidenceKind
+    id: str = Field(min_length=1, max_length=200)
+    role: KnowledgeEvidenceRole
+    note: str | None = Field(default=None, min_length=1, max_length=500)
+
+
+class KnowledgeRevisionDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=200)
+    statement: str = Field(min_length=1, max_length=2_000)
+    lifecycle: KnowledgeLifecycle
+    belief_strength: KnowledgeBeliefStrength
+    source: KnowledgeRevisionSource
+    evidence: list[KnowledgeEvidenceReference] = Field(min_length=1, max_length=50)
+    reason: str = Field(min_length=1, max_length=2_000)
+
+    @field_validator("evidence")
+    @classmethod
+    def evidence_references_are_unique(
+        cls,
+        values: list[KnowledgeEvidenceReference],
+    ) -> list[KnowledgeEvidenceReference]:
+        identities = [(value.kind, value.id) for value in values]
+        if len(set(identities)) != len(identities):
+            raise ValueError("knowledge evidence references must be unique")
+        return values
+
+    @model_validator(mode="after")
+    def contradiction_has_contradicting_evidence(self) -> "KnowledgeRevisionDraft":
+        if self.lifecycle == KnowledgeLifecycle.CONTRADICTED and not any(
+            item.role == KnowledgeEvidenceRole.CONTRADICTS for item in self.evidence
+        ):
+            raise ValueError("contradicted knowledge requires contradicting evidence")
+        return self
+
+
+class KnowledgeRevision(KnowledgeRevisionDraft):
+    id: str
+    account_id: str
+    page_id: str
+    number: int = Field(ge=1)
+    base_revision_number: int | None = Field(default=None, ge=1)
+    previous_revision_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class KnowledgePage(BaseModel):
+    id: str
+    account_id: str
+    topic_key: str = Field(min_length=1, max_length=160)
+    title: str = Field(min_length=1, max_length=200)
+    statement: str = Field(min_length=1, max_length=2_000)
+    lifecycle: KnowledgeLifecycle
+    belief_strength: KnowledgeBeliefStrength
+    current_revision_number: int = Field(ge=1)
+    current_revision_id: str
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class KnowledgeRevisionResult(BaseModel):
+    page: KnowledgePage
+    revision: KnowledgeRevision
 
 
 class QuestionEvidenceReference(BaseModel):
