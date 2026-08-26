@@ -124,10 +124,10 @@ class EventInferenceProcessor:
         )
         if claimed is None:
             return None
-        if claimed.kind != JobKind.EVENT_INFERENCE or claimed.subject_id != event_id:
-            raise RuntimeError("Claimed job is not the requested event inference")
 
         try:
+            if claimed.kind != JobKind.EVENT_INFERENCE or claimed.subject_id != event_id:
+                raise RuntimeError("Claimed job is not the requested event inference")
             event, captures = await self._repository.event_evidence_for_account(
                 account_id=account_id,
                 event_id=event_id,
