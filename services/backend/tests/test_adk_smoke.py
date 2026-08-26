@@ -7,7 +7,6 @@ from foodlog_agent.event_reasoning import (
     _validated_response,
     event_bundle,
 )
-from foodlog_agent.inference_schema import ActivityMealInferenceV1
 from foodlog_agent.prompt import INSTRUCTION, PROMPT_VERSION
 from foodlog_agent.smoke import (
     MAX_LLM_CALLS,
@@ -16,6 +15,7 @@ from foodlog_agent.smoke import (
     main,
     smoke_event_bundle,
 )
+from foodlog_backend.inference_schema import ActivityMealInferenceV1
 from tests.inference_fixtures import base_payload
 
 

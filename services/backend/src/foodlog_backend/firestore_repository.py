@@ -44,6 +44,7 @@ from .grouping import (
     capture_evidence_order,
     segment_identity,
 )
+from .inference_schema import ActivityMealInferenceV1
 from .models import (
     Account,
     AccountCreatedOutbox,
@@ -93,6 +94,7 @@ from .models import (
 )
 from .repository import (
     inference_from_meal,
+    materialize_activity_hypothesis,
     purchase_identity_aliases,
     revised_inference,
     validate_capture_scope,
@@ -1815,6 +1817,139 @@ class FirestoreRepository:
             raise ValueError("Activity event evidence is incomplete")
         return event, sorted(captures, key=capture_evidence_order)
 
+    async def publish_event_inference(
+        self,
+        *,
+        account_id: str,
+        event_id: str,
+        expected_event_revision: int,
+        lease_id: str,
+        lease_owner: str,
+        hypothesis: ActivityMealInferenceV1,
+    ) -> MealEntry | None:
+        event_ref = self._collection(account_id, "events").document(event_id)
+        job_ref = self._collection(account_id, "jobs").document(
+            event_inference_job_id(event_id)
+        )
+        capture_refs = [
+            self._collection(account_id, "captures").document(capture_id)
+            for capture_id in hypothesis.source_capture_ids
+        ]
+        revision_id = str(uuid4())
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def publish(transaction):
+            event_snapshot = await event_ref.get(transaction=transaction)
+            job_snapshot = await job_ref.get(transaction=transaction)
+            if not event_snapshot.exists or not job_snapshot.exists:
+                return None
+            event = _model(event_snapshot, ActivityEvent)
+            job = _model(job_snapshot, DurableJob)
+            now = utc_now()
+            if (
+                event.account_id != account_id
+                or event.id != event_id
+                or event.current_revision != expected_event_revision
+                or event.status != ActivityEventStatus.OPEN
+                or job.account_id != account_id
+                or job.kind != JobKind.EVENT_INFERENCE
+                or job.subject_id != event_id
+                or job.subject_revision != expected_event_revision
+                or job.status != JobStatus.LEASED
+                or job.lease_id != lease_id
+                or job.lease_owner != lease_owner
+                or job.lease_expires_at is None
+                or job.lease_expires_at <= now
+            ):
+                return None
+            if len(capture_refs) != event.capture_count:
+                raise ValueError("Activity hypothesis evidence count does not match the event")
+            capture_snapshots = [
+                await capture_ref.get(transaction=transaction)
+                for capture_ref in capture_refs
+            ]
+            if any(not snapshot.exists for snapshot in capture_snapshots):
+                raise ValueError("Activity hypothesis references missing event evidence")
+            captures = [
+                self._capture_from_snapshot(snapshot, "")
+                for snapshot in capture_snapshots
+            ]
+            if any(
+                capture.account_id != account_id or capture.event_id != event_id
+                for capture in captures
+            ):
+                raise ValueError("Activity hypothesis evidence escaped its event scope")
+            canonical_captures = sorted(captures, key=capture_evidence_order)
+
+            meal_id = event.meal_id or event.id
+            meal_ref = self._collection(account_id, "meals").document(meal_id)
+            meal_snapshot = await meal_ref.get(transaction=transaction)
+            existing_meal = _model(meal_snapshot, MealEntry) if meal_snapshot.exists else None
+            if existing_meal is not None and (
+                existing_meal.account_id != account_id or existing_meal.event_id != event_id
+            ):
+                raise CrossAccountAccess
+            revision_number = (
+                existing_meal.revision_number + 1 if existing_meal is not None else 1
+            )
+            created_at = existing_meal.created_at if existing_meal is not None else now
+            meal = materialize_activity_hypothesis(
+                event=event,
+                captures=canonical_captures,
+                hypothesis=hypothesis,
+                meal_id=meal_id,
+                revision_number=revision_number,
+                created_at=created_at,
+            )
+            revision = MealRevision(
+                id=revision_id,
+                account_id=account_id,
+                meal_id=meal.id,
+                number=revision_number,
+                status=meal.status,
+                inference=inference_from_meal(meal),
+                activity_hypothesis=hypothesis,
+                source=MealRevisionSource.INFERENCE,
+                created_at=now,
+            )
+            inferred_event = event.model_copy(
+                update={
+                    "status": ActivityEventStatus.INFERRED,
+                    "meal_id": meal.id,
+                    "updated_at": now,
+                },
+                deep=True,
+            )
+            completed_job = DurableJob.model_validate(
+                {
+                    **job.model_dump(mode="python"),
+                    "status": JobStatus.COMPLETED,
+                    "lease_id": None,
+                    "lease_owner": None,
+                    "lease_expires_at": None,
+                    "last_error_code": None,
+                    "last_error_message": None,
+                    "completed_at": now,
+                }
+            )
+
+            transaction.set(meal_ref, _document(meal))
+            transaction.create(
+                meal_ref.collection("revisions").document(revision.id),
+                _document(revision),
+            )
+            transaction.set(event_ref, _document(inferred_event))
+            transaction.set(job_ref, _document(completed_job))
+            for capture_ref in capture_refs:
+                transaction.update(
+                    capture_ref,
+                    {"status": CaptureStatus.PROCESSED, "updated_at": now},
+                )
+            return meal
+
+        return await publish(transaction)
+
     async def reserve_model_spend(
         self,
         reservation: ModelSpendReservation,
@@ -2188,6 +2323,7 @@ class FirestoreRepository:
                     number=meal.revision_number + 1,
                     status=status,
                     inference=inference,
+                    activity_hypothesis=meal.activity_hypothesis,
                     source=MealRevisionSource.USER_FEEDBACK,
                     feedback_id=feedback.id,
                 )
@@ -2196,6 +2332,9 @@ class FirestoreRepository:
                     id=meal.id,
                     account_id=meal.account_id,
                     capture_id=meal.capture_id,
+                    event_id=meal.event_id,
+                    occurred_at=meal.occurred_at,
+                    activity_hypothesis=meal.activity_hypothesis,
                     status=status,
                     revision_number=revision.number,
                     created_at=meal.created_at,

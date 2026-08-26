@@ -2,9 +2,9 @@ import argparse
 import json
 from pathlib import Path
 
-from foodlog_agent.inference_schema import ActivityMealInferenceV1
 from foodlog_backend.app import create_app
 from foodlog_backend.auth import VerifiedIdentity
+from foodlog_backend.inference_schema import ActivityMealInferenceV1
 from foodlog_backend.models import CaptureEnvelopeV1
 from foodlog_backend.settings import Settings
 

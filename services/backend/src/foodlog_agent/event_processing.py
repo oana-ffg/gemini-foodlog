@@ -15,6 +15,7 @@ from foodlog_backend.models import (
     CaptureRecord,
     DurableJob,
     JobKind,
+    MealEntry,
     event_inference_job_id,
     utc_now,
 )
@@ -113,12 +114,7 @@ class ClaimedEventInference:
 
 
 class EventInferenceProcessor:
-    """Claim one event revision and run at most one accounted model workflow.
-
-    Publication deliberately remains outside this class: AI-009 will atomically
-    write the hypothesis and complete the same lease only while the claimed event
-    revision is still current.
-    """
+    """Claim, reason over, and lease-fence one event-revision publication."""
 
     def __init__(
         self,
@@ -217,6 +213,18 @@ class EventInferenceProcessor:
             event=event,
             captures=tuple(captures),
             accounted=accounted,
+        )
+
+    async def publish(self, claimed: ClaimedEventInference) -> MealEntry | None:
+        if self._evaluation:
+            raise ValueError("Evaluation inference cannot publish a product result")
+        return await self._repository.publish_event_inference(
+            account_id=claimed.event.account_id,
+            event_id=claimed.event.id,
+            expected_event_revision=claimed.event.current_revision,
+            lease_id=claimed.lease_id,
+            lease_owner=claimed.lease_owner,
+            hypothesis=claimed.accounted.inference,
         )
 
     async def release_evaluation(

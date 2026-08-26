@@ -362,6 +362,7 @@
     }
   },
   "additionalProperties": false,
+  "description": "Shared validated contract for model output and persisted journal hypotheses.",
   "properties": {
     "allowed_actions": {
       "items": {

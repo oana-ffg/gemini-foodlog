@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import timedelta
 
 import pytest
 from google.cloud.firestore_v1.async_client import AsyncClient
@@ -13,8 +14,16 @@ from foodlog_backend.firestore_repository_smoke import (
     ensure_smoke_fixture,
     run_smoke,
 )
+from foodlog_backend.inference_schema import ActivityMealInferenceV1
 from foodlog_backend.models import (
+    ActivityEvent,
+    ActivityEventStatus,
+    CaptureRecord,
+    CaptureStatus,
     Confidence,
+    DurableJob,
+    JobKind,
+    JobStatus,
     MealComponent,
     MealEntry,
     MealFeedbackKind,
@@ -23,7 +32,10 @@ from foodlog_backend.models import (
     QuestionAnswerRequest,
     QuestionAnswerResult,
     QuestionStatus,
+    event_inference_job_id,
+    utc_now,
 )
+from tests.inference_fixtures import base_payload
 
 
 @pytest.mark.skipif(
@@ -160,6 +172,114 @@ def test_firestore_meal_question_feedback_and_revisions_are_atomic() -> None:
         assert answered[0].answer == successes[0].question.answer
         assert len(feedback) == 2
         assert all("idempotency_key" not in snapshot.to_dict() for snapshot in feedback)
+        client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.skipif(
+    "FIRESTORE_EMULATOR_HOST" not in os.environ,
+    reason="requires the Firestore emulator",
+)
+def test_firestore_event_publication_atomically_fences_lease_and_revision() -> None:
+    async def scenario() -> None:
+        project_id = "gemini-foodlog-event-publication-test"
+        client = AsyncClient(project=project_id)
+        repository = FirestoreRepository(
+            project_id=project_id,
+            public_account_limit=25,
+            trial_image_limit=200,
+            client=client,
+        )
+        account = await repository.provision_account("event-publication-owner")
+        now = utc_now()
+        event = ActivityEvent(
+            id="event-publication-event",
+            account_id=account.id,
+            camera_ids=["event-publication-camera"],
+            first_capture_at=now,
+            last_capture_at=now,
+            capture_count=1,
+            grouping_policy_version="publication-test-v1",
+        )
+        capture = CaptureRecord(
+            id="event-publication-capture",
+            account_id=account.id,
+            camera_id=event.camera_ids[0],
+            idempotency_key="event-publication-idempotency",
+            content_type="image/jpeg",
+            content_sha256="a" * 64,
+            object_key=(
+                f"accounts/{account.id}/captures/event-publication-capture.jpg"
+            ),
+            event_id=event.id,
+            status=CaptureStatus.STORED,
+            created_at=now,
+        )
+        job = DurableJob(
+            id=event_inference_job_id(event.id),
+            account_id=account.id,
+            kind=JobKind.EVENT_INFERENCE,
+            subject_id=event.id,
+            subject_revision=event.current_revision,
+            status=JobStatus.LEASED,
+            attempt_count=1,
+            lease_id="event-publication-lease",
+            lease_owner="event-publication-worker",
+            lease_expires_at=now + timedelta(minutes=5),
+            created_at=now,
+        )
+        account_ref = client.collection("accounts").document(account.id)
+        capture_data = capture.model_dump(mode="python", exclude={"idempotency_key"})
+        capture_data.update(schema_version=1, idempotency_hash="test-only")
+        await account_ref.collection("events").document(event.id).set(
+            {**event.model_dump(mode="python"), "schema_version": 1}
+        )
+        await account_ref.collection("captures").document(capture.id).set(capture_data)
+        await account_ref.collection("jobs").document(job.id).set(
+            {**job.model_dump(mode="python"), "schema_version": 1}
+        )
+
+        payload = base_payload()
+        payload["event_id"] = event.id
+        payload["source_capture_ids"] = [capture.id]
+        payload["direct_observations"][0]["image_evidence"][0]["capture_id"] = capture.id
+        hypothesis = ActivityMealInferenceV1.model_validate(payload)
+        meal = await repository.publish_event_inference(
+            account_id=account.id,
+            event_id=event.id,
+            expected_event_revision=event.current_revision,
+            lease_id=job.lease_id or "",
+            lease_owner=job.lease_owner or "",
+            hypothesis=hypothesis,
+        )
+        assert meal is not None
+        assert meal.activity_hypothesis == hypothesis
+
+        duplicate = await repository.publish_event_inference(
+            account_id=account.id,
+            event_id=event.id,
+            expected_event_revision=event.current_revision,
+            lease_id=job.lease_id or "",
+            lease_owner=job.lease_owner or "",
+            hypothesis=hypothesis,
+        )
+        assert duplicate is None
+        stored_event = await account_ref.collection("events").document(event.id).get()
+        stored_job = await account_ref.collection("jobs").document(job.id).get()
+        stored_capture = await account_ref.collection("captures").document(capture.id).get()
+        revisions = [
+            snapshot
+            async for snapshot in account_ref.collection("meals")
+            .document(meal.id)
+            .collection("revisions")
+            .stream()
+        ]
+        assert stored_event.get("status") == ActivityEventStatus.INFERRED
+        assert stored_event.get("meal_id") == meal.id
+        assert stored_job.get("status") == JobStatus.COMPLETED
+        assert stored_capture.get("status") == CaptureStatus.PROCESSED
+        assert len(revisions) == 1
         client.close()
 
     asyncio.run(scenario())

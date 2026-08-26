@@ -13,22 +13,34 @@ from foodlog_agent.event_reasoning import (
     InvalidModelOutputError,
 )
 from foodlog_backend.grouping import GroupingPolicy
+from foodlog_backend.inference_schema import ActivityMealInferenceV1
 from foodlog_backend.model_accounting import ModelInvocationExecutionError
 from foodlog_backend.models import (
+    ActivityEventStatus,
     CaptureEnvelopeV1,
+    CaptureStatus,
     JobStatus,
+    MealStatus,
+    ModelSpendReservation,
+    ModelUsageRecord,
     capture_grouping_job_id,
     event_inference_job_id,
     utc_now,
 )
 from foodlog_backend.repository import InMemoryRepository
+from tests.inference_fixtures import base_payload
 
 
 class RecordingReasoner:
-    def __init__(self, *, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        error: Exception | None = None,
+        result: AccountedEventInference | None = None,
+    ) -> None:
         self.error = error
         self.calls: list[dict[str, object]] = []
-        self.result = cast(AccountedEventInference, object())
+        self.result = result or cast(AccountedEventInference, object())
 
     async def infer(self, **kwargs) -> AccountedEventInference:
         self.calls.append(kwargs)
@@ -143,6 +155,52 @@ async def _prepared_event():
     )
     assert earlier.event.id == later.event.id
     return repository, account, earlier.event
+
+
+def _accounted_hypothesis(
+    *,
+    event_id: str,
+    capture_ids: list[str],
+    kind: str = "tentative_meal",
+) -> AccountedEventInference:
+    payload = base_payload()
+    payload["event_id"] = event_id
+    payload["source_capture_ids"] = capture_ids
+    observation = payload["direct_observations"][0]
+    observation["image_evidence"][0]["capture_id"] = capture_ids[0]
+    payload["contextual_evidence"] = []
+    payload["deductions"] = [
+        {
+            "id": "ded_meat",
+            "description": "The visible food supports the current candidate.",
+            "evidence_ids": ["obs_meat"],
+        }
+    ]
+    payload["components"][0]["evidence_ids"] = ["obs_meat", "ded_meat"]
+    payload["question"] = None
+    if kind == "unknown_activity":
+        payload.update(
+            kind=kind,
+            best_guess=None,
+            confidence="uncertain",
+            components=[],
+            alternatives=[],
+            allowed_actions=["correct", "discard_not_cooking"],
+        )
+    elif kind == "likely_non_cooking":
+        payload.update(
+            kind=kind,
+            best_guess="Cat on the counter",
+            confidence="likely",
+            components=[],
+            allowed_actions=["correct", "discard_not_cooking"],
+        )
+    inference = ActivityMealInferenceV1.model_validate(payload)
+    return AccountedEventInference(
+        inference=inference,
+        reservation=cast(ModelSpendReservation, object()),
+        usage=cast(ModelUsageRecord, object()),
+    )
 
 
 def test_claimed_revision_invokes_once_with_exact_ordered_bundle() -> None:
@@ -346,5 +404,113 @@ def test_exhausted_output_repair_remains_a_visible_failure() -> None:
         assert job.status == JobStatus.PENDING
         assert job.last_error_code == "InvalidModelOutputError"
         assert "missing required best_guess" in (job.last_error_message or "")
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected_title", "confirmable"),
+    [
+        ("tentative_meal", "Air-fried steak", True),
+        ("unknown_activity", "Unknown kitchen activity", False),
+        ("likely_non_cooking", "Cat on the counter", False),
+    ],
+)
+def test_validated_hypothesis_is_published_once_with_its_distinct_state(
+    kind: str,
+    expected_title: str,
+    confirmable: bool,
+) -> None:
+    async def scenario() -> None:
+        repository, account, event = await _prepared_event()
+        accounted = _accounted_hypothesis(
+            event_id=event.id,
+            capture_ids=["event-processing-earlier", "event-processing-later"],
+            kind=kind,
+        )
+        reasoner = RecordingReasoner(result=accounted)
+        processor = EventInferenceProcessor(repository=repository, reasoner=reasoner)
+
+        claimed = await processor.process(
+            account_id=account.id,
+            event_id=event.id,
+            expected_revision=event.current_revision,
+            worker_id="publication-worker",
+        )
+        assert claimed is not None
+        meal = await processor.publish(claimed)
+        assert meal is not None
+        assert meal.title == expected_title
+        assert meal.status == MealStatus.PROVISIONAL
+        assert meal.event_id == event.id
+        assert meal.activity_hypothesis == accounted.inference
+        assert ("confirm_guess" in meal.activity_hypothesis.allowed_actions) is confirmable
+
+        stored_event, stored_captures = await repository.event_evidence_for_account(
+            account_id=account.id,
+            event_id=event.id,
+        )
+        assert stored_event.status == ActivityEventStatus.INFERRED
+        assert stored_event.meal_id == meal.id
+        assert all(capture.status == CaptureStatus.PROCESSED for capture in stored_captures)
+        job = await repository.job_for_account(
+            account.id,
+            event_inference_job_id(event.id),
+        )
+        assert job is not None
+        assert job.status == JobStatus.COMPLETED
+
+        duplicate = await processor.process(
+            account_id=account.id,
+            event_id=event.id,
+            expected_revision=event.current_revision,
+            worker_id="duplicate-publication-worker",
+        )
+        assert duplicate is None
+        assert len(reasoner.calls) == 1
+        assert len(repository._meal_revisions[meal.id]) == 1
+
+    asyncio.run(scenario())
+
+
+def test_superseded_event_revision_cannot_publish_a_claimed_hypothesis() -> None:
+    async def scenario() -> None:
+        repository, account, event = await _prepared_event()
+        accounted = _accounted_hypothesis(
+            event_id=event.id,
+            capture_ids=["event-processing-earlier", "event-processing-later"],
+        )
+        processor = EventInferenceProcessor(
+            repository=repository,
+            reasoner=RecordingReasoner(result=accounted),
+        )
+        claimed = await processor.process(
+            account_id=account.id,
+            event_id=event.id,
+            expected_revision=event.current_revision,
+            worker_id="stale-publication-worker",
+        )
+        assert claimed is not None
+
+        await _store_and_group(
+            repository,
+            account=account,
+            camera=await repository.camera_for_owner(
+                account.owner_user_id,
+                event.camera_ids[0],
+            ),
+            capture_id="event-processing-newer",
+            captured_at=utc_now(),
+            sequence_number=2,
+        )
+        assert await processor.publish(claimed) is None
+        current_event, _ = await repository.event_evidence_for_account(
+            account_id=account.id,
+            event_id=event.id,
+        )
+        assert current_event.current_revision == event.current_revision + 1
+        assert current_event.status == ActivityEventStatus.OPEN
+        assert current_event.meal_id is None
+        assert repository._meals == {}
 
     asyncio.run(scenario())

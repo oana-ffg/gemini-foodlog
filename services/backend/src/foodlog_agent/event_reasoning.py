@@ -18,8 +18,8 @@ from foodlog_agent.event_evidence_tool import (
     EVENT_ID_STATE_KEY,
     EVENT_REVISION_STATE_KEY,
 )
-from foodlog_agent.inference_schema import ActivityMealInferenceV1, ContextSourceKind
 from foodlog_agent.prompt import PROMPT_VERSION
+from foodlog_backend.inference_schema import ActivityMealInferenceV1, ContextSourceKind
 from foodlog_backend.model_accounting import (
     CompletedModelInvocation,
     ModelInvocationExecutionError,

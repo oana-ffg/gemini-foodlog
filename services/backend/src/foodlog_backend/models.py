@@ -12,6 +12,8 @@ from pydantic import (
     model_validator,
 )
 
+from .inference_schema import ActivityMealInferenceV1
+
 CameraName = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=80),
@@ -596,9 +598,26 @@ class MealEntry(MealInference):
     id: str
     account_id: str
     capture_id: str
+    event_id: str | None = Field(default=None, min_length=1, max_length=160)
+    occurred_at: datetime | None = None
+    activity_hypothesis: ActivityMealInferenceV1 | None = None
     status: MealStatus = MealStatus.PROVISIONAL
     revision_number: int = Field(default=1, ge=1)
     created_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def structured_hypothesis_matches_materialized_meal(self) -> "MealEntry":
+        if self.occurred_at is not None and (
+            self.occurred_at.tzinfo is None or self.occurred_at.utcoffset() is None
+        ):
+            raise ValueError("meal occurrence timestamp must include a UTC offset")
+        if self.activity_hypothesis is None:
+            return self
+        if self.event_id != self.activity_hypothesis.event_id:
+            raise ValueError("meal event must match its structured activity hypothesis")
+        if self.capture_id not in self.activity_hypothesis.source_capture_ids:
+            raise ValueError("meal capture must belong to its structured activity hypothesis")
+        return self
 
 
 class MealFeedbackRequest(BaseModel):
@@ -644,6 +663,7 @@ class MealRevision(BaseModel):
     number: int = Field(ge=1)
     status: MealStatus
     inference: MealInference
+    activity_hypothesis: ActivityMealInferenceV1 | None = None
     source: MealRevisionSource
     feedback_id: str | None = None
     created_at: datetime = Field(default_factory=utc_now)

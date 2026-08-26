@@ -40,6 +40,7 @@ from .grouping import (
     capture_evidence_order,
     segment_identity,
 )
+from .inference_schema import ActivityMealInferenceV1, InferenceKind
 from .models import (
     Account,
     AccountCreatedOutbox,
@@ -190,6 +191,56 @@ def validate_purchase_identity_alias(
         or alias.reference_hash != sha256(reference.encode()).hexdigest()
     ):
         raise PurchaseIdentityConflict
+
+
+def materialize_activity_hypothesis(
+    *,
+    event: ActivityEvent,
+    captures: list[CaptureRecord],
+    hypothesis: ActivityMealInferenceV1,
+    meal_id: str,
+    revision_number: int,
+    created_at: datetime,
+) -> MealEntry:
+    """Build the journal projection while retaining the complete validated hypothesis."""
+    if hypothesis.event_id != event.id:
+        raise ValueError("Activity hypothesis does not belong to the claimed event")
+    ordered_capture_ids = [capture.id for capture in captures]
+    if hypothesis.source_capture_ids != ordered_capture_ids:
+        raise ValueError("Activity hypothesis does not cover the canonical event evidence")
+    if hypothesis.kind == InferenceKind.UNKNOWN_ACTIVITY:
+        title = "Unknown kitchen activity"
+    else:
+        assert hypothesis.best_guess is not None
+        title = hypothesis.best_guess
+    return MealEntry(
+        id=meal_id,
+        account_id=event.account_id,
+        capture_id=captures[0].id,
+        event_id=event.id,
+        occurred_at=event.last_capture_at,
+        activity_hypothesis=hypothesis,
+        title=title,
+        confidence=Confidence(hypothesis.confidence.value),
+        components=[
+            MealComponent(
+                name=component.name,
+                ingredients=component.ingredients,
+                preparation_methods=component.preparation_methods,
+            )
+            for component in hypothesis.components
+        ],
+        observations=[item.description for item in hypothesis.direct_observations],
+        alternatives=[item.label for item in hypothesis.alternatives],
+        rationale=hypothesis.rationale,
+        clarification_question=(hypothesis.question.prompt if hypothesis.question else None),
+        clarification_reason=(
+            hypothesis.question.justification if hypothesis.question else None
+        ),
+        status=MealStatus.PROVISIONAL,
+        revision_number=revision_number,
+        created_at=created_at,
+    )
 
 
 class Repository(Protocol):
@@ -399,6 +450,17 @@ class Repository(Protocol):
         account_id: str,
         event_id: str,
     ) -> tuple[ActivityEvent, list[CaptureRecord]]: ...
+
+    async def publish_event_inference(
+        self,
+        *,
+        account_id: str,
+        event_id: str,
+        expected_event_revision: int,
+        lease_id: str,
+        lease_owner: str,
+        hypothesis: ActivityMealInferenceV1,
+    ) -> MealEntry | None: ...
 
     async def reserve_model_spend(
         self,
@@ -1604,6 +1666,106 @@ class InMemoryRepository:
                 raise ValueError("Activity event evidence is incomplete")
             return event.model_copy(deep=True), sorted(captures, key=capture_evidence_order)
 
+    async def publish_event_inference(
+        self,
+        *,
+        account_id: str,
+        event_id: str,
+        expected_event_revision: int,
+        lease_id: str,
+        lease_owner: str,
+        hypothesis: ActivityMealInferenceV1,
+    ) -> MealEntry | None:
+        async with self._lock:
+            now = utc_now()
+            job_key = (account_id, event_inference_job_id(event_id))
+            job = self._jobs.get(job_key)
+            if not self._job_has_active_lease(
+                job,
+                expected_subject_revision=expected_event_revision,
+                lease_id=lease_id,
+                lease_owner=lease_owner,
+                now=now,
+            ):
+                return None
+            event_key = (account_id, event_id)
+            event = self._events.get(event_key)
+            if (
+                event is None
+                or event.current_revision != expected_event_revision
+                or event.status != ActivityEventStatus.OPEN
+            ):
+                return None
+            captures = sorted(
+                [
+                    capture
+                    for capture in self._captures.values()
+                    if capture.account_id == account_id and capture.event_id == event_id
+                ],
+                key=capture_evidence_order,
+            )
+            if len(captures) != event.capture_count:
+                raise ValueError("Activity event evidence is incomplete")
+
+            meal_id = event.meal_id or event.id
+            existing_meal = self._meals.get(meal_id)
+            if existing_meal is not None and (
+                existing_meal.account_id != account_id or existing_meal.event_id != event_id
+            ):
+                raise CrossAccountAccess
+            revision_number = (
+                existing_meal.revision_number + 1 if existing_meal is not None else 1
+            )
+            created_at = existing_meal.created_at if existing_meal is not None else now
+            meal = materialize_activity_hypothesis(
+                event=event,
+                captures=captures,
+                hypothesis=hypothesis,
+                meal_id=meal_id,
+                revision_number=revision_number,
+                created_at=created_at,
+            )
+            revision = MealRevision(
+                id=str(uuid4()),
+                account_id=account_id,
+                meal_id=meal.id,
+                number=revision_number,
+                status=meal.status,
+                inference=inference_from_meal(meal),
+                activity_hypothesis=hypothesis,
+                source=MealRevisionSource.INFERENCE,
+                created_at=now,
+            )
+
+            self._meals[meal.id] = meal
+            self._meal_by_capture[meal.capture_id] = meal.id
+            self._meal_revisions.setdefault(meal.id, []).append(revision)
+            self._events[event_key] = event.model_copy(
+                update={
+                    "status": ActivityEventStatus.INFERRED,
+                    "meal_id": meal.id,
+                    "updated_at": now,
+                },
+                deep=True,
+            )
+            for capture in captures:
+                self._captures[capture.id] = capture.model_copy(
+                    update={"status": CaptureStatus.PROCESSED},
+                    deep=True,
+                )
+            assert job is not None
+            self._jobs[job_key] = self._updated_job(
+                job,
+                status=JobStatus.COMPLETED,
+                lease_id=None,
+                lease_owner=None,
+                lease_expires_at=None,
+                last_error_code=None,
+                last_error_message=None,
+                completed_at=now,
+            )
+            return meal.model_copy(deep=True)
+
     async def reserve_model_spend(
         self,
         reservation: ModelSpendReservation,
@@ -1908,6 +2070,7 @@ class InMemoryRepository:
             number=meal.revision_number + 1,
             status=meal_status,
             inference=inference,
+            activity_hypothesis=meal.activity_hypothesis,
             source=MealRevisionSource.USER_FEEDBACK,
             feedback_id=feedback.id,
         )
@@ -1916,6 +2079,9 @@ class InMemoryRepository:
             id=meal.id,
             account_id=meal.account_id,
             capture_id=meal.capture_id,
+            event_id=meal.event_id,
+            occurred_at=meal.occurred_at,
+            activity_hypothesis=meal.activity_hypothesis,
             status=meal_status,
             revision_number=revision.number,
             created_at=meal.created_at,

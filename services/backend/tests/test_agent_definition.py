@@ -1,7 +1,7 @@
 from foodlog_agent import app, root_agent
 from foodlog_agent.agent import MAX_PROVIDER_ATTEMPTS
-from foodlog_agent.inference_schema import ActivityMealInferenceModelOutputV1
 from foodlog_agent.prompt import INSTRUCTION, PROMPT_VERSION
+from foodlog_backend.inference_schema import ActivityMealInferenceModelOutputV1
 
 
 def test_adk_agent_definition_is_importable_without_calling_a_model() -> None:

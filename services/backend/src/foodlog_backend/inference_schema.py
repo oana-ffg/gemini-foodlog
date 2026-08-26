@@ -131,6 +131,7 @@ class FocusedEventQuestion(InferenceModel):
 
 
 class ActivityMealInferenceV1(InferenceModel):
+    """Shared validated contract for model output and persisted journal hypotheses."""
     schema_version: Literal["activity-meal-inference-v1"]
     event_id: str = Field(min_length=1, max_length=160)
     source_capture_ids: list[str] = Field(min_length=1, max_length=120)

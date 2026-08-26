@@ -32,7 +32,7 @@ steps:
         import foodlog_agent.agent
         import foodlog_agent.event_evidence_smoke
         import foodlog_agent.event_evidence_tool
-        import foodlog_agent.inference_schema
+        import foodlog_backend.inference_schema
         import foodlog_agent.prompt
         import foodlog_agent.smoke
 

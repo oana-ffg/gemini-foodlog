@@ -7,8 +7,8 @@ from google.adk.tools import load_artifacts
 from google.genai import types
 
 from foodlog_agent.event_evidence_tool import event_evidence_tool
-from foodlog_agent.inference_schema import ActivityMealInferenceModelOutputV1
 from foodlog_agent.prompt import INSTRUCTION
+from foodlog_backend.inference_schema import ActivityMealInferenceModelOutputV1
 from foodlog_backend.model_probe import DEFAULT_MODEL
 
 MODEL = os.environ.get("FOODLOG_MODEL", DEFAULT_MODEL)

@@ -6,7 +6,7 @@ from copy import deepcopy
 import pytest
 from pydantic import ValidationError
 
-from foodlog_agent.inference_schema import (
+from foodlog_backend.inference_schema import (
     ActivityMealInferenceModelOutputV1,
     ActivityMealInferenceV1,
 )
