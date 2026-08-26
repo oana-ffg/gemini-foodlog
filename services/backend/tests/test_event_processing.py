@@ -187,6 +187,8 @@ def _accounted_hypothesis(
             "prompt": "Was this beef steak or the lamb alternative?",
             "justification": "The visible red meat supports both named candidates.",
             "evidence_ids": ["obs_meat"],
+            "candidate_labels": ["Air-fried steak", "Air-fried lamb"],
+            "impact": "changes_meal_identity",
         }
         if with_question
         else None

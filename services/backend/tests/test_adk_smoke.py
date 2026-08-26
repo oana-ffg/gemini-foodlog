@@ -28,8 +28,13 @@ def test_smoke_bundle_records_prompt_and_exact_source_identities() -> None:
 
 
 def test_prompt_explicitly_couples_questions_to_uncertain_confidence() -> None:
-    assert 'MUST be null when confidence is "likely" or "confident"' in INSTRUCTION
+    assert PROMPT_VERSION == "food-event-v5"
+    assert "question field MUST" in INSTRUCTION
+    assert 'null when confidence is "likely" or "confident"' in INSTRUCTION
     assert 'confidence is exactly "uncertain"' in INSTRUCTION
+    assert "harmless ambiguity" in INSTRUCTION
+    assert "purchase or time-bounded user-note evidence" in INSTRUCTION
+    assert "candidate_labels MUST start with the exact best_guess" in INSTRUCTION
 
 
 def test_smoke_rejects_context_and_knowledge_ids_absent_from_input() -> None:

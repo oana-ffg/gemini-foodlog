@@ -145,6 +145,15 @@
     "FocusedEventQuestion": {
       "additionalProperties": false,
       "properties": {
+        "candidate_labels": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 2,
+          "title": "Candidate Labels",
+          "type": "array"
+        },
         "evidence_ids": {
           "items": {
             "pattern": "^[a-z][a-z0-9_-]{0,63}$",
@@ -154,6 +163,9 @@
           "minItems": 1,
           "title": "Evidence Ids",
           "type": "array"
+        },
+        "impact": {
+          "$ref": "#/$defs/QuestionImpact"
         },
         "justification": {
           "maxLength": 500,
@@ -171,7 +183,9 @@
       "required": [
         "prompt",
         "justification",
-        "evidence_ids"
+        "evidence_ids",
+        "candidate_labels",
+        "impact"
       ],
       "title": "FocusedEventQuestion",
       "type": "object"
@@ -321,6 +335,15 @@
       ],
       "title": "InferenceMealComponent",
       "type": "object"
+    },
+    "QuestionImpact": {
+      "enum": [
+        "changes_meal_identity",
+        "changes_food_trigger_relevance",
+        "changes_reusable_household_distinction"
+      ],
+      "title": "QuestionImpact",
+      "type": "string"
     },
     "ReasoningAssumption": {
       "additionalProperties": false,

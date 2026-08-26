@@ -134,10 +134,6 @@ def event_question_from_hypothesis(
 ) -> ClarificationQuestion | None:
     if hypothesis.question is None:
         return None
-    choices = [hypothesis.best_guess, *(item.label for item in hypothesis.alternatives)]
-    concrete_choices = list(dict.fromkeys(choice for choice in choices if choice))[:8]
-    if len(concrete_choices) < 2:
-        raise ValueError("focused event questions require at least two concrete choices")
     return ClarificationQuestion(
         id=event_question_id(meal.id, revision.number),
         account_id=meal.account_id,
@@ -159,7 +155,7 @@ def event_question_from_hypothesis(
                 for evidence_id in hypothesis.question.evidence_ids
             ),
         ],
-        choices=concrete_choices,
+        choices=hypothesis.question.candidate_labels,
         source_revision_number=revision.number,
         created_at=created_at,
     )

@@ -40,6 +40,12 @@ class UserAction(StrEnum):
     DISCARD_NOT_COOKING = "discard_not_cooking"
 
 
+class QuestionImpact(StrEnum):
+    CHANGES_MEAL_IDENTITY = "changes_meal_identity"
+    CHANGES_FOOD_TRIGGER_RELEVANCE = "changes_food_trigger_relevance"
+    CHANGES_REUSABLE_HOUSEHOLD_DISTINCTION = "changes_reusable_household_distinction"
+
+
 class ContextSourceKind(StrEnum):
     PURCHASE = "purchase"
     HOUSEHOLD_KNOWLEDGE = "household_knowledge"
@@ -114,6 +120,8 @@ class FocusedEventQuestion(InferenceModel):
     prompt: str = Field(min_length=1, max_length=240)
     justification: BoundedText
     evidence_ids: list[Identifier] = Field(min_length=1, max_length=16)
+    candidate_labels: list[str] = Field(min_length=2, max_length=8)
+    impact: QuestionImpact
 
     @model_validator(mode="after")
     def reject_generic_labeling_question(self) -> FocusedEventQuestion:
@@ -127,6 +135,11 @@ class FocusedEventQuestion(InferenceModel):
         )
         if any(phrase in normalized for phrase in forbidden):
             raise ValueError("question must distinguish specific hypotheses, not request a label")
+        normalized_labels = [" ".join(label.casefold().split()) for label in self.candidate_labels]
+        if any(not label for label in normalized_labels):
+            raise ValueError("question candidate labels cannot be blank")
+        if len(set(normalized_labels)) != len(normalized_labels):
+            raise ValueError("question candidate labels must be unique")
         return self
 
 
@@ -219,6 +232,28 @@ class ActivityMealInferenceV1(InferenceModel):
                 raise ValueError("a focused event question requires uncertain confidence")
             if not self.alternatives:
                 raise ValueError("a focused event question requires at least one named alternative")
+            if self.question.candidate_labels[0] != self.best_guess:
+                raise ValueError("a focused event question must lead with the current best guess")
+            alternatives_by_label = {
+                alternative.label: alternative for alternative in self.alternatives
+            }
+            unknown_candidates = (
+                set(self.question.candidate_labels[1:]) - alternatives_by_label.keys()
+            )
+            if unknown_candidates:
+                raise ValueError(
+                    "question candidates must be exact named alternatives: "
+                    f"{sorted(unknown_candidates)}"
+                )
+            question_evidence = set(self.question.evidence_ids)
+            for candidate_label in self.question.candidate_labels[1:]:
+                candidate_evidence = set(
+                    alternatives_by_label[candidate_label].evidence_ids
+                )
+                if not candidate_evidence <= question_evidence:
+                    raise ValueError(
+                        "question evidence must include every cited alternative's evidence"
+                    )
         return self
 
     @staticmethod

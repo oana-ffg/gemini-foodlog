@@ -116,6 +116,82 @@ def test_model_facing_schema_reduces_complexity_without_weakening_validation() -
         ActivityMealInferenceModelOutputV1.model_validate(invalid_payload)
 
 
+def test_planned_duck_context_can_justify_a_material_chicken_versus_duck_question() -> None:
+    payload = deepcopy(base_payload())
+    payload["best_guess"] = "Air-fried chicken"
+    payload["components"][0].update(
+        name="Chicken",
+        ingredients=["pale poultry"],
+        evidence_ids=["obs_meat", "ctx_duck", "ded_meat"],
+    )
+    payload["contextual_evidence"] = [
+        {
+            "id": "ctx_duck",
+            "description": "An active user note says duck may be cooked today.",
+            "source_kind": "user_note",
+            "source_id": "note-planned-duck-001",
+        }
+    ]
+    payload["deductions"][0]["evidence_ids"] = ["obs_meat", "ctx_duck"]
+    payload["alternatives"] = [
+        {
+            "label": "Air-fried duck",
+            "reason": "The pale meat and active planned-duck note make duck plausible.",
+            "evidence_ids": ["obs_meat", "ctx_duck"],
+        }
+    ]
+    payload["question"].update(
+        prompt="Was this the usual chicken or the duck planned for today?",
+        justification="The distinction changes the food identity recorded in the journal.",
+        evidence_ids=["obs_meat", "ctx_duck"],
+        candidate_labels=["Air-fried chicken", "Air-fried duck"],
+        impact="changes_food_trigger_relevance",
+    )
+
+    inference = ActivityMealInferenceV1.model_validate(payload)
+
+    assert inference.question is not None
+    assert inference.question.candidate_labels == ["Air-fried chicken", "Air-fried duck"]
+    assert inference.question.impact == "changes_food_trigger_relevance"
+
+
+def test_harmless_uncertainty_can_remain_visible_without_interrupting_the_user() -> None:
+    payload = deepcopy(base_payload())
+    payload["question"] = None
+    payload["alternatives"] = [
+        {
+            "label": "Pan-seared steak",
+            "reason": "The exact appliance is outside the visible frame.",
+            "evidence_ids": ["obs_meat"],
+        }
+    ]
+
+    inference = ActivityMealInferenceV1.model_validate(payload)
+
+    assert inference.confidence == "uncertain"
+    assert inference.question is None
+    assert inference.alternatives[0].label == "Pan-seared steak"
+
+
+@pytest.mark.parametrize(
+    ("candidate_labels", "message"),
+    [
+        (["Air-fried lamb", "Air-fried steak"], "lead with the current best guess"),
+        (["Air-fried steak", "Roast duck"], "exact named alternatives"),
+        (["Air-fried steak", "Air-fried steak"], "must be unique"),
+    ],
+)
+def test_focused_question_candidates_must_exactly_bind_concrete_hypotheses(
+    candidate_labels: list[str],
+    message: str,
+) -> None:
+    payload = deepcopy(base_payload())
+    payload["question"]["candidate_labels"] = candidate_labels
+
+    with pytest.raises(ValidationError, match=message):
+        ActivityMealInferenceV1.model_validate(payload)
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
@@ -144,6 +220,10 @@ def test_model_facing_schema_reduces_complexity_without_weakening_validation() -
         (
             lambda value: value.update(alternatives=[]),
             "at least one named alternative",
+        ),
+        (
+            lambda value: value["question"].update(evidence_ids=["ctx_order"]),
+            "include every cited alternative's evidence",
         ),
     ],
 )
