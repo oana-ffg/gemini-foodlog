@@ -8,6 +8,11 @@ from google.cloud.firestore_v1.async_client import AsyncClient
 
 from foodlog_backend.errors import QuestionAlreadyAnswered
 from foodlog_backend.firestore_repository import FirestoreRepository
+from foodlog_backend.firestore_repository_smoke import (
+    SMOKE_ACCOUNT_ID,
+    ensure_smoke_fixture,
+    run_smoke,
+)
 from foodlog_backend.models import (
     Confidence,
     MealComponent,
@@ -155,6 +160,41 @@ def test_firestore_meal_question_feedback_and_revisions_are_atomic() -> None:
         assert answered[0].answer == successes[0].question.answer
         assert len(feedback) == 2
         assert all("idempotency_key" not in snapshot.to_dict() for snapshot in feedback)
+        client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.skipif(
+    "FIRESTORE_EMULATOR_HOST" not in os.environ,
+    reason="requires the Firestore emulator",
+)
+def test_deployed_repository_smoke_is_rerunnable_without_duplicate_revisions() -> None:
+    async def scenario() -> None:
+        project_id = "gemini-foodlog-repository-smoke-test"
+        client = AsyncClient(project=project_id)
+        repository = FirestoreRepository(
+            project_id=project_id,
+            public_account_limit=25,
+            trial_image_limit=200,
+            client=client,
+        )
+        await ensure_smoke_fixture(client)
+
+        first = await run_smoke(repository)
+        second = await run_smoke(repository)
+
+        assert first == second
+        assert first["revision_numbers"] == [1, 2, 3]
+        assert first["model_calls"] == 0
+        feedback = [
+            snapshot
+            async for snapshot in client.collection("accounts")
+            .document(SMOKE_ACCOUNT_ID)
+            .collection("feedback")
+            .stream()
+        ]
+        assert len(feedback) == 2
         client.close()
 
     asyncio.run(scenario())

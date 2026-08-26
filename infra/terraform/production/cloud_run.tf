@@ -399,6 +399,62 @@ resource "google_cloud_run_v2_job" "model_spend_smoke" {
   ]
 }
 
+# Rerunnable production proof for account-scoped meal, question, feedback, and
+# immutable-revision persistence. The job writes only a fixed internal fixture.
+resource "google_cloud_run_v2_job" "firestore_repository_smoke" {
+  project  = var.project_id
+  name     = "foodlog-firestore-repository-smoke"
+  location = var.region
+
+  deletion_protection = true
+
+  labels = merge(local.common_labels, {
+    component = "repository-smoke"
+  })
+
+  template {
+    parallelism = 1
+    task_count  = 1
+
+    template {
+      service_account = google_service_account.runtime["worker"].email
+      timeout         = "60s"
+      max_retries     = 0
+
+      containers {
+        name    = "repository-smoke"
+        image   = var.api_container_image
+        command = ["python"]
+        args = [
+          "-m",
+          "foodlog_backend.firestore_repository_smoke",
+          "--confirm-isolated-smoke",
+        ]
+
+        env {
+          name  = "GOOGLE_CLOUD_PROJECT"
+          value = var.project_id
+        }
+
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "512Mi"
+          }
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [
+    google_project_iam_member.datastore_runtime["worker"],
+  ]
+}
+
 resource "google_cloud_run_v2_service" "image" {
   project  = var.project_id
   name     = "foodlog-image"
