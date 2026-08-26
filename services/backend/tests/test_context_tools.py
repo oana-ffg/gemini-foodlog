@@ -12,6 +12,7 @@ from foodlog_agent.context_tools import (
 )
 from foodlog_agent.context_tools_smoke import run_smoke
 from foodlog_agent.event_evidence_tool import ACCOUNT_ID_STATE_KEY
+from foodlog_agent.knowledge_tools import KnowledgeToolsService
 from foodlog_backend.models import (
     CaptureEnvelopeV1,
     Confidence,
@@ -209,11 +210,16 @@ def test_context_tools_are_bounded_active_provenanced_and_account_scoped() -> No
         smoke = await run_smoke(
             account_id=account.id,
             service=ContextToolsService(repository=repository),
+            knowledge_service=KnowledgeToolsService(repository=repository),
         )
         assert smoke["recent_meal_count"] == CONTEXT_TOOL_RESULT_LIMIT
         assert smoke["active_note_ids"] == [active.id]
         assert smoke["unresolved_meal_ids"] == [provisional.id]
         assert smoke["open_question_ids"] == [question.id]
+        assert smoke["knowledge_page_count"] == 0
+        assert smoke["knowledge_page_ids"] == []
+        assert smoke["selected_knowledge_page_id"] is None
+        assert smoke["selected_knowledge_revision_id"] is None
         assert smoke["model_calls"] == 0
 
         foreign_context = StateContext({ACCOUNT_ID_STATE_KEY: foreign.id})

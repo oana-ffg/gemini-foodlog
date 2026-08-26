@@ -134,6 +134,8 @@ def application_visible_model_request(
             "get_recent_meals",
             "get_active_user_context",
             "get_unresolved_reviews",
+            "list_household_knowledge",
+            "read_household_knowledge_page",
             "load_artifacts",
         ],
         "run_config": {
@@ -190,6 +192,17 @@ def _tool_context_source_ids(event: Event) -> dict[ContextSourceKind, set[str]]:
             for note in response.response.get("notes", []):
                 if isinstance(note, dict) and isinstance(note.get("note_id"), str):
                     source_ids[ContextSourceKind.USER_NOTE].add(note["note_id"])
+        elif response.name == "read_household_knowledge_page":
+            page = response.response.get("page")
+            if not isinstance(page, dict):
+                continue
+            revision = page.get("revision")
+            if isinstance(revision, dict) and isinstance(
+                revision.get("revision_id"), str
+            ):
+                source_ids[ContextSourceKind.HOUSEHOLD_KNOWLEDGE].add(
+                    revision["revision_id"]
+                )
     return source_ids
 
 

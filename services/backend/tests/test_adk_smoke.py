@@ -17,7 +17,7 @@ from foodlog_agent.smoke import (
     main,
     smoke_event_bundle,
 )
-from foodlog_backend.inference_schema import ActivityMealInferenceV1
+from foodlog_backend.inference_schema import ActivityMealInferenceV1, ContextSourceKind
 from tests.inference_fixtures import base_payload
 
 
@@ -45,6 +45,8 @@ def test_trace_request_includes_the_application_owned_prompt_tools_and_schema() 
         "get_recent_meals",
         "get_active_user_context",
         "get_unresolved_reviews",
+        "list_household_knowledge",
+        "read_household_knowledge_page",
         "load_artifacts",
     ]
     assert request["response_schema"]["title"] == "ActivityMealInferenceV1"
@@ -59,11 +61,14 @@ def test_trace_request_includes_the_application_owned_prompt_tools_and_schema() 
 
 
 def test_prompt_explicitly_couples_questions_to_uncertain_confidence() -> None:
-    assert PROMPT_VERSION == "food-event-v6"
+    assert PROMPT_VERSION == "food-event-v7"
     assert "call get_current_event_evidence" in INSTRUCTION
     assert "get_recent_meals" in INSTRUCTION
     assert "get_active_user_context" in INSTRUCTION
     assert "get_unresolved_reviews" in INSTRUCTION
+    assert "list_household_knowledge" in INSTRUCTION
+    assert "read_household_knowledge_page" in INSTRUCTION
+    assert "summary is a selection aid, not evidence" in INSTRUCTION
     assert "question field MUST" in INSTRUCTION
     assert 'null when confidence is "likely" or "confident"' in INSTRUCTION
     assert 'confidence is exactly "uncertain"' in INSTRUCTION
@@ -144,6 +149,76 @@ def test_validation_accepts_only_exact_context_ids_returned_by_agent_tools() -> 
         _validate_source_identities(invented, event_bundle(
             event_id="event-001", capture_ids=["capture-001"]
         ), source_ids)
+
+
+def test_only_an_explicit_knowledge_page_read_grants_revision_provenance() -> None:
+    tool_event = Event(
+        invocation_id="invocation-knowledge-tools",
+        author="food_event_reasoner",
+        content=types.Content(
+            role="user",
+            parts=[
+                types.Part.from_function_response(
+                    name="list_household_knowledge",
+                    response={
+                        "pages": [
+                            {
+                                "page_id": "page-summary-only",
+                                "current_revision_id": "revision-summary-only",
+                            }
+                        ]
+                    },
+                ),
+                types.Part.from_function_response(
+                    name="read_household_knowledge_page",
+                    response={
+                        "page": {
+                            "page_id": "page-selected",
+                            "revision": {"revision_id": "revision-selected"},
+                        }
+                    },
+                ),
+            ],
+        ),
+    )
+    source_ids = _tool_context_source_ids(tool_event)
+    assert source_ids[ContextSourceKind.HOUSEHOLD_KNOWLEDGE] == {
+        "revision-selected"
+    }
+
+    payload = base_payload()
+    payload["contextual_evidence"].append(
+        {
+            "id": "ctx_knowledge",
+            "description": "The selected current household page supports steak.",
+            "source_kind": "household_knowledge",
+            "source_id": "revision-selected",
+        }
+    )
+    payload["assumptions"] = [
+        {
+            "id": "asm_knowledge",
+            "description": "The exact selected page says Thursday air-fryer meat is steak.",
+            "knowledge_revision_id": "revision-selected",
+        }
+    ]
+    inference = ActivityMealInferenceV1.model_validate(payload)
+    bundle = event_bundle(
+        event_id="event-001",
+        capture_ids=["capture-001"],
+        context={
+            "recent_purchases": [{"purchase_id": "purchase-001"}],
+            "household_knowledge": [],
+            "recent_meals": [],
+            "user_notes": [],
+        },
+    )
+    _validate_source_identities(inference, bundle, source_ids)
+
+    payload["contextual_evidence"][1]["source_id"] = "revision-summary-only"
+    summary_only = ActivityMealInferenceV1.model_validate(payload)
+    with pytest.raises(RuntimeError, match="invented household_knowledge source ID"):
+        _validate_source_identities(summary_only, bundle, source_ids)
 
 
 def test_final_adk_json_is_revalidated_by_the_product_schema() -> None:

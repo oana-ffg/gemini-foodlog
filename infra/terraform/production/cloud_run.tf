@@ -353,9 +353,9 @@ resource "google_cloud_run_v2_job" "event_evidence_smoke" {
   ]
 }
 
-# Reusable, no-model smoke for tenant-scoped recent meals, active notes, and
-# unresolved review state. It has no default target and requires an explicit
-# private-read confirmation for every execution.
+# Reusable, no-model smoke for tenant-scoped recent meals, active notes,
+# unresolved review state, and bounded household-wiki selection/read. It has no
+# default target and requires an explicit private-read confirmation per execution.
 resource "google_cloud_run_v2_job" "context_tools_smoke" {
   project  = var.project_id
   name     = "foodlog-context-tools-smoke"
