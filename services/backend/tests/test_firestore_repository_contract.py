@@ -131,8 +131,8 @@ def test_firestore_meal_question_feedback_and_revisions_are_atomic() -> None:
         )
         successes = [item for item in outcomes if isinstance(item, QuestionAnswerResult)]
         failures = [item for item in outcomes if isinstance(item, Exception)]
-        assert len(successes) == 1
-        assert len(failures) == 1
+        assert len(successes) == 1, repr(outcomes)
+        assert len(failures) == 1, repr(outcomes)
         assert isinstance(failures[0], QuestionAlreadyAnswered)
         assert successes[0].revision.number == 3
 
@@ -179,6 +179,7 @@ def test_deployed_repository_smoke_is_rerunnable_without_duplicate_revisions() -
             trial_image_limit=200,
             client=client,
         )
+        await ensure_smoke_fixture(client)
         await ensure_smoke_fixture(client)
 
         first = await run_smoke(repository)

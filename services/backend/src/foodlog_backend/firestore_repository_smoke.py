@@ -39,7 +39,7 @@ async def _ensure_document(reference, expected: dict[str, Any]) -> None:
             snapshot = await reference.get()
     data = snapshot.to_dict() or {}
     for field, value in expected.items():
-        if field == "created_at":
+        if field in {"created_at", "updated_at"}:
             continue
         if data.get(field) != value:
             raise RuntimeError(f"Smoke fixture collision at {reference.path}: {field}")
