@@ -26,6 +26,7 @@ steps:
         import foodlog_backend.image_worker_app
         import foodlog_backend.main
         import foodlog_backend.model_probe
+        import foodlog_backend.model_spend_smoke
         import foodlog_backend.notification_app
         import foodlog_agent.agent
         import foodlog_agent.event_evidence_smoke

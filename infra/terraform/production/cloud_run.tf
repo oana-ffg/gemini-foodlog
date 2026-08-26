@@ -12,6 +12,8 @@ variable "api_container_image" {
 }
 
 locals {
+  model_spend_limit_dkk_micros = 400000000
+
   api_runtime_environment = {
     FOODLOG_ALLOWED_ORIGINS = jsonencode([
       "https://gemini-foodlog-2026.firebaseapp.com",
@@ -28,6 +30,7 @@ locals {
     FOODLOG_INBOUND_MAIL_DOMAIN           = "${var.project_id}.appspotmail.com"
     FOODLOG_LAUNCH_CONSENT_POLICY_VERSION = "launch-interest-v1"
     FOODLOG_MEDIA_BUCKET                  = google_storage_bucket.retained["media"].name
+    FOODLOG_MODEL_SPEND_LIMIT_DKK_MICROS  = tostring(local.model_spend_limit_dkk_micros)
     FOODLOG_NOTIFICATION_TOPIC            = google_pubsub_topic.events["notification"].id
     FOODLOG_PUBLIC_ACCOUNT_LIMIT          = "25"
     FOODLOG_STORAGE_BACKEND               = "gcp"
@@ -243,6 +246,11 @@ resource "google_cloud_run_v2_job" "adk_agent_smoke" {
         }
 
         env {
+          name  = "FOODLOG_MODEL_SPEND_LIMIT_DKK_MICROS"
+          value = tostring(local.model_spend_limit_dkk_micros)
+        }
+
+        env {
           name  = "FOODLOG_MEDIA_BUCKET"
           value = google_storage_bucket.retained["media"].name
         }
@@ -336,6 +344,58 @@ resource "google_cloud_run_v2_job" "event_evidence_smoke" {
 
   depends_on = [
     google_storage_bucket_iam_policy.retained["media"],
+  ]
+}
+
+# Isolated, no-model proof that the Firestore transaction rejects a reservation
+# above a deliberately tiny ceiling before any provider invocation can occur.
+resource "google_cloud_run_v2_job" "model_spend_smoke" {
+  project  = var.project_id
+  name     = "foodlog-model-spend-smoke"
+  location = var.region
+
+  deletion_protection = true
+
+  labels = merge(local.common_labels, {
+    component = "model-spend-smoke"
+  })
+
+  template {
+    parallelism = 1
+    task_count  = 1
+
+    template {
+      service_account = google_service_account.runtime["worker"].email
+      timeout         = "60s"
+      max_retries     = 0
+
+      containers {
+        name    = "model-spend-smoke"
+        image   = var.api_container_image
+        command = ["python"]
+        args    = ["-m", "foodlog_backend.model_spend_smoke"]
+
+        env {
+          name  = "GOOGLE_CLOUD_PROJECT"
+          value = var.project_id
+        }
+
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "512Mi"
+          }
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [
+    google_project_iam_member.datastore_runtime["worker"],
   ]
 }
 

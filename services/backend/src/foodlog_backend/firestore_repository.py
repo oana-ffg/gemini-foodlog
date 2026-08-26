@@ -24,6 +24,8 @@ from .errors import (
     InvalidDeviceCredential,
     JobIdentityConflict,
     MealNotFound,
+    ModelSpendLimitExceeded,
+    ModelSpendReservationConflict,
     PurchaseIdentityConflict,
     QuestionAlreadyAnswered,
     QuestionNotFound,
@@ -69,6 +71,7 @@ from .models import (
     MealFeedbackResult,
     MealRevision,
     MealRevisionSource,
+    ModelSpendReservation,
     NotificationOutboxStatus,
     Purchase,
     PurchaseDocument,
@@ -145,12 +148,24 @@ class FirestoreRepository:
         public_account_limit: int,
         trial_image_limit: int,
         unlimited_owner_user_ids: set[str] | None = None,
+        model_spend_limit_dkk_micros: int = 400_000_000,
+        model_spend_ledger_id: str = "model_spend",
         client: AsyncClient | None = None,
     ) -> None:
+        if model_spend_limit_dkk_micros < 1:
+            raise ValueError("model spend limit must be positive")
+        if (
+            not model_spend_ledger_id
+            or len(model_spend_ledger_id) > 120
+            or not model_spend_ledger_id.replace("_", "").isalnum()
+        ):
+            raise ValueError("model spend ledger ID is invalid")
         self._client = client or AsyncClient(project=project_id)
         self._public_account_limit = public_account_limit
         self._trial_image_limit = trial_image_limit
         self._unlimited_owner_user_ids = frozenset(unlimited_owner_user_ids or set())
+        self._model_spend_limit_dkk_micros = model_spend_limit_dkk_micros
+        self._model_spend_ledger_id = model_spend_ledger_id
 
     def _identity(self, owner_user_id: str):
         return self._client.collection("identities").document(owner_user_id)
@@ -166,6 +181,9 @@ class FirestoreRepository:
 
     def _outbox(self, event_id: str):
         return self._client.collection("outbox").document(event_id)
+
+    def _model_spend_ledger(self):
+        return self._client.collection("system").document(self._model_spend_ledger_id)
 
     async def provision_account(self, owner_user_id: str) -> Account:
         account_id = str(uuid4())
@@ -1792,6 +1810,77 @@ class FirestoreRepository:
         if len(captures) != event.capture_count:
             raise ValueError("Activity event evidence is incomplete")
         return event, sorted(captures, key=capture_evidence_order)
+
+    async def reserve_model_spend(
+        self,
+        reservation: ModelSpendReservation,
+    ) -> ModelSpendReservation:
+        ledger_ref = self._model_spend_ledger()
+        reservation_ref = ledger_ref.collection("reservations").document(reservation.id)
+        account_ref = self._account(reservation.account_id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def reserve(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
+            ledger_snapshot = await ledger_ref.get(transaction=transaction)
+            existing_snapshot = await reservation_ref.get(transaction=transaction)
+            if (
+                not account_snapshot.exists
+                or account_snapshot.get("status") != "active"
+                or account_snapshot.get("id") != reservation.account_id
+            ):
+                raise AccountNotProvisioned
+            if existing_snapshot.exists:
+                existing = _model(existing_snapshot, ModelSpendReservation)
+                if (
+                    existing.account_id != reservation.account_id
+                    or existing.event_id != reservation.event_id
+                    or existing.reserved_dkk_micros != reservation.reserved_dkk_micros
+                ):
+                    raise ModelSpendReservationConflict
+                return existing
+
+            if ledger_snapshot.exists:
+                stored_limit = ledger_snapshot.get("limit_dkk_micros")
+                reserved_total = ledger_snapshot.get("reserved_dkk_micros")
+                if (
+                    not isinstance(stored_limit, int)
+                    or isinstance(stored_limit, bool)
+                    or stored_limit < 1
+                    or not isinstance(reserved_total, int)
+                    or isinstance(reserved_total, bool)
+                    or reserved_total < 0
+                ):
+                    raise ValueError("Model spend ledger is invalid")
+                effective_limit = min(
+                    stored_limit,
+                    self._model_spend_limit_dkk_micros,
+                )
+                created_at = ledger_snapshot.get("created_at")
+            else:
+                effective_limit = self._model_spend_limit_dkk_micros
+                reserved_total = 0
+                created_at = reservation.created_at
+
+            proposed_total = reserved_total + reservation.reserved_dkk_micros
+            if proposed_total > effective_limit:
+                raise ModelSpendLimitExceeded
+            transaction.create(reservation_ref, _document(reservation))
+            transaction.set(
+                ledger_ref,
+                {
+                    "schema_version": 1,
+                    "currency": "DKK",
+                    "limit_dkk_micros": effective_limit,
+                    "reserved_dkk_micros": proposed_total,
+                    "created_at": created_at,
+                    "updated_at": reservation.created_at,
+                },
+            )
+            return reservation
+
+        return await reserve(transaction)
 
     async def save_meal(self, *, account_id: str, meal: MealEntry) -> MealEntry:
         if meal.account_id != account_id:

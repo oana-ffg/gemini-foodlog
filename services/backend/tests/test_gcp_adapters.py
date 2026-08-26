@@ -206,6 +206,15 @@ def test_legacy_trial_entitlement_without_mode_remains_readable() -> None:
     assert account.accepted_image_count == 1
 
 
+def test_model_spend_limit_is_exact_integer_micro_dkk_configuration() -> None:
+    settings = Settings(model_spend_limit_dkk_micros=400_000_000)
+
+    assert settings.model_spend_limit_dkk_micros == 400_000_000
+
+    with pytest.raises(ValidationError):
+        Settings(model_spend_limit_dkk_micros=0)
+
+
 def test_gcs_adapter_writes_once_and_round_trips_private_bytes() -> None:
     client = FakeStorageClient()
     store = GCSObjectStore(

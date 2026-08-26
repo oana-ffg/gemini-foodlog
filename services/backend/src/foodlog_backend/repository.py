@@ -20,6 +20,8 @@ from .errors import (
     InvalidDeviceCredential,
     JobIdentityConflict,
     MealNotFound,
+    ModelSpendLimitExceeded,
+    ModelSpendReservationConflict,
     PurchaseDocumentConflict,
     PurchaseIdentityConflict,
     QuestionAlreadyAnswered,
@@ -70,6 +72,7 @@ from .models import (
     MealRevision,
     MealRevisionSource,
     MealStatus,
+    ModelSpendReservation,
     NotificationOutboxStatus,
     Purchase,
     PurchaseDocument,
@@ -394,6 +397,11 @@ class Repository(Protocol):
         event_id: str,
     ) -> tuple[ActivityEvent, list[CaptureRecord]]: ...
 
+    async def reserve_model_spend(
+        self,
+        reservation: ModelSpendReservation,
+    ) -> ModelSpendReservation: ...
+
     async def save_meal(self, *, account_id: str, meal: MealEntry) -> MealEntry: ...
 
     async def open_question(
@@ -448,10 +456,16 @@ class InMemoryRepository:
         public_account_limit: int,
         trial_image_limit: int,
         unlimited_owner_user_ids: set[str] | None = None,
+        model_spend_limit_dkk_micros: int = 400_000_000,
     ) -> None:
+        if model_spend_limit_dkk_micros < 1:
+            raise ValueError("model spend limit must be positive")
         self._public_account_limit = public_account_limit
         self._trial_image_limit = trial_image_limit
         self._unlimited_owner_user_ids = frozenset(unlimited_owner_user_ids or set())
+        self._model_spend_limit_dkk_micros = model_spend_limit_dkk_micros
+        self._model_spend_reserved_dkk_micros = 0
+        self._model_spend_reservations: dict[str, ModelSpendReservation] = {}
         self._accounts: dict[str, Account] = {}
         self._account_by_owner: dict[str, str] = {}
         self._notification_outbox: dict[str, AccountCreatedOutbox] = {}
@@ -1575,6 +1589,33 @@ class InMemoryRepository:
             if len(captures) != event.capture_count:
                 raise ValueError("Activity event evidence is incomplete")
             return event.model_copy(deep=True), sorted(captures, key=capture_evidence_order)
+
+    async def reserve_model_spend(
+        self,
+        reservation: ModelSpendReservation,
+    ) -> ModelSpendReservation:
+        async with self._lock:
+            if reservation.account_id not in self._accounts:
+                raise AccountNotProvisioned
+            existing = self._model_spend_reservations.get(reservation.id)
+            if existing is not None:
+                if (
+                    existing.account_id != reservation.account_id
+                    or existing.event_id != reservation.event_id
+                    or existing.reserved_dkk_micros != reservation.reserved_dkk_micros
+                ):
+                    raise ModelSpendReservationConflict
+                return existing.model_copy(deep=True)
+            proposed_total = (
+                self._model_spend_reserved_dkk_micros
+                + reservation.reserved_dkk_micros
+            )
+            if proposed_total > self._model_spend_limit_dkk_micros:
+                raise ModelSpendLimitExceeded
+            stored = reservation.model_copy(deep=True)
+            self._model_spend_reservations[stored.id] = stored
+            self._model_spend_reserved_dkk_micros = proposed_total
+            return stored.model_copy(deep=True)
 
     async def save_meal(self, *, account_id: str, meal: MealEntry) -> MealEntry:
         if meal.account_id != account_id:

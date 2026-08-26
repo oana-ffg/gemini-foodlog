@@ -70,6 +70,14 @@ class ActivityEventNotFound(FoodLogError):
     pass
 
 
+class ModelSpendLimitExceeded(FoodLogError):
+    pass
+
+
+class ModelSpendReservationConflict(FoodLogError):
+    pass
+
+
 class IdempotencyConflict(FoodLogError):
     pass
 

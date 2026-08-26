@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     grouping_policy_version: str = Field(default="temporal-v1", min_length=1, max_length=80)
     grouping_quiet_seconds: int = Field(default=30, ge=1, le=3_600)
     grouping_reopen_seconds: int = Field(default=7_200, ge=1, le=86_400)
+    model_spend_limit_dkk_micros: int = Field(default=400_000_000, ge=1)
     preview_shared_secret: str | None = Field(default=None, min_length=32)
     gcp_project_id: str | None = None
     firebase_project_id: str | None = None

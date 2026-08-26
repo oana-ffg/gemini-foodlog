@@ -167,6 +167,9 @@ def create_app(
             public_account_limit=active_settings.public_account_limit,
             trial_image_limit=active_settings.trial_image_limit,
             unlimited_owner_user_ids=active_settings.unlimited_owner_user_ids,
+            model_spend_limit_dkk_micros=(
+                active_settings.model_spend_limit_dkk_micros
+            ),
         )
         object_store: ObjectStore = GCSObjectStore(
             project_id=active_settings.gcp_project_id,
@@ -177,6 +180,9 @@ def create_app(
             public_account_limit=active_settings.public_account_limit,
             trial_image_limit=active_settings.trial_image_limit,
             unlimited_owner_user_ids=active_settings.unlimited_owner_user_ids,
+            model_spend_limit_dkk_micros=(
+                active_settings.model_spend_limit_dkk_micros
+            ),
         )
         object_store = InMemoryObjectStore()
     if active_settings.environment == "production":

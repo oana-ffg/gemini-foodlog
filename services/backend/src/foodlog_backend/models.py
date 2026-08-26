@@ -491,6 +491,26 @@ class ActivityEvent(BaseModel):
         return self
 
 
+class ModelSpendReservation(BaseModel):
+    id: str = Field(
+        min_length=8,
+        max_length=160,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    account_id: str = Field(min_length=1, max_length=128)
+    event_id: str = Field(min_length=1, max_length=160)
+    reserved_dkk_micros: int = Field(ge=1)
+    status: Literal["reserved"] = "reserved"
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("created_at")
+    @classmethod
+    def reservation_timestamp_has_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("model spend reservation timestamp must include a UTC offset")
+        return value
+
+
 class MealComponent(BaseModel):
     name: str
     ingredients: list[str]

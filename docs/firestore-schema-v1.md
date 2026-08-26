@@ -44,10 +44,21 @@ subcollections.
 `accounts/{account_id}/entitlements/current` stores the trial contract:
 `entitlement_mode` (`trial` or `unlimited`), `accepted_image_count`, nullable
 `trial_image_limit` (200 for public trials and null only for explicitly configured
-internal/judge accounts), `model_spend_reserved`, and `model_spend_limit`. Capture acceptance updates this document transactionally
+internal/judge accounts). Capture acceptance updates this document transactionally
 with the idempotency record. The 25-account/200-image prototype limits make the
 single entitlement counter safe; sharded counters are deferred until demonstrated
 write contention exists.
+
+`system/model_spend` is the global Gemini hard-stop ledger. It stores currency
+`DKK`, integer `limit_dkk_micros`, integer `reserved_dkk_micros`, and timestamps.
+`system/model_spend/reservations/{reservation_id}` stores immutable account/event
+scope, the reserved micro-DKK amount, status, and creation time. A Firestore
+transaction reads the account, ledger, and idempotent reservation before atomically
+creating the reservation and increasing the total. A lower persisted ceiling wins
+over deployment configuration; a reservation that would exceed it performs no
+write and fails before model invocation. The separate `system/model_spend_smoke`
+ledger is an isolated, deliberately tiny deployed rejection proof and is never
+consulted by production inference.
 
 ## Account-scoped collections
 
