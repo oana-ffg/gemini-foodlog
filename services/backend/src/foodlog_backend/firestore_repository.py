@@ -16,6 +16,8 @@ from .errors import (
     AccountCapacityReached,
     AccountNotProvisioned,
     ActivityEventNotFound,
+    AiTraceConflict,
+    AiTraceNotFound,
     CameraNotFound,
     CaptureNotFound,
     CrossAccountAccess,
@@ -55,6 +57,7 @@ from .models import (
     ActivityEvent,
     ActivityEventStatus,
     ActivitySegment,
+    AiTraceRecord,
     BrowserCamera,
     Camera,
     CameraStatus,
@@ -2178,6 +2181,45 @@ class FirestoreRepository:
             return usage
 
         return await record(transaction)
+
+    async def record_ai_trace(self, trace: AiTraceRecord) -> AiTraceRecord:
+        account_ref = self._account(trace.account_id)
+        trace_ref = self._collection(trace.account_id, "traces").document(trace.id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def record(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
+            existing_snapshot = await trace_ref.get(transaction=transaction)
+            if (
+                not account_snapshot.exists
+                or account_snapshot.get("status") != "active"
+                or account_snapshot.get("id") != trace.account_id
+            ):
+                raise AccountNotProvisioned
+            if existing_snapshot.exists:
+                existing = _model(existing_snapshot, AiTraceRecord)
+                if existing != trace:
+                    raise AiTraceConflict
+                return existing
+            transaction.create(trace_ref, _document(trace))
+            return trace
+
+        return await record(transaction)
+
+    async def ai_trace_for_account(
+        self,
+        *,
+        account_id: str,
+        trace_id: str,
+    ) -> AiTraceRecord:
+        snapshot = await self._collection(account_id, "traces").document(trace_id).get()
+        if not snapshot.exists:
+            raise AiTraceNotFound
+        trace = _model(snapshot, AiTraceRecord)
+        if trace.account_id != account_id or trace.id != trace_id:
+            raise AiTraceNotFound
+        return trace
 
     async def save_meal(self, *, account_id: str, meal: MealEntry) -> MealEntry:
         if meal.account_id != account_id:

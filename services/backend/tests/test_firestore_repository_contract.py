@@ -9,6 +9,8 @@ import pytest
 from google.cloud.firestore_v1.async_client import AsyncClient
 
 from foodlog_backend.errors import (
+    AiTraceConflict,
+    AiTraceNotFound,
     IdempotencyConflict,
     InvalidMealFeedbackTransition,
     KnowledgePageNotFound,
@@ -29,6 +31,7 @@ from foodlog_backend.inference_schema import ActivityMealInferenceV1
 from foodlog_backend.models import (
     ActivityEvent,
     ActivityEventStatus,
+    AiTraceRecord,
     CaptureRecord,
     CaptureStatus,
     Confidence,
@@ -61,6 +64,73 @@ from foodlog_backend.models import (
     utc_now,
 )
 from tests.inference_fixtures import base_payload
+
+
+@pytest.mark.skipif(
+    "FIRESTORE_EMULATOR_HOST" not in os.environ,
+    reason="requires the Firestore emulator",
+)
+def test_firestore_ai_trace_index_is_immutable_and_tenant_scoped() -> None:
+    async def scenario() -> None:
+        project_id = "gemini-foodlog-trace-contract-test"
+        client = AsyncClient(project=project_id)
+        repository = FirestoreRepository(
+            project_id=project_id,
+            public_account_limit=25,
+            trial_image_limit=200,
+            client=client,
+        )
+        owner = await repository.provision_account("trace-contract-owner")
+        foreign = await repository.provision_account("trace-contract-foreign")
+        started_at = utc_now()
+        trace_id = f"trace-{'a' * 64}"
+        trace = AiTraceRecord(
+            id=trace_id,
+            account_id=owner.id,
+            event_id="trace-contract-event",
+            reservation_id=f"model-{'b' * 64}",
+            root_trace_id=trace_id,
+            object_key=f"accounts/{owner.id}/traces/{trace_id}.json.gz",
+            content_sha256="c" * 64,
+            compressed_size=321,
+            status="succeeded",
+            model="gemini-3.6-flash",
+            model_version="gemini-3.6-flash-001",
+            provider_invocation_id="trace-contract-provider-invocation",
+            region="eu",
+            prompt_version="food-event-v5",
+            purpose="event_inference",
+            retry_attempt=0,
+            evaluation=False,
+            prompt_tokens=100,
+            response_tokens=20,
+            thinking_tokens=5,
+            total_tokens=125,
+            actual_dkk_micros=1_000,
+            latency_ms=500,
+            started_at=started_at,
+            completed_at=started_at + timedelta(milliseconds=500),
+            created_at=started_at + timedelta(milliseconds=500),
+        )
+
+        assert await repository.record_ai_trace(trace) == trace
+        assert await repository.record_ai_trace(trace) == trace
+        assert await repository.ai_trace_for_account(
+            account_id=owner.id,
+            trace_id=trace.id,
+        ) == trace
+        with pytest.raises(AiTraceNotFound):
+            await repository.ai_trace_for_account(
+                account_id=foreign.id,
+                trace_id=trace.id,
+            )
+        with pytest.raises(AiTraceConflict):
+            await repository.record_ai_trace(
+                trace.model_copy(update={"compressed_size": trace.compressed_size + 1})
+            )
+        client.close()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.skipif(

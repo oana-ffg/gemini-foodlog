@@ -53,6 +53,7 @@ locals {
     FOODLOG_IMAGE_GROUPING_REOPEN_SECONDS = "7200"
     FOODLOG_IMAGE_PUBLIC_ACCOUNT_LIMIT    = "25"
     FOODLOG_IMAGE_TRIAL_IMAGE_LIMIT       = "200"
+    FOODLOG_TRACE_BUCKET                  = google_storage_bucket.retained["traces"].name
   }
 }
 
@@ -253,6 +254,11 @@ resource "google_cloud_run_v2_job" "adk_agent_smoke" {
         env {
           name  = "FOODLOG_MEDIA_BUCKET"
           value = google_storage_bucket.retained["media"].name
+        }
+
+        env {
+          name  = "FOODLOG_TRACE_BUCKET"
+          value = google_storage_bucket.retained["traces"].name
         }
 
         env {

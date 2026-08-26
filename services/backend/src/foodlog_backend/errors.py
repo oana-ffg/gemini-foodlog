@@ -90,6 +90,14 @@ class ModelInvocationAlreadyReconciled(FoodLogError):
     pass
 
 
+class AiTraceConflict(FoodLogError):
+    pass
+
+
+class AiTraceNotFound(FoodLogError):
+    pass
+
+
 class IdempotencyConflict(FoodLogError):
     pass
 

@@ -12,6 +12,8 @@ from .errors import (
     AccountCapacityReached,
     AccountNotProvisioned,
     ActivityEventNotFound,
+    AiTraceConflict,
+    AiTraceNotFound,
     CameraNotFound,
     CaptureNotFound,
     CrossAccountAccess,
@@ -57,6 +59,7 @@ from .models import (
     ActivityEvent,
     ActivityEventStatus,
     ActivitySegment,
+    AiTraceRecord,
     BrowserCamera,
     Camera,
     CameraStatus,
@@ -676,6 +679,15 @@ class Repository(Protocol):
 
     async def record_model_usage(self, usage: ModelUsageRecord) -> ModelUsageRecord: ...
 
+    async def record_ai_trace(self, trace: AiTraceRecord) -> AiTraceRecord: ...
+
+    async def ai_trace_for_account(
+        self,
+        *,
+        account_id: str,
+        trace_id: str,
+    ) -> AiTraceRecord: ...
+
     async def save_meal(self, *, account_id: str, meal: MealEntry) -> MealEntry: ...
 
     async def open_question(
@@ -798,6 +810,7 @@ class InMemoryRepository:
         self._model_spend_actual_dkk_micros = 0
         self._model_spend_reservations: dict[str, ModelSpendReservation] = {}
         self._model_usage: dict[str, ModelUsageRecord] = {}
+        self._ai_traces: dict[tuple[str, str], AiTraceRecord] = {}
         self._accounts: dict[str, Account] = {}
         self._account_by_owner: dict[str, str] = {}
         self._notification_outbox: dict[str, AccountCreatedOutbox] = {}
@@ -2117,6 +2130,31 @@ class InMemoryRepository:
             self._model_usage[stored.reservation_id] = stored
             self._model_spend_actual_dkk_micros += stored.actual_dkk_micros
             return stored.model_copy(deep=True)
+
+    async def record_ai_trace(self, trace: AiTraceRecord) -> AiTraceRecord:
+        async with self._lock:
+            if trace.account_id not in self._accounts:
+                raise AccountNotProvisioned
+            key = (trace.account_id, trace.id)
+            existing = self._ai_traces.get(key)
+            if existing is not None:
+                if existing != trace:
+                    raise AiTraceConflict
+                return existing.model_copy(deep=True)
+            self._ai_traces[key] = trace.model_copy(deep=True)
+            return trace.model_copy(deep=True)
+
+    async def ai_trace_for_account(
+        self,
+        *,
+        account_id: str,
+        trace_id: str,
+    ) -> AiTraceRecord:
+        async with self._lock:
+            trace = self._ai_traces.get((account_id, trace_id))
+            if trace is None:
+                raise AiTraceNotFound
+            return trace.model_copy(deep=True)
 
     async def save_meal(self, *, account_id: str, meal: MealEntry) -> MealEntry:
         if meal.account_id != account_id:

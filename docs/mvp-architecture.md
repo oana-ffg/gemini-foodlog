@@ -742,9 +742,25 @@ Quota reservation, idempotency claims, and revision publication use Firestore tr
 
 The prototype retains full application-visible AI traces for debugging. A trace includes the exact model request assembled by the application, account-scoped tool calls and returned context, model responses, validation failures, retry lineage, model and prompt versions, token usage, latency, and the IDs of the event and evidence involved. It does not include hidden model reasoning, and the application does not request chain-of-thought.
 
+The persisted request is the application-owned ADK configuration: selected model,
+system instruction, user event bundle, response schema, tool declarations, and run
+configuration. Each emitted ADK event is recorded after recursive redaction. Parts
+marked as thoughts and thought signatures are omitted; authorization, cookies,
+credentials, API keys, secrets, and string token fields are replaced; common bearer,
+JWT, and Google API-key shapes are scrubbed from free text. Inline binary artifacts
+are represented only by MIME-adjacent event context, byte size, and SHA-256 rather
+than duplicated. Token counts—including a numeric thinking-token count—remain useful
+metadata without retaining the corresponding hidden content.
+
 Trace reads are an operator capability and must be audited and access-controlled. Any retained trace that contains account data is part of that account's personal-data inventory and must be considered in account export, future deletion, and retention behavior. Secrets, bearer tokens, camera credentials, and raw authorization headers are always redacted before persistence even when full traces are enabled.
 
 Full trace payloads are stored as compressed JSON objects under account-scoped paths in private Cloud Storage. Firestore stores searchable trace metadata, lifecycle state, and the GCS object reference. This avoids Firestore's per-document size limit, uses infrastructure the MVP already operates, and adds no fixed-cost database service. Trace content is not duplicated into ordinary Cloud Logging; operational logs contain trace IDs, timing, token and cost metrics, status, and redacted errors.
+
+Compression is deterministic, object creation is immutable, and the Firestore index
+stores the compressed object SHA-256. Reads verify the hash, gzip/JSON structure,
+schema version, account, and trace identity before returning any content. The common
+object boundary and trace repository both require the active account, so a foreign
+trace ID cannot cross the tenant boundary.
 
 Prototype traces are retained indefinitely alongside the other retained debugging evidence. Replacing indefinite trace retention with a fixed expiry is tracked in the [post-hackathon backlog](post-hackathon-backlog.md).
 

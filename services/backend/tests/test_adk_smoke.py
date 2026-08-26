@@ -5,6 +5,7 @@ from google.genai import types
 from foodlog_agent.event_reasoning import (
     InvalidModelOutputError,
     _validated_response,
+    application_visible_model_request,
     event_bundle,
 )
 from foodlog_agent.prompt import INSTRUCTION, PROMPT_VERSION
@@ -25,6 +26,29 @@ def test_smoke_bundle_records_prompt_and_exact_source_identities() -> None:
     assert bundle["event"]["event_id"] == "adk-smoke-event-v1"
     assert bundle["event"]["captures"][0]["capture_id"] == "adk-smoke-capture-v1"
     assert MAX_LLM_CALLS == 3
+
+
+def test_trace_request_includes_the_application_owned_prompt_tools_and_schema() -> None:
+    bundle = smoke_event_bundle()
+    request = application_visible_model_request(
+        bundle=bundle,
+        purpose="deployment_smoke",
+        event_revision=7,
+    )
+
+    assert request["model"] == "gemini-3.6-flash"
+    assert request["system_instruction"] == INSTRUCTION
+    assert request["user_content"] == bundle
+    assert request["tools"] == ["get_current_event_evidence", "load_artifacts"]
+    assert request["response_schema"]["title"] == "ActivityMealInferenceV1"
+    assert request["run_config"] == {
+        "max_llm_calls": 3,
+        "custom_metadata": {
+            "prompt_version": PROMPT_VERSION,
+            "purpose": "deployment_smoke",
+            "event_revision": 7,
+        },
+    }
 
 
 def test_prompt_explicitly_couples_questions_to_uncertain_confidence() -> None:

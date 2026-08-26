@@ -46,6 +46,7 @@ class AdkSmokeRecord:
     retry_attempt: int
     evaluation: bool
     reservation_id: str
+    trace_id: str | None
     reserved_dkk_micros: int
     actual_dkk_micros: int
     response: dict[str, Any]
@@ -109,6 +110,7 @@ async def run_smoke(
         retry_attempt=usage.retry_attempt,
         evaluation=usage.evaluation,
         reservation_id=accounted.reservation.id,
+        trace_id=accounted.trace_id,
         reserved_dkk_micros=accounted.reservation.reserved_dkk_micros,
         actual_dkk_micros=usage.actual_dkk_micros,
         response=inference.model_dump(mode="json"),

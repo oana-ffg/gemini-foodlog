@@ -708,6 +708,60 @@ class ModelUsageRecord(BaseModel):
         return self
 
 
+class AiTraceRecord(BaseModel):
+    id: str = Field(pattern=r"^trace-[0-9a-f]{64}$")
+    schema_version: Literal["application-visible-ai-trace-v1"] = (
+        "application-visible-ai-trace-v1"
+    )
+    account_id: str = Field(min_length=1, max_length=128)
+    event_id: str = Field(min_length=1, max_length=160)
+    reservation_id: str = Field(min_length=8, max_length=160)
+    root_trace_id: str = Field(pattern=r"^trace-[0-9a-f]{64}$")
+    parent_trace_id: str | None = Field(default=None, pattern=r"^trace-[0-9a-f]{64}$")
+    object_key: str = Field(min_length=1, max_length=512)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    compressed_size: int = Field(ge=1, le=10_000_000)
+    status: Literal["succeeded", "failed"]
+    model: str = Field(min_length=1, max_length=120)
+    model_version: str | None = Field(default=None, min_length=1, max_length=160)
+    provider_invocation_id: str | None = Field(default=None, min_length=1, max_length=200)
+    region: str = Field(min_length=1, max_length=80)
+    prompt_version: str | None = Field(default=None, min_length=1, max_length=120)
+    purpose: str = Field(min_length=1, max_length=80)
+    retry_attempt: int = Field(ge=0, le=20)
+    evaluation: bool
+    prompt_tokens: int = Field(ge=0)
+    response_tokens: int = Field(ge=0)
+    thinking_tokens: int = Field(ge=0)
+    total_tokens: int = Field(ge=0)
+    actual_dkk_micros: int = Field(ge=0)
+    latency_ms: int = Field(ge=0)
+    error_code: str | None = Field(default=None, min_length=1, max_length=160)
+    started_at: datetime
+    completed_at: datetime
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def trace_metadata_is_consistent(self) -> "AiTraceRecord":
+        for timestamp in (self.started_at, self.completed_at, self.created_at):
+            if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+                raise ValueError("AI trace timestamps must include a UTC offset")
+        if self.completed_at < self.started_at:
+            raise ValueError("AI trace completion cannot precede its start")
+        expected_key = f"accounts/{self.account_id}/traces/{self.id}.json.gz"
+        if self.object_key != expected_key:
+            raise ValueError("AI trace object key does not match its account and trace ID")
+        if self.id == self.root_trace_id and self.parent_trace_id is not None:
+            raise ValueError("root AI trace cannot have a parent")
+        if self.id != self.root_trace_id and self.parent_trace_id != self.root_trace_id:
+            raise ValueError("child AI trace must link directly to its root trace")
+        if self.status == "succeeded" and self.error_code is not None:
+            raise ValueError("successful AI trace cannot contain an error code")
+        if self.status == "failed" and self.error_code is None:
+            raise ValueError("failed AI trace requires an error code")
+        return self
+
+
 class MealComponent(BaseModel):
     name: str
     ingredients: list[str]

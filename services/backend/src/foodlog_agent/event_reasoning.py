@@ -18,13 +18,20 @@ from foodlog_agent.event_evidence_tool import (
     EVENT_ID_STATE_KEY,
     EVENT_REVISION_STATE_KEY,
 )
-from foodlog_agent.prompt import PROMPT_VERSION
+from foodlog_agent.prompt import INSTRUCTION, PROMPT_VERSION
+from foodlog_backend.ai_traces import (
+    AiTraceCapture,
+    AiTraceService,
+    trace_service_from_environment,
+)
+from foodlog_backend.errors import ModelInvocationAlreadyReconciled
 from foodlog_backend.inference_schema import ActivityMealInferenceV1, ContextSourceKind
 from foodlog_backend.model_accounting import (
     CompletedModelInvocation,
     ModelInvocationExecutionError,
     ModelInvocationSpec,
     execute_accounted_model_invocation,
+    reservation_id_for_invocation,
 )
 from foodlog_backend.models import (
     ActivityEvent,
@@ -57,6 +64,7 @@ class AccountedEventInference:
     inference: ActivityMealInferenceV1
     reservation: ModelSpendReservation
     usage: ModelUsageRecord
+    trace_id: str | None = None
 
 
 class InvalidModelOutputError(RuntimeError):
@@ -107,6 +115,30 @@ def event_bundle(
             "validation_report": repair_feedback,
         }
     return bundle
+
+
+def application_visible_model_request(
+    *,
+    bundle: dict[str, Any],
+    purpose: str,
+    event_revision: int,
+) -> dict[str, Any]:
+    """Describe the exact application-owned inputs ADK assembles for the run."""
+    return {
+        "model": MODEL,
+        "system_instruction": INSTRUCTION,
+        "user_content": bundle,
+        "response_schema": ActivityMealInferenceV1.model_json_schema(mode="validation"),
+        "tools": ["get_current_event_evidence", "load_artifacts"],
+        "run_config": {
+            "max_llm_calls": MAX_LLM_CALLS,
+            "custom_metadata": {
+                "prompt_version": PROMPT_VERSION,
+                "purpose": purpose,
+                "event_revision": event_revision,
+            },
+        },
+    }
 
 
 def _structured_response(event: Event) -> ActivityMealInferenceV1:
@@ -189,6 +221,7 @@ async def run_accounted_event_inference(
     evaluation: bool,
     context: dict[str, list[dict[str, Any]]] | None = None,
     repair_feedback: str | None = None,
+    trace_service: AiTraceService | None = None,
 ) -> AccountedEventInference:
     capture_ids = [capture.id for capture in captures]
     if not capture_ids or len(capture_ids) != event.capture_count:
@@ -221,6 +254,13 @@ async def run_accounted_event_inference(
         retry_attempt=retry_attempt,
         evaluation=evaluation,
     )
+    model_request = application_visible_model_request(
+        bundle=bundle,
+        purpose=purpose,
+        event_revision=event.current_revision,
+    )
+    trace_capture = AiTraceCapture(spec=spec, request=model_request)
+    active_trace_service = trace_service or trace_service_from_environment(repository)
 
     async def invoke() -> CompletedModelInvocation[ActivityMealInferenceV1]:
         runner = InMemoryRunner(app=app)
@@ -255,14 +295,11 @@ async def run_accounted_event_inference(
                         parts=[types.Part.from_text(text=serialized_bundle)],
                     ),
                     run_config=RunConfig(
-                        max_llm_calls=MAX_LLM_CALLS,
-                        custom_metadata={
-                            "prompt_version": PROMPT_VERSION,
-                            "purpose": purpose,
-                            "event_revision": event.current_revision,
-                        },
+                        max_llm_calls=model_request["run_config"]["max_llm_calls"],
+                        custom_metadata=model_request["run_config"]["custom_metadata"],
                     ),
                 ):
+                    trace_capture.record_event(adk_event)
                     if adk_event.invocation_id or adk_event.model_version:
                         latest_identified_event = adk_event
                     if adk_event.usage_metadata is not None:
@@ -314,13 +351,38 @@ async def run_accounted_event_inference(
                 total_tokens=total_tokens,
             ) from error
 
-    accounted = await execute_accounted_model_invocation(
-        repository=repository,
-        spec=spec,
-        invoke=invoke,
-    )
+    try:
+        accounted = await execute_accounted_model_invocation(
+            repository=repository,
+            spec=spec,
+            invoke=invoke,
+        )
+    except Exception as error:
+        if active_trace_service is not None and not isinstance(
+            error, ModelInvocationAlreadyReconciled
+        ):
+            usage = await repository.model_usage_for_reservation(
+                account_id=spec.account_id,
+                reservation_id=reservation_id_for_invocation(spec),
+            )
+            if usage is not None:
+                await active_trace_service.persist(
+                    capture=trace_capture,
+                    usage=usage,
+                    error=error.__cause__ or error,
+                )
+        raise
+    trace_id = None
+    if active_trace_service is not None:
+        trace = await active_trace_service.persist(
+            capture=trace_capture,
+            usage=accounted.usage,
+            response=accounted.result.model_dump(mode="json"),
+        )
+        trace_id = trace.id
     return AccountedEventInference(
         inference=accounted.result,
         reservation=accounted.reservation,
         usage=accounted.usage,
+        trace_id=trace_id,
     )

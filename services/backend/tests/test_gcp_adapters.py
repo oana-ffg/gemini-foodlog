@@ -124,6 +124,7 @@ def test_firestore_paths_are_account_scoped() -> None:
         "question_responses",
         "questions",
         "segments",
+        "traces",
     ):
         assert repository._collection("account-b", collection).path == (
             f"accounts/account-b/{collection}"
