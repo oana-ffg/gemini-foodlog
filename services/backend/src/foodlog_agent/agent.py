@@ -6,20 +6,10 @@ from google.adk.models import Gemini
 from google.genai import types
 
 from foodlog_agent.inference_schema import ActivityMealInferenceV1
+from foodlog_agent.prompt import INSTRUCTION
 from foodlog_backend.model_probe import DEFAULT_MODEL
 
 MODEL = os.environ.get("FOODLOG_MODEL", DEFAULT_MODEL)
-
-INSTRUCTION = """
-You are the Gemini FoodLog kitchen-event reasoning agent.
-
-Infer only what the supplied event evidence supports. Keep direct visual observations,
-contextual evidence, and deductions distinct. Return a concise structured meal hypothesis with
-a qualitative confidence label, plausible alternatives, independently correctable components,
-and a user-facing rationale. Never invent a purchase, ingredient, household habit, or consumed
-portion. If the evidence is insufficient, preserve the best provisional guess and uncertainty.
-Never reveal hidden chain-of-thought; provide only evidence-linked conclusions.
-""".strip()
 
 root_agent = Agent(
     name="food_event_reasoner",
@@ -30,6 +20,12 @@ root_agent = Agent(
     instruction=INSTRUCTION,
     tools=[],
     output_schema=ActivityMealInferenceV1,
+    generate_content_config=types.GenerateContentConfig(
+        max_output_tokens=2_048,
+        thinking_config=types.ThinkingConfig(
+            thinking_level=types.ThinkingLevel.MINIMAL,
+        ),
+    ),
 )
 
 app = App(root_agent=root_agent, name="foodlog_agent")

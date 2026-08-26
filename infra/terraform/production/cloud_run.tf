@@ -211,6 +211,71 @@ resource "google_cloud_run_v2_job" "vertex_access_smoke" {
   ]
 }
 
+resource "google_cloud_run_v2_job" "adk_agent_smoke" {
+  project  = var.project_id
+  name     = "foodlog-adk-agent-smoke"
+  location = var.region
+
+  deletion_protection = true
+
+  labels = merge(local.common_labels, {
+    component = "adk-agent-smoke"
+  })
+
+  template {
+    parallelism = 1
+    task_count  = 1
+
+    template {
+      service_account = google_service_account.runtime["worker"].email
+      timeout         = "120s"
+      max_retries     = 0
+
+      containers {
+        name    = "agent-smoke"
+        image   = var.api_container_image
+        command = ["python"]
+        args    = ["-m", "foodlog_agent.smoke", "--confirm-billable-smoke"]
+
+        env {
+          name  = "FOODLOG_MODEL"
+          value = "gemini-3.6-flash"
+        }
+
+        env {
+          name  = "GOOGLE_CLOUD_LOCATION"
+          value = "eu"
+        }
+
+        env {
+          name  = "GOOGLE_CLOUD_PROJECT"
+          value = var.project_id
+        }
+
+        env {
+          name  = "GOOGLE_GENAI_USE_VERTEXAI"
+          value = "true"
+        }
+
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "512Mi"
+          }
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [
+    google_project_iam_member.worker_vertex_model_invoker,
+  ]
+}
+
 resource "google_cloud_run_v2_service" "image" {
   project  = var.project_id
   name     = "foodlog-image"

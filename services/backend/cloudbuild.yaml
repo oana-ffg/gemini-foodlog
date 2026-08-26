@@ -29,6 +29,8 @@ steps:
         import foodlog_backend.notification_app
         import foodlog_agent.agent
         import foodlog_agent.inference_schema
+        import foodlog_agent.prompt
+        import foodlog_agent.smoke
 
         manifest = "\n".join(
             sorted(
