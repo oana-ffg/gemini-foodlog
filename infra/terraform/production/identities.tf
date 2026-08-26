@@ -68,6 +68,32 @@ resource "google_project_iam_member" "datastore_runtime" {
   member  = "serviceAccount:${google_service_account.runtime[each.value].email}"
 }
 
+# Foundation-model generation requires only prediction. A project custom role
+# avoids the model/dataset administration permissions bundled into
+# roles/aiplatform.user and is granted only to the image/agent worker.
+resource "google_project_iam_custom_role" "vertex_model_invoker" {
+  project     = var.project_id
+  role_id     = "foodlogVertexModelInvoker"
+  title       = "FoodLog Vertex model invoker"
+  description = "Invoke a configured Vertex AI model without administering Vertex resources."
+  permissions = ["aiplatform.endpoints.predict"]
+  stage       = "GA"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [
+    google_project_service.required["aiplatform.googleapis.com"],
+  ]
+}
+
+resource "google_project_iam_member" "worker_vertex_model_invoker" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.vertex_model_invoker.name
+  member  = "serviceAccount:${google_service_account.runtime["worker"].email}"
+}
+
 # App Engine uses the selected version identity for its managed Cloud Build. The
 # grant is limited to writing build logs and the platform-created App Engine image
 # repository; it cannot write the API's Cloud Run repository or administer builds.

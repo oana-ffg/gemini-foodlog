@@ -154,6 +154,63 @@ resource "google_cloud_run_v2_service_iam_member" "public_api_transport" {
   member   = "allUsers"
 }
 
+# Reusable, scale-to-zero security smoke. It makes no request unless explicitly
+# executed and runs under the same keyless identity as the production agent.
+resource "google_cloud_run_v2_job" "vertex_access_smoke" {
+  project  = var.project_id
+  name     = "foodlog-vertex-access-smoke"
+  location = var.region
+
+  deletion_protection = true
+
+  labels = merge(local.common_labels, {
+    component = "vertex-access-smoke"
+  })
+
+  template {
+    parallelism = 1
+    task_count  = 1
+
+    template {
+      service_account = google_service_account.runtime["worker"].email
+      timeout         = "60s"
+      max_retries     = 0
+
+      containers {
+        name    = "probe"
+        image   = var.api_container_image
+        command = ["python"]
+        args = [
+          "-m",
+          "foodlog_backend.model_probe",
+          "--project",
+          var.project_id,
+          "--location",
+          "eu",
+          "--model",
+          "gemini-3.6-flash",
+          "--confirm-billable-probe",
+        ]
+
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "512Mi"
+          }
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [
+    google_project_iam_member.worker_vertex_model_invoker,
+  ]
+}
+
 resource "google_cloud_run_v2_service" "image" {
   project  = var.project_id
   name     = "foodlog-image"
