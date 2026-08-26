@@ -23,8 +23,10 @@ from .errors import (
     InvalidDeviceCredential,
     JobIdentityConflict,
     MealNotFound,
+    PurchaseIdentityConflict,
     QuestionAlreadyAnswered,
     QuestionNotFound,
+    RawMailNotFound,
     TrialQuotaExhausted,
     WaitlistUnavailable,
 )
@@ -66,6 +68,11 @@ from .models import (
     MealRevision,
     MealRevisionSource,
     NotificationOutboxStatus,
+    Purchase,
+    PurchaseDocument,
+    PurchaseDocumentCandidate,
+    PurchaseIdentityAlias,
+    PurchaseIdentityResult,
     QuestionAnswerRequest,
     QuestionAnswerResult,
     QuestionStatus,
@@ -77,9 +84,12 @@ from .models import (
 )
 from .repository import (
     inference_from_meal,
+    purchase_identity_aliases,
     revised_inference,
     validate_capture_scope,
     validate_enqueueable_job,
+    validate_purchase_document_retry,
+    validate_purchase_identity_alias,
 )
 
 ENTITLEMENT_MODE_VALUES = frozenset(item.value for item in EntitlementMode)
@@ -526,6 +536,178 @@ class FirestoreRepository:
             return inbound_address
 
         return await create(transaction)
+
+    async def attach_purchase_document(
+        self,
+        candidate: PurchaseDocumentCandidate,
+    ) -> PurchaseIdentityResult:
+        account_ref = self._account(candidate.account_id)
+        raw_mail_ref = self._collection(candidate.account_id, "raw_mail").document(
+            candidate.raw_mail_id
+        )
+        document_ref = self._collection(candidate.account_id, "purchase_documents").document(
+            candidate.raw_mail_id
+        )
+        alias_specs = purchase_identity_aliases(candidate)
+        alias_refs = [
+            (
+                alias_id,
+                kind,
+                reference,
+                self._collection(candidate.account_id, "purchase_identities").document(alias_id),
+            )
+            for alias_id, kind, reference in alias_specs
+        ]
+        candidate_purchase_id = str(uuid4())
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def attach(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
+            raw_mail_snapshot = await raw_mail_ref.get(transaction=transaction)
+            document_snapshot = await document_ref.get(transaction=transaction)
+            if not account_snapshot.exists or account_snapshot.get("status") != "active":
+                raise AccountNotProvisioned
+            raw_mail_data = raw_mail_snapshot.to_dict() or {}
+            if (
+                not raw_mail_snapshot.exists
+                or raw_mail_data.get("account_id") != candidate.account_id
+                or raw_mail_data.get("status") != "published"
+                or raw_mail_data.get("content_sha256") != candidate.raw_content_sha256
+            ):
+                raise RawMailNotFound
+
+            if document_snapshot.exists:
+                document = _model(document_snapshot, PurchaseDocument)
+                validate_purchase_document_retry(document, candidate)
+                existing_aliases = []
+                for alias_id, kind, reference, alias_ref in alias_refs:
+                    alias_snapshot = await alias_ref.get(transaction=transaction)
+                    if not alias_snapshot.exists:
+                        raise PurchaseIdentityConflict
+                    alias = _model(alias_snapshot, PurchaseIdentityAlias)
+                    validate_purchase_identity_alias(
+                        alias,
+                        candidate=candidate,
+                        alias_id=alias_id,
+                        kind=kind,
+                        reference=reference,
+                    )
+                    existing_aliases.append(alias)
+                purchase_snapshot = (
+                    await self._collection(candidate.account_id, "purchases")
+                    .document(document.purchase_id)
+                    .get(transaction=transaction)
+                )
+                if not purchase_snapshot.exists:
+                    raise PurchaseIdentityConflict
+                purchase = _model(purchase_snapshot, Purchase)
+                if (
+                    purchase.account_id != candidate.account_id
+                    or purchase.merchant != candidate.merchant
+                    or any(alias.purchase_id != purchase.id for alias in existing_aliases)
+                ):
+                    raise PurchaseIdentityConflict
+                return PurchaseIdentityResult(
+                    purchase=purchase,
+                    document=document,
+                    duplicate=True,
+                )
+
+            alias_snapshots = []
+            for alias_id, kind, reference, alias_ref in alias_refs:
+                snapshot = await alias_ref.get(transaction=transaction)
+                if snapshot.exists:
+                    alias = _model(snapshot, PurchaseIdentityAlias)
+                    validate_purchase_identity_alias(
+                        alias,
+                        candidate=candidate,
+                        alias_id=alias_id,
+                        kind=kind,
+                        reference=reference,
+                    )
+                    alias_snapshots.append((alias, alias_ref))
+
+            purchase_ids = {alias.purchase_id for alias, _ in alias_snapshots}
+            if len(purchase_ids) > 1:
+                raise PurchaseIdentityConflict
+            purchase_id = next(iter(purchase_ids), candidate_purchase_id)
+            purchase_ref = self._collection(candidate.account_id, "purchases").document(purchase_id)
+            purchase_snapshot = await purchase_ref.get(transaction=transaction)
+            now = utc_now()
+            if purchase_ids:
+                if not purchase_snapshot.exists:
+                    raise PurchaseIdentityConflict
+                purchase = _model(purchase_snapshot, Purchase)
+                if (
+                    purchase.account_id != candidate.account_id
+                    or purchase.merchant != candidate.merchant
+                ):
+                    raise PurchaseIdentityConflict
+            else:
+                if purchase_snapshot.exists:
+                    raise PurchaseIdentityConflict
+                purchase = Purchase(
+                    id=purchase_id,
+                    account_id=candidate.account_id,
+                    merchant=candidate.merchant,
+                    created_at=now,
+                    updated_at=now,
+                )
+
+            existing_alias_ids = {alias.id for alias, _ in alias_snapshots}
+            for alias_id, kind, reference, alias_ref in alias_refs:
+                if alias_id not in existing_alias_ids:
+                    transaction.create(
+                        alias_ref,
+                        _document(
+                            PurchaseIdentityAlias(
+                                id=alias_id,
+                                account_id=candidate.account_id,
+                                purchase_id=purchase.id,
+                                merchant=candidate.merchant,
+                                kind=kind,
+                                reference_hash=sha256(reference.encode()).hexdigest(),
+                                created_at=now,
+                            )
+                        ),
+                    )
+
+            revision_number = purchase.revision_count + 1
+            document = PurchaseDocument(
+                id=candidate.raw_mail_id,
+                account_id=candidate.account_id,
+                purchase_id=purchase.id,
+                raw_mail_id=candidate.raw_mail_id,
+                raw_content_sha256=candidate.raw_content_sha256,
+                merchant=candidate.merchant,
+                kind=candidate.kind,
+                revision_number=revision_number,
+                order_reference=candidate.order_reference,
+                invoice_reference=candidate.invoice_reference,
+                created_at=now,
+            )
+            purchase = purchase.model_copy(
+                update={"revision_count": revision_number, "updated_at": now}
+            )
+            if purchase_snapshot.exists:
+                transaction.update(
+                    purchase_ref,
+                    {
+                        "revision_count": purchase.revision_count,
+                        "updated_at": purchase.updated_at,
+                    },
+                )
+            else:
+                transaction.create(purchase_ref, _document(purchase))
+            transaction.create(document_ref, _document(document))
+            return PurchaseIdentityResult(
+                purchase=purchase,
+                document=document,
+                duplicate=False,
+            )
+
+        return await attach(transaction)
 
     async def record_launch_mail_consent(
         self,

@@ -70,7 +70,9 @@ belong in private Cloud Storage rather than Firestore.
 | `questions/{question_id}` | Agent-surfaced event or pattern question | `kind` (`event_clarification` or `pattern_hypothesis`), optional `meal_id`, prompt <= 500 chars, reason <= 2,000 chars, evidence refs <= 20, tentative claim, `status`, answer <= 2,000 chars. Generic “what meal were you cooking?” questions are not permitted: event corrections belong on the meal card. |
 | `feedback/{feedback_id}` | Immutable user confirmation/correction/discard | optional `meal_id`/`question_id`, `kind`, actual value <= 500 chars, explanation <= 4,000 chars, `idempotency_hash`; never overwrites the original inference. |
 | `knowledge/{knowledge_id}` | Revisable household facts and hypotheses | statement <= 2,000 chars, `kind`, confidence, status, evidence refs <= 50, supersedes ID, learned-from feedback/question IDs; conflicts create revisions, not silent replacement. |
-| `purchases/{purchase_id}` | Normalized invoice/order | merchant, order/reference hash, purchased/delivery timestamps, currency, bounded totals, `raw_mail_id`; line items are separate documents. |
+| `purchases/{purchase_id}` | One retailer purchase lifecycle | merchant, bounded `revision_count`, creation/update timestamps; order/invoice aliases and source documents remain separate so the root never grows arrays. |
+| `purchase_identities/{sha256_merchant_kind_reference}` | Exact business-identity alias | purchase ID, merchant, kind (`order` or `invoice`), reference hash, creation time; aliases are account-scoped, contain no plaintext reference, and conflicting aliases never trigger an automatic merge. |
+| `purchase_documents/{raw_mail_id}` | One immutable normalized source-document identity | purchase ID, raw-mail/content hashes, merchant, document kind, revision number, and optional normalized retailer-labelled order/invoice references; an exact transport retry returns this document while changed interpretation conflicts. |
 | `purchases/{purchase_id}/items/{item_id}` | One purchased product | normalized name <= 500 chars, quantity/unit, amount, category, source text <= 1,000 chars. |
 | `raw_mail/{mail_id}` | MIME transport metadata and immutable object link | recipient, nullable sender <= 500 chars, normalized sender address, nullable subject <= 500 chars, nullable normalized message-ID hash, fixed `trust_class` (`untrusted_external`), bounded MIME part/attachment counts and accepted content-type list, content SHA-256, byte size, server-derived `object_key`, transport status (`reserved`, `stored`, or `published`), bounded publish attempt/provider IDs, and timestamps; MIME bytes stay in GCS and parsing adds separate normalized purchase evidence. |
 | `traces/{trace_id}` | Agent-run index | event/job IDs, model and prompt versions, status, started/completed timestamps, token/cost counters, immutable GCS `object_key` and SHA-256; full trace stays in GCS. |
@@ -104,6 +106,11 @@ belong in private Cloud Storage rather than Firestore.
    structure and supported passive content before storage, publishes no message body
    or attachment content, and never promotes email text into executable agent
    instructions.
+10. Purchase identity uses only explicit account/merchant/order/invoice aliases. A
+    raw-message retry is one immutable source document; later documents sharing an
+    exact alias append revisions. Identifier-free or merely similar documents remain
+    separate, and a message bridging aliases already owned by different purchases
+    fails closed instead of merging history.
 
 ## Query and index contract
 

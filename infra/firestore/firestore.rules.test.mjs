@@ -43,6 +43,8 @@ const DOCUMENT_PATHS = [
   "accounts/account-a/feedback/feedback-a",
   "accounts/account-a/knowledge/knowledge-a",
   "accounts/account-a/purchases/purchase-a",
+  "accounts/account-a/purchase_identities/identity-a",
+  "accounts/account-a/purchase_documents/mail-a",
   "accounts/account-a/purchases/purchase-a/items/item-a",
   "accounts/account-a/raw_mail/mail-a",
   "accounts/account-a/traces/trace-a",
@@ -59,6 +61,8 @@ const COLLECTION_GROUPS = [
   "questions",
   "knowledge",
   "purchases",
+  "purchase_identities",
+  "purchase_documents",
   "jobs",
 ];
 

@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Literal
+from unicodedata import normalize as unicode_normalize
 
 from pydantic import (
     BaseModel,
@@ -98,6 +99,12 @@ class InboundMailAddressStatus(StrEnum):
     ACTIVE = "active"
 
 
+class PurchaseDocumentKind(StrEnum):
+    UNKNOWN = "unknown"
+    ORDER_CONFIRMATION = "order_confirmation"
+    FINAL_RECEIPT = "final_receipt"
+
+
 class Account(BaseModel):
     id: str
     owner_user_id: str
@@ -132,6 +139,69 @@ class InboundMailRoute(BaseModel):
     address_id: Literal["current"] = "current"
     status: InboundMailAddressStatus = InboundMailAddressStatus.ACTIVE
     created_at: datetime = Field(default_factory=utc_now)
+
+
+def normalize_purchase_reference(value: str) -> str:
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise ValueError("purchase references cannot contain control characters")
+    normalized = " ".join(unicode_normalize("NFKC", value).split()).casefold()
+    if not normalized or len(normalized) > 128:
+        raise ValueError("purchase references must contain 1-128 normalized characters")
+    return normalized
+
+
+class PurchaseDocumentCandidate(BaseModel):
+    account_id: str = Field(min_length=1, max_length=128)
+    raw_mail_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    raw_content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    merchant: Literal["nemlig"] = "nemlig"
+    kind: PurchaseDocumentKind = PurchaseDocumentKind.UNKNOWN
+    order_reference: str | None = Field(default=None, min_length=1, max_length=128)
+    invoice_reference: str | None = Field(default=None, min_length=1, max_length=128)
+
+    @field_validator("order_reference", "invoice_reference", mode="before")
+    @classmethod
+    def normalize_reference(cls, value: str | None) -> str | None:
+        return normalize_purchase_reference(value) if value is not None else None
+
+
+class Purchase(BaseModel):
+    id: str = Field(min_length=1, max_length=128)
+    account_id: str = Field(min_length=1, max_length=128)
+    merchant: Literal["nemlig"] = "nemlig"
+    revision_count: int = Field(default=0, ge=0)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class PurchaseDocument(BaseModel):
+    id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    account_id: str = Field(min_length=1, max_length=128)
+    purchase_id: str = Field(min_length=1, max_length=128)
+    raw_mail_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    raw_content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    merchant: Literal["nemlig"] = "nemlig"
+    kind: PurchaseDocumentKind = PurchaseDocumentKind.UNKNOWN
+    revision_number: int = Field(ge=1)
+    order_reference: str | None = Field(default=None, min_length=1, max_length=128)
+    invoice_reference: str | None = Field(default=None, min_length=1, max_length=128)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class PurchaseIdentityAlias(BaseModel):
+    id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    account_id: str = Field(min_length=1, max_length=128)
+    purchase_id: str = Field(min_length=1, max_length=128)
+    merchant: Literal["nemlig"] = "nemlig"
+    kind: Literal["order", "invoice"]
+    reference_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class PurchaseIdentityResult(BaseModel):
+    purchase: Purchase
+    document: PurchaseDocument
+    duplicate: bool
 
 
 class AccountCreatedOutbox(BaseModel):

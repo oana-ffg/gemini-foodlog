@@ -49,6 +49,14 @@
       ]
     },
     {
+      "collectionGroup": "purchase_documents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "purchase_id", "order": "ASCENDING" },
+        { "fieldPath": "revision_number", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "knowledge",
       "queryScope": "COLLECTION",
       "fields": [
@@ -90,6 +98,8 @@
     { "collectionGroup": "knowledge", "fieldPath": "statement", "indexes": [] },
     { "collectionGroup": "knowledge", "fieldPath": "evidence_refs", "indexes": [] },
     { "collectionGroup": "items", "fieldPath": "source_text", "indexes": [] },
+    { "collectionGroup": "purchase_documents", "fieldPath": "order_reference", "indexes": [] },
+    { "collectionGroup": "purchase_documents", "fieldPath": "invoice_reference", "indexes": [] },
     { "collectionGroup": "raw_mail", "fieldPath": "object_key", "indexes": [] },
     { "collectionGroup": "traces", "fieldPath": "object_key", "indexes": [] },
     { "collectionGroup": "jobs", "fieldPath": "payload", "indexes": [] },

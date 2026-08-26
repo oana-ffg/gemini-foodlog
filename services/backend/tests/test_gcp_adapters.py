@@ -116,6 +116,9 @@ def test_firestore_paths_are_account_scoped() -> None:
         "feedback",
         "jobs",
         "meals",
+        "purchase_documents",
+        "purchase_identities",
+        "purchases",
         "questions",
         "segments",
     ):

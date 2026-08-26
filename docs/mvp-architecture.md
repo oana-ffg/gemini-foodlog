@@ -279,6 +279,15 @@ Deduplication occurs at two levels:
 
 When an order confirmation and receipt share a trustworthy retailer order identifier, they become ordered revisions of the same purchase record. The parser must not merge messages merely because dates, totals, or item lists look similar. If no reliable business identifier connects them, it preserves separate records and surfaces the reconciliation uncertainty rather than inventing a match.
 
+The persistence contract makes that distinction transactional. One raw-mail ID can
+create exactly one immutable purchase document. Exact retries return it; a changed
+interpretation of the same raw evidence fails. Account-scoped hashed aliases map only
+explicit retailer-labelled order or invoice references to a purchase lifecycle. A new
+document sharing one exact alias appends a revision and may add another exact alias.
+If its order and invoice aliases already point at different lifecycles, ingestion fails
+closed and preserves both rather than guessing a merge. Identifier-free documents
+always begin separate lifecycles.
+
 ### 6.1 Selected gateway
 
 Google App Engine's inbound Mail API receives messages on the deployed application's `appspotmail.com` mail domain. Each account gets a unique, opaque local address on that domain.

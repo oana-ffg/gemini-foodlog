@@ -19,8 +19,11 @@ from .errors import (
     InvalidDeviceCredential,
     JobIdentityConflict,
     MealNotFound,
+    PurchaseDocumentConflict,
+    PurchaseIdentityConflict,
     QuestionAlreadyAnswered,
     QuestionNotFound,
+    RawMailNotFound,
     TrialQuotaExhausted,
     WaitlistUnavailable,
 )
@@ -66,6 +69,11 @@ from .models import (
     MealRevisionSource,
     MealStatus,
     NotificationOutboxStatus,
+    Purchase,
+    PurchaseDocument,
+    PurchaseDocumentCandidate,
+    PurchaseIdentityAlias,
+    PurchaseIdentityResult,
     QuestionAnswerRequest,
     QuestionAnswerResult,
     QuestionStatus,
@@ -105,6 +113,75 @@ def validate_capture_scope(
         raise ValueError("Unsupported capture content type")
     if object_key != f"accounts/{account.id}/captures/{capture_id}.{extension}":
         raise CrossAccountAccess
+
+
+def purchase_identity_alias_id(*, merchant: str, kind: str, reference: str) -> str:
+    return sha256(f"{merchant}\0{kind}\0{reference}".encode()).hexdigest()
+
+
+def purchase_identity_aliases(
+    candidate: PurchaseDocumentCandidate,
+) -> list[tuple[str, str, str]]:
+    aliases = []
+    if candidate.order_reference is not None:
+        aliases.append(
+            (
+                purchase_identity_alias_id(
+                    merchant=candidate.merchant,
+                    kind="order",
+                    reference=candidate.order_reference,
+                ),
+                "order",
+                candidate.order_reference,
+            )
+        )
+    if candidate.invoice_reference is not None:
+        aliases.append(
+            (
+                purchase_identity_alias_id(
+                    merchant=candidate.merchant,
+                    kind="invoice",
+                    reference=candidate.invoice_reference,
+                ),
+                "invoice",
+                candidate.invoice_reference,
+            )
+        )
+    return aliases
+
+
+def validate_purchase_document_retry(
+    existing: PurchaseDocument,
+    candidate: PurchaseDocumentCandidate,
+) -> None:
+    if (
+        existing.account_id != candidate.account_id
+        or existing.raw_mail_id != candidate.raw_mail_id
+        or existing.raw_content_sha256 != candidate.raw_content_sha256
+        or existing.merchant != candidate.merchant
+        or existing.kind != candidate.kind
+        or existing.order_reference != candidate.order_reference
+        or existing.invoice_reference != candidate.invoice_reference
+    ):
+        raise PurchaseDocumentConflict
+
+
+def validate_purchase_identity_alias(
+    alias: PurchaseIdentityAlias,
+    *,
+    candidate: PurchaseDocumentCandidate,
+    alias_id: str,
+    kind: str,
+    reference: str,
+) -> None:
+    if (
+        alias.id != alias_id
+        or alias.account_id != candidate.account_id
+        or alias.merchant != candidate.merchant
+        or alias.kind != kind
+        or alias.reference_hash != sha256(reference.encode()).hexdigest()
+    ):
+        raise PurchaseIdentityConflict
 
 
 class Repository(Protocol):
@@ -167,6 +244,11 @@ class Repository(Protocol):
         address: str,
         address_hash: str,
     ) -> InboundMailAddress: ...
+
+    async def attach_purchase_document(
+        self,
+        candidate: PurchaseDocumentCandidate,
+    ) -> PurchaseIdentityResult: ...
 
     async def record_launch_mail_consent(
         self,
@@ -368,6 +450,10 @@ class InMemoryRepository:
         self._waitlist_by_email_hash: dict[str, WaitlistEntry] = {}
         self._inbound_mail_addresses: dict[str, InboundMailAddress] = {}
         self._inbound_mail_routes: dict[str, InboundMailRoute] = {}
+        self._published_raw_mail: dict[tuple[str, str], str] = {}
+        self._purchases: dict[tuple[str, str], Purchase] = {}
+        self._purchase_documents: dict[tuple[str, str], PurchaseDocument] = {}
+        self._purchase_aliases: dict[tuple[str, str], PurchaseIdentityAlias] = {}
         self._device_cameras: dict[str, DeviceCamera] = {}
         self._device_credentials: dict[str, DeviceCredentialRecord] = {}
         self._cameras: dict[str, BrowserCamera] = {}
@@ -629,6 +715,143 @@ class InMemoryRepository:
                 created_at=created_at,
             )
             return inbound_address.model_copy(deep=True)
+
+    async def seed_published_raw_mail(
+        self,
+        *,
+        account_id: str,
+        raw_mail_id: str,
+        content_sha256: str,
+    ) -> None:
+        """Seed transport evidence in the in-memory adapter used by local workers/tests."""
+
+        async with self._lock:
+            if account_id not in self._accounts:
+                raise AccountNotProvisioned
+            self._published_raw_mail[(account_id, raw_mail_id)] = content_sha256
+
+    async def attach_purchase_document(
+        self,
+        candidate: PurchaseDocumentCandidate,
+    ) -> PurchaseIdentityResult:
+        async with self._lock:
+            if candidate.account_id not in self._accounts:
+                raise AccountNotProvisioned
+            raw_content_sha256 = self._published_raw_mail.get(
+                (candidate.account_id, candidate.raw_mail_id)
+            )
+            if raw_content_sha256 != candidate.raw_content_sha256:
+                raise RawMailNotFound
+
+            document_key = (candidate.account_id, candidate.raw_mail_id)
+            existing_document = self._purchase_documents.get(document_key)
+            if existing_document is not None:
+                validate_purchase_document_retry(existing_document, candidate)
+                purchase = self._purchases.get(
+                    (candidate.account_id, existing_document.purchase_id)
+                )
+                if purchase is None or purchase.merchant != candidate.merchant:
+                    raise PurchaseIdentityConflict
+                for alias_id, kind, reference in purchase_identity_aliases(candidate):
+                    alias = self._purchase_aliases.get((candidate.account_id, alias_id))
+                    if alias is None:
+                        raise PurchaseIdentityConflict
+                    validate_purchase_identity_alias(
+                        alias,
+                        candidate=candidate,
+                        alias_id=alias_id,
+                        kind=kind,
+                        reference=reference,
+                    )
+                    if alias.purchase_id != purchase.id:
+                        raise PurchaseIdentityConflict
+                return PurchaseIdentityResult(
+                    purchase=purchase.model_copy(deep=True),
+                    document=existing_document.model_copy(deep=True),
+                    duplicate=True,
+                )
+
+            alias_specs = purchase_identity_aliases(candidate)
+            existing_aliases = []
+            for alias_id, kind, reference in alias_specs:
+                existing_alias = self._purchase_aliases.get((candidate.account_id, alias_id))
+                if existing_alias is not None:
+                    validate_purchase_identity_alias(
+                        existing_alias,
+                        candidate=candidate,
+                        alias_id=alias_id,
+                        kind=kind,
+                        reference=reference,
+                    )
+                    existing_aliases.append(existing_alias)
+            purchase_ids = {alias.purchase_id for alias in existing_aliases}
+            if len(purchase_ids) > 1:
+                raise PurchaseIdentityConflict
+
+            now = utc_now()
+            if purchase_ids:
+                purchase_id = purchase_ids.pop()
+                purchase = self._purchases.get((candidate.account_id, purchase_id))
+                if purchase is None or purchase.merchant != candidate.merchant:
+                    raise PurchaseIdentityConflict
+            else:
+                purchase = Purchase(
+                    id=str(uuid4()),
+                    account_id=candidate.account_id,
+                    merchant=candidate.merchant,
+                    created_at=now,
+                    updated_at=now,
+                )
+
+            for alias_id, kind, reference in alias_specs:
+                existing_alias = self._purchase_aliases.get((candidate.account_id, alias_id))
+                if existing_alias is not None:
+                    validate_purchase_identity_alias(
+                        existing_alias,
+                        candidate=candidate,
+                        alias_id=alias_id,
+                        kind=kind,
+                        reference=reference,
+                    )
+                    if existing_alias.purchase_id != purchase.id:
+                        raise PurchaseIdentityConflict
+                if existing_alias is None:
+                    self._purchase_aliases[(candidate.account_id, alias_id)] = (
+                        PurchaseIdentityAlias(
+                            id=alias_id,
+                            account_id=candidate.account_id,
+                            purchase_id=purchase.id,
+                            merchant=candidate.merchant,
+                            kind=kind,
+                            reference_hash=sha256(reference.encode()).hexdigest(),
+                            created_at=now,
+                        )
+                    )
+
+            revision_number = purchase.revision_count + 1
+            document = PurchaseDocument(
+                id=candidate.raw_mail_id,
+                account_id=candidate.account_id,
+                purchase_id=purchase.id,
+                raw_mail_id=candidate.raw_mail_id,
+                raw_content_sha256=candidate.raw_content_sha256,
+                merchant=candidate.merchant,
+                kind=candidate.kind,
+                revision_number=revision_number,
+                order_reference=candidate.order_reference,
+                invoice_reference=candidate.invoice_reference,
+                created_at=now,
+            )
+            purchase = purchase.model_copy(
+                update={"revision_count": revision_number, "updated_at": now}
+            )
+            self._purchases[(candidate.account_id, purchase.id)] = purchase
+            self._purchase_documents[document_key] = document
+            return PurchaseIdentityResult(
+                purchase=purchase.model_copy(deep=True),
+                document=document.model_copy(deep=True),
+                duplicate=False,
+            )
 
     async def record_launch_mail_consent(
         self,

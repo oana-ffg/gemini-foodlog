@@ -30,6 +30,18 @@ class InboundAddressGenerationFailed(FoodLogError):
     pass
 
 
+class RawMailNotFound(FoodLogError):
+    pass
+
+
+class PurchaseIdentityConflict(FoodLogError):
+    pass
+
+
+class PurchaseDocumentConflict(FoodLogError):
+    pass
+
+
 class DeviceCredentialCollision(FoodLogError):
     pass
 
