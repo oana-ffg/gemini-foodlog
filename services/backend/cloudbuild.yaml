@@ -23,6 +23,7 @@ steps:
         from importlib import metadata
 
         import foodlog_backend
+        import foodlog_backend.firestore_repository_smoke
         import foodlog_backend.image_worker_app
         import foodlog_backend.main
         import foodlog_backend.model_probe
