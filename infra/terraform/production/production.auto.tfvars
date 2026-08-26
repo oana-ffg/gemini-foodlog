@@ -1,1 +1,1 @@
-api_container_image = "europe-west1-docker.pkg.dev/gemini-foodlog-2026/cloud-run-source-deploy/foodlog-api@sha256:6d933a6ffc8554829860dfb5297460dec08d5f82fc4b3298e2577d64844d5e33"
+api_container_image = "europe-west1-docker.pkg.dev/gemini-foodlog-2026/cloud-run-source-deploy/foodlog-api@sha256:a35d87165f4d51cdc9a1d6a8371e56ec38dfdaabd14158aa070d191b51977b74"

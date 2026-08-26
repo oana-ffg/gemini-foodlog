@@ -31,6 +31,14 @@ exact retry and private bytes, then proves an executable attachment leaves no re
 or object. Run it only against the dedicated test account after reviewing `--help`;
 the generated Pub/Sub test event must be verified and acknowledged afterward.
 
+`scripts/smoke_purchase_worker.py` is the explicit-write end-to-end classifier check.
+It sends one synthetic authenticated Nemlig confirmation, waits for the private push
+worker to materialize it, then sends a matching final-invoice MIME using the observed
+octet-stream PDF declaration. It proves the two immutable documents form one purchase,
+the final document is typed as authoritative, and an exact transport retry is a no-op.
+The operator supplies a unique synthetic ten-digit reference; the check never invokes
+Gemini.
+
 ## Production deployment
 
 `app.yaml` is deliberately the default service because App Engine delivers inbound
@@ -41,9 +49,11 @@ caps automatic scaling at one F1 instance with a zero minimum.
 Every message is external, untrusted evidence. Before any durable write, the gateway
 requires one valid sender, bounded singleton transport headers, a structurally valid
 MIME tree, at most 100 parts/eight levels/20 attachments, and an allowlist limited to
-plain text, HTML, common inline images, and PDF. Active or unknown content types,
-unsafe filenames, unknown transfer encodings, malformed MIME, and oversized headers
-or attachments are discarded with no object, record, or event. Instruction-like text
+plain text, HTML, common inline images, and PDF. Nemlig's observed octet-stream invoice
+declaration is accepted only for a `.pdf` attachment whose decoded bytes have a PDF
+signature. Other active or unknown content types, unsafe filenames, unknown transfer
+encodings, malformed MIME, and oversized headers or attachments are discarded with no
+object, record, or event. Instruction-like text
 is not heuristically interpreted or filtered: accepted bytes remain opaque in private
 storage, while the metadata-only event carries `trust_class=untrusted_external` so a
 later parser or agent must treat them as data, never instructions.
