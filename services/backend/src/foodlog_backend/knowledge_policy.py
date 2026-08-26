@@ -2,18 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from enum import StrEnum
-from unicodedata import normalize as unicode_normalize
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .models import KnowledgeBeliefStrength, KnowledgeLifecycle, utc_now
-
-
-def _normalize_term(value: str, *, label: str, max_length: int = 200) -> str:
-    normalized = " ".join(unicode_normalize("NFKC", value).casefold().split())
-    if not normalized or len(normalized) > max_length:
-        raise ValueError(f"{label} must contain 1-{max_length} normalized characters")
-    return normalized
+from .models import KnowledgeBeliefStrength, KnowledgeClaim, KnowledgeLifecycle, utc_now
 
 
 class KnowledgeEvidenceClass(StrEnum):
@@ -24,52 +16,6 @@ class KnowledgeEvidenceClass(StrEnum):
     REPEATED_INFERRED_OBSERVATION = "repeated_inferred_observation"
     RECENT_PURCHASE = "recent_purchase"
     ONE_OFF_INFERENCE = "one_off_inference"
-
-
-class KnowledgeClaim(BaseModel):
-    """A deterministic claim plus the exact conditions in which it applies.
-
-    Fewer conditions mean broader applicability. The policy deliberately does no
-    semantic paraphrase matching: the agent must preserve the same normalized
-    dimension/value when it asks to inherit a user's confirmation.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    dimension: str = Field(min_length=1, max_length=120)
-    value: str = Field(min_length=1, max_length=200)
-    conditions: tuple[str, ...] = Field(default=(), max_length=20)
-
-    @field_validator("dimension")
-    @classmethod
-    def normalize_dimension(cls, value: str) -> str:
-        return _normalize_term(value, label="claim dimension", max_length=120)
-
-    @field_validator("value")
-    @classmethod
-    def normalize_value(cls, value: str) -> str:
-        return _normalize_term(value, label="claim value")
-
-    @field_validator("conditions")
-    @classmethod
-    def normalize_conditions(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        normalized = tuple(
-            sorted({_normalize_term(value, label="claim condition") for value in values})
-        )
-        return normalized
-
-    def applies_to(self, event_conditions: set[str]) -> bool:
-        normalized_event = {
-            _normalize_term(value, label="event condition") for value in event_conditions
-        }
-        return set(self.conditions).issubset(normalized_event)
-
-    def is_no_broader_than(self, source: KnowledgeClaim) -> bool:
-        return (
-            self.dimension == source.dimension
-            and self.value == source.value
-            and set(self.conditions).issuperset(source.conditions)
-        )
 
 
 class KnowledgeCandidate(BaseModel):
@@ -148,7 +94,10 @@ def resolve_knowledge(
     explicit correction or instruction already settles the event.
     """
 
-    normalized_dimension = _normalize_term(dimension, label="resolution dimension", max_length=120)
+    normalized_dimension = KnowledgeClaim(
+        dimension=dimension,
+        value="normalization sentinel",
+    ).dimension
     current_time = as_of or utc_now()
     applicable = [
         candidate

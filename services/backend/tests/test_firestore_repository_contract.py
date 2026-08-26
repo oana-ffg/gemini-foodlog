@@ -34,6 +34,7 @@ from foodlog_backend.models import (
     JobKind,
     JobStatus,
     KnowledgeBeliefStrength,
+    KnowledgeClaim,
     KnowledgeEvidenceKind,
     KnowledgeEvidenceReference,
     KnowledgeEvidenceRole,
@@ -316,6 +317,11 @@ def test_firestore_knowledge_revisions_are_atomic_provenanced_and_tenant_scoped(
         initial_draft = KnowledgeRevisionDraft(
             title="Thursday dinner pattern",
             statement="Steak may often be eaten on Thursdays.",
+            claim=KnowledgeClaim(
+                dimension="likely meal",
+                value="steak",
+                conditions=("thursday",),
+            ),
             lifecycle=KnowledgeLifecycle.INFERRED,
             belief_strength=KnowledgeBeliefStrength.WEAK,
             source=KnowledgeRevisionSource.AGENT_INFERENCE,
@@ -348,6 +354,11 @@ def test_firestore_knowledge_revisions_are_atomic_provenanced_and_tenant_scoped(
             KnowledgeRevisionDraft(
                 title="Thursday dinner pattern",
                 statement=statement,
+                claim=KnowledgeClaim(
+                    dimension="likely meal",
+                    value="steak" if index == 0 else "red meat",
+                    conditions=("thursday",),
+                ),
                 lifecycle=KnowledgeLifecycle.REINFORCED,
                 belief_strength=KnowledgeBeliefStrength.MODERATE,
                 source=KnowledgeRevisionSource.AGENT_INFERENCE,
@@ -411,6 +422,8 @@ def test_firestore_knowledge_revisions_are_atomic_provenanced_and_tenant_scoped(
         assert page.current_revision_id == winner.revision.id
         assert [revision.number for revision in revisions] == [1, 2]
         assert revisions[0].statement == initial_draft.statement
+        assert page.claim == winner.revision.claim
+        assert revisions[0].claim == initial_draft.claim
         assert revisions[1].previous_revision_id == revisions[0].id
         assert any(
             item.kind == KnowledgeEvidenceKind.KNOWLEDGE_REVISION

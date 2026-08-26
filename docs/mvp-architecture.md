@@ -437,6 +437,18 @@ Every change retains provenance. Explicit user statements are stronger than pass
 
 Semantic retrieval is intentionally excluded from the MVP. It should only be added if measured wiki growth makes deterministic page indexes and agent tool selection insufficient.
 
+### 8.4 Agent-proposed updates
+
+The agent may propose a bounded normalized claim, but it cannot select its own
+belief authority. The backend derives lifecycle and strength from an explicit
+intent and provenance: an unsupported observation is weak inference, repetition is
+reinforcement, and confirmation, contradiction, or retirement requires linked raw
+user evidence. A claim may inherit confirmation only from an exact structured
+source claim attached to that evidence; broader or changed output is persisted as
+inference instead. Applied updates use the same optimistic, immutable,
+exactly-once revision transaction as direct wiki writes, so a retry cannot append a
+duplicate and a stale proposal cannot replace newer knowledge.
+
 ## 9. Feedback and questions
 
 ### 9.1 Thumbs-up

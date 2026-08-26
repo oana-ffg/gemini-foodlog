@@ -114,6 +114,68 @@ class KnowledgeEvidenceRole(StrEnum):
     CONTEXT = "context"
 
 
+def _normalize_knowledge_claim_term(
+    value: str,
+    *,
+    label: str,
+    max_length: int = 200,
+) -> str:
+    normalized = " ".join(unicode_normalize("NFKC", value).casefold().split())
+    if not normalized or len(normalized) > max_length:
+        raise ValueError(f"{label} must contain 1-{max_length} normalized characters")
+    return normalized
+
+
+class KnowledgeClaim(BaseModel):
+    """One normalized claim and the exact conditions in which it applies."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    dimension: str = Field(min_length=1, max_length=120)
+    value: str = Field(min_length=1, max_length=200)
+    conditions: tuple[str, ...] = Field(default=(), max_length=20)
+
+    @field_validator("dimension")
+    @classmethod
+    def normalize_dimension(cls, value: str) -> str:
+        return _normalize_knowledge_claim_term(
+            value,
+            label="claim dimension",
+            max_length=120,
+        )
+
+    @field_validator("value")
+    @classmethod
+    def normalize_value(cls, value: str) -> str:
+        return _normalize_knowledge_claim_term(value, label="claim value")
+
+    @field_validator("conditions")
+    @classmethod
+    def normalize_conditions(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                {
+                    _normalize_knowledge_claim_term(value, label="claim condition")
+                    for value in values
+                }
+            )
+        )
+
+    def applies_to(self, event_conditions: set[str]) -> bool:
+        normalized_event = {
+            _normalize_knowledge_claim_term(value, label="event condition")
+            for value in event_conditions
+        }
+        return set(self.conditions).issubset(normalized_event)
+
+    def is_no_broader_than(self, source: "KnowledgeClaim") -> bool:
+        return (
+            self.dimension == source.dimension
+            and self.value == source.value
+            and set(self.conditions).issuperset(source.conditions)
+        )
+
+
 class CaptureStatus(StrEnum):
     ACCEPTED = "accepted"
     STORED = "stored"
@@ -798,6 +860,7 @@ class KnowledgeRevisionDraft(BaseModel):
 
     title: str = Field(min_length=1, max_length=200)
     statement: str = Field(min_length=1, max_length=2_000)
+    claim: KnowledgeClaim | None = None
     lifecycle: KnowledgeLifecycle
     belief_strength: KnowledgeBeliefStrength
     source: KnowledgeRevisionSource
@@ -840,6 +903,7 @@ class KnowledgePage(BaseModel):
     topic_key: str = Field(min_length=1, max_length=160)
     title: str = Field(min_length=1, max_length=200)
     statement: str = Field(min_length=1, max_length=2_000)
+    claim: KnowledgeClaim | None = None
     lifecycle: KnowledgeLifecycle
     belief_strength: KnowledgeBeliefStrength
     current_revision_number: int = Field(ge=1)

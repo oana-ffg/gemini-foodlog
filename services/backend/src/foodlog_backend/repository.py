@@ -228,6 +228,7 @@ def materialize_knowledge_page(
         topic_key=normalize_knowledge_topic(topic_key),
         title=revision.title,
         statement=revision.statement,
+        claim=revision.claim,
         lifecycle=revision.lifecycle,
         belief_strength=revision.belief_strength,
         current_revision_number=revision.number,
