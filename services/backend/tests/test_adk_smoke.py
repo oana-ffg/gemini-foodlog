@@ -4,6 +4,7 @@ from google.genai import types
 from foodlog_agent.inference_schema import ActivityMealInferenceV1
 from foodlog_agent.prompt import INSTRUCTION, PROMPT_VERSION
 from foodlog_agent.smoke import (
+    MAX_LLM_CALLS,
     _structured_response,
     _validate_source_identities,
     main,
@@ -17,6 +18,7 @@ def test_smoke_bundle_records_prompt_and_exact_source_identities() -> None:
     assert bundle["prompt_version"] == PROMPT_VERSION
     assert bundle["event"]["event_id"] == "adk-smoke-event-v1"
     assert bundle["event"]["captures"][0]["capture_id"] == "adk-smoke-capture-v1"
+    assert MAX_LLM_CALLS == 3
 
 
 def test_prompt_explicitly_couples_questions_to_uncertain_confidence() -> None:

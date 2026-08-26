@@ -30,7 +30,8 @@ SMOKE_USER_ID = "foodlog-adk-smoke"
 SMOKE_SESSION_ID = "foodlog-adk-smoke-v1"
 SMOKE_EVENT_ID = "adk-smoke-event-v1"
 MAX_OUTPUT_TOKENS = 2_048
-MAX_LLM_CALLS = 2
+# Bound the three expected turns: choose evidence tool, load artifacts, answer.
+MAX_LLM_CALLS = 3
 # The second ADK turn can include every event image returned by the evidence
 # tool. Reserve substantially more than the expected multimodal token count so
 # the immutable reservation remains a true upper bound for unfamiliar bundles.
@@ -182,6 +183,8 @@ async def run_smoke(
     async def invoke() -> CompletedModelInvocation[ActivityMealInferenceV1]:
         runner = InMemoryRunner(app=app)
         final_event: Event | None = None
+        latest_identified_event: Event | None = None
+        execution_error_code: str | None = None
         prompt_tokens = 0
         response_tokens = 0
         thinking_tokens = 0
@@ -213,14 +216,17 @@ async def run_smoke(
                         },
                     ),
                 ):
+                    if adk_event.invocation_id or adk_event.model_version:
+                        latest_identified_event = adk_event
                     if adk_event.usage_metadata is not None:
                         prompt_tokens += adk_event.usage_metadata.prompt_token_count or 0
                         response_tokens += adk_event.usage_metadata.candidates_token_count or 0
                         thinking_tokens += adk_event.usage_metadata.thoughts_token_count or 0
                         total_tokens += adk_event.usage_metadata.total_token_count or 0
                     if adk_event.error_code or adk_event.error_message:
+                        execution_error_code = adk_event.error_code or "unknown"
                         raise RuntimeError(
-                            f"ADK event failed: {adk_event.error_code or 'unknown'}: "
+                            f"ADK event failed: {execution_error_code}: "
                             f"{adk_event.error_message}"
                         )
                     if adk_event.is_final_response():
@@ -249,10 +255,15 @@ async def run_smoke(
                 total_tokens=total_tokens,
             )
         except Exception as error:
+            identity_event = final_event or latest_identified_event
             raise ModelInvocationExecutionError(
-                error_code=type(error).__name__,
-                invocation_id=(final_event.invocation_id if final_event is not None else None),
-                model_version=(final_event.model_version if final_event is not None else None),
+                error_code=execution_error_code or type(error).__name__,
+                invocation_id=(
+                    identity_event.invocation_id if identity_event is not None else None
+                ),
+                model_version=(
+                    identity_event.model_version if identity_event is not None else None
+                ),
                 prompt_tokens=prompt_tokens,
                 response_tokens=response_tokens,
                 thinking_tokens=thinking_tokens,
