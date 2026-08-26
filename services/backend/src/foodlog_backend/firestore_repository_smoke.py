@@ -531,6 +531,27 @@ async def run_smoke(repository: Repository) -> dict[str, Any]:
         or [revision.number for revision in proposed_revisions] != [1, 2]
     ):
         raise RuntimeError("Validated household knowledge proposal did not persist exactly once")
+    knowledge_index = await repository.knowledge_page_index_for_account(
+        account_id=SMOKE_ACCOUNT_ID,
+    )
+    selected_knowledge = await repository.active_knowledge_revision_for_account(
+        account_id=SMOKE_ACCOUNT_ID,
+        page_id=proposed_confirmation.page.id,
+    )
+    indexed_page_ids = [page.id for page in knowledge_index]
+    expected_page_ids = {
+        initial_knowledge.page.id,
+        proposed_confirmation.page.id,
+        learning.knowledge.page.id,
+    }
+    if not expected_page_ids.issubset(indexed_page_ids):
+        raise RuntimeError("Household knowledge index omitted an active smoke page")
+    if (
+        selected_knowledge is None
+        or selected_knowledge.page != proposed_confirmation.page
+        or selected_knowledge.revision != proposed_confirmation.revision
+    ):
+        raise RuntimeError("Exact household knowledge read did not return its current revision")
     return {
         "schema_version": SMOKE_FIXTURE_VERSION,
         "account_id": SMOKE_ACCOUNT_ID,
@@ -564,6 +585,10 @@ async def run_smoke(repository: Repository) -> dict[str, Any]:
         ],
         "feedback_knowledge_page_id": learning.knowledge.page.id,
         "feedback_knowledge_revision": learning.knowledge.revision.number,
+        "knowledge_index_count": len(knowledge_index),
+        "knowledge_index_page_ids": indexed_page_ids,
+        "selected_knowledge_revision_id": selected_knowledge.revision.id,
+        "selected_knowledge_revision_number": selected_knowledge.revision.number,
         "model_calls": 0,
     }
 

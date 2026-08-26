@@ -1060,6 +1060,14 @@ def test_deployed_repository_smoke_is_rerunnable_without_duplicate_revisions() -
         assert first["proposed_knowledge_revision_numbers"] == [1, 2]
         assert first["proposed_knowledge_lifecycle"] == "confirmed"
         assert first["feedback_knowledge_revision"] == 1
+        assert first["knowledge_index_count"] == 3
+        assert set(first["knowledge_index_page_ids"]) == {
+            first["knowledge_page_id"],
+            first["proposed_knowledge_page_id"],
+            first["feedback_knowledge_page_id"],
+        }
+        assert first["selected_knowledge_revision_number"] == 2
+        assert first["selected_knowledge_revision_id"]
         assert first["not_cooking_revision"] == 6
         assert first["reclassified_revision"] == 7
         assert first["model_calls"] == 0
