@@ -46,6 +46,11 @@ class MealFeedbackKind(StrEnum):
     CORRECT = "correct"
 
 
+class MealFeedbackLearningDisposition(StrEnum):
+    REUSABLE = "reusable"
+    INSUFFICIENT_INFORMATION = "insufficient_information"
+
+
 class MealRevisionSource(StrEnum):
     INFERENCE = "inference"
     USER_FEEDBACK = "user_feedback"
@@ -785,6 +790,7 @@ class MealFeedbackRequest(BaseModel):
     explanation: str | None = Field(default=None, min_length=1, max_length=2_000)
     correction: MealCorrection | None = None
     base_revision_number: int | None = Field(default=None, ge=1)
+    learning_disposition: MealFeedbackLearningDisposition | None = None
 
     @field_validator("actual_meal", "explanation")
     @classmethod
@@ -803,6 +809,7 @@ class MealFeedbackRequest(BaseModel):
             or self.explanation is not None
             or self.correction is not None
             or self.base_revision_number is not None
+            or self.learning_disposition is not None
         ):
             raise ValueError("confirmation cannot include correction fields")
         if self.actual_meal is not None and self.correction is not None:
@@ -811,6 +818,14 @@ class MealFeedbackRequest(BaseModel):
             raise ValueError("targeted correction requires base_revision_number")
         if self.correction is None and self.base_revision_number is not None:
             raise ValueError("base_revision_number requires a targeted correction")
+        if self.learning_disposition is not None and self.explanation is None:
+            raise ValueError("learning disposition requires an explanation")
+        if (
+            self.learning_disposition == MealFeedbackLearningDisposition.REUSABLE
+            and self.actual_meal is None
+            and self.correction is None
+        ):
+            raise ValueError("reusable learning requires a corrected meal or target")
         return self
 
 
@@ -823,6 +838,7 @@ class MealFeedback(BaseModel):
     explanation: str | None
     correction: MealCorrection | None = None
     base_revision_number: int | None = Field(default=None, ge=1)
+    learning_disposition: MealFeedbackLearningDisposition | None = None
     idempotency_key: str
     question_id: str | None = None
     created_at: datetime = Field(default_factory=utc_now)

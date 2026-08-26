@@ -10,6 +10,7 @@ from typing import Any
 from google.api_core.exceptions import AlreadyExists
 from google.cloud.firestore_v1.async_client import AsyncClient
 
+from .feedback_learning import FeedbackLearningService
 from .firestore_repository import FirestoreRepository
 from .inference_schema import ActivityMealInferenceV1
 from .knowledge_updates import (
@@ -36,6 +37,7 @@ from .models import (
     MealComponent,
     MealEntry,
     MealFeedbackKind,
+    MealFeedbackLearningDisposition,
     MealFeedbackRequest,
     QuestionAnswerRequest,
     QuestionStatus,
@@ -327,6 +329,17 @@ async def run_smoke(repository: Repository) -> dict[str, Any]:
         ),
         idempotency_key="repository-smoke-targeted-component-v1",
     )
+    learning = await FeedbackLearningService(repository).record(
+        owner_user_id=SMOKE_OWNER_ID,
+        meal_id=meal.id,
+        request=MealFeedbackRequest(
+            kind=MealFeedbackKind.CORRECT,
+            actual_meal="Ribeye steak",
+            explanation="The dark green beef label identifies this package as ribeye steak.",
+            learning_disposition=MealFeedbackLearningDisposition.REUSABLE,
+        ),
+        idempotency_key="repository-smoke-reusable-feedback-v1",
+    )
     current = await repository.meal_for_owner(SMOKE_OWNER_ID, meal.id)
     revisions = await repository.list_meal_revisions(SMOKE_OWNER_ID, meal.id)
     questions = await repository.list_questions(
@@ -342,12 +355,18 @@ async def run_smoke(repository: Repository) -> dict[str, Any]:
         or targeted.revision.base_revision_number != 3
         or targeted.revision.correction is None
         or targeted.revision.correction.scope != "component"
-        or current.revision_number != 4
+        or current.revision_number != 5
         or current.components[0].name != "Ribeye steak"
     ):
         raise RuntimeError("Targeted correction did not atomically persist revision 4")
-    if [revision.number for revision in revisions] != [1, 2, 3, 4]:
+    if [revision.number for revision in revisions] != [1, 2, 3, 4, 5]:
         raise RuntimeError("Repository smoke revision history is incomplete")
+    if (
+        learning.revision.number != 5
+        or learning.knowledge is None
+        or learning.knowledge.revision.lifecycle != KnowledgeLifecycle.CONFIRMED
+    ):
+        raise RuntimeError("Reusable feedback did not apply one knowledge revision")
     if len(questions) != 1 or questions[0].id != question.id:
         raise RuntimeError("Repository smoke question did not close exactly once")
     initial_knowledge = await repository.record_knowledge_revision(
@@ -487,6 +506,7 @@ async def run_smoke(repository: Repository) -> dict[str, Any]:
             confirmation.revision.number,
             answer.revision.number,
             targeted.revision.number,
+            learning.revision.number,
         ],
         "published_event_id": published_hypothesis.event_id,
         "published_classification": published_hypothesis.activity_hypothesis.kind,
@@ -501,6 +521,8 @@ async def run_smoke(repository: Repository) -> dict[str, Any]:
         "proposed_knowledge_revision_numbers": [
             revision.number for revision in proposed_revisions
         ],
+        "feedback_knowledge_page_id": learning.knowledge.page.id,
+        "feedback_knowledge_revision": learning.knowledge.revision.number,
         "model_calls": 0,
     }
 

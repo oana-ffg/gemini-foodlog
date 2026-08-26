@@ -804,6 +804,18 @@
         "title": "EntitlementMode",
         "type": "string"
       },
+      "FeedbackLearningOutcome": {
+        "enum": [
+          "confirmation_only",
+          "wrong_only",
+          "meal_only",
+          "insufficient_information",
+          "unclassified_explanation",
+          "knowledge_applied"
+        ],
+        "title": "FeedbackLearningOutcome",
+        "type": "string"
+      },
       "FocusedEventQuestion": {
         "additionalProperties": false,
         "properties": {
@@ -1086,6 +1098,332 @@
         ],
         "title": "IngredientCorrection",
         "type": "object"
+      },
+      "KnowledgeBeliefStrength": {
+        "enum": [
+          "weak",
+          "moderate",
+          "strong"
+        ],
+        "title": "KnowledgeBeliefStrength",
+        "type": "string"
+      },
+      "KnowledgeClaim": {
+        "additionalProperties": false,
+        "description": "One normalized claim and the exact conditions in which it applies.",
+        "properties": {
+          "conditions": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Conditions",
+            "type": "array"
+          },
+          "dimension": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Dimension",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "dimension",
+          "value"
+        ],
+        "title": "KnowledgeClaim",
+        "type": "object"
+      },
+      "KnowledgeEvidenceKind": {
+        "enum": [
+          "capture",
+          "meal_revision",
+          "feedback",
+          "question_response",
+          "purchase_document",
+          "user_context_note",
+          "knowledge_revision"
+        ],
+        "title": "KnowledgeEvidenceKind",
+        "type": "string"
+      },
+      "KnowledgeEvidenceReference": {
+        "properties": {
+          "id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/KnowledgeEvidenceKind"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "role": {
+            "$ref": "#/components/schemas/KnowledgeEvidenceRole"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "role"
+        ],
+        "title": "KnowledgeEvidenceReference",
+        "type": "object"
+      },
+      "KnowledgeEvidenceRole": {
+        "enum": [
+          "supports",
+          "contradicts",
+          "context"
+        ],
+        "title": "KnowledgeEvidenceRole",
+        "type": "string"
+      },
+      "KnowledgeLifecycle": {
+        "enum": [
+          "inferred",
+          "reinforced",
+          "confirmed",
+          "contradicted",
+          "retired"
+        ],
+        "title": "KnowledgeLifecycle",
+        "type": "string"
+      },
+      "KnowledgePage": {
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "belief_strength": {
+            "$ref": "#/components/schemas/KnowledgeBeliefStrength"
+          },
+          "claim": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeClaim"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "current_revision_id": {
+            "title": "Current Revision Id",
+            "type": "string"
+          },
+          "current_revision_number": {
+            "minimum": 1.0,
+            "title": "Current Revision Number",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "lifecycle": {
+            "$ref": "#/components/schemas/KnowledgeLifecycle"
+          },
+          "statement": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Statement",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "topic_key": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Topic Key",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "account_id",
+          "topic_key",
+          "title",
+          "statement",
+          "lifecycle",
+          "belief_strength",
+          "current_revision_number",
+          "current_revision_id"
+        ],
+        "title": "KnowledgePage",
+        "type": "object"
+      },
+      "KnowledgeRevision": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "base_revision_number": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Revision Number"
+          },
+          "belief_strength": {
+            "$ref": "#/components/schemas/KnowledgeBeliefStrength"
+          },
+          "claim": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeClaim"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeEvidenceReference"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "lifecycle": {
+            "$ref": "#/components/schemas/KnowledgeLifecycle"
+          },
+          "number": {
+            "minimum": 1.0,
+            "title": "Number",
+            "type": "integer"
+          },
+          "page_id": {
+            "title": "Page Id",
+            "type": "string"
+          },
+          "previous_revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Revision Id"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/KnowledgeRevisionSource"
+          },
+          "statement": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Statement",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "statement",
+          "lifecycle",
+          "belief_strength",
+          "source",
+          "evidence",
+          "reason",
+          "id",
+          "account_id",
+          "page_id",
+          "number"
+        ],
+        "title": "KnowledgeRevision",
+        "type": "object"
+      },
+      "KnowledgeRevisionResult": {
+        "properties": {
+          "page": {
+            "$ref": "#/components/schemas/KnowledgePage"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/KnowledgeRevision"
+          }
+        },
+        "required": [
+          "page",
+          "revision"
+        ],
+        "title": "KnowledgeRevisionResult",
+        "type": "object"
+      },
+      "KnowledgeRevisionSource": {
+        "enum": [
+          "agent_inference",
+          "user_feedback",
+          "user_statement",
+          "question_response"
+        ],
+        "title": "KnowledgeRevisionSource",
+        "type": "string"
       },
       "LaunchMailConsent": {
         "properties": {
@@ -1400,6 +1738,16 @@
           "kind": {
             "$ref": "#/components/schemas/MealFeedbackKind"
           },
+          "learning_disposition": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MealFeedbackLearningDisposition"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "meal_id": {
             "title": "Meal Id",
             "type": "string"
@@ -1435,6 +1783,45 @@
         ],
         "title": "MealFeedbackKind",
         "type": "string"
+      },
+      "MealFeedbackLearningDisposition": {
+        "enum": [
+          "reusable",
+          "insufficient_information"
+        ],
+        "title": "MealFeedbackLearningDisposition",
+        "type": "string"
+      },
+      "MealFeedbackLearningResult": {
+        "additionalProperties": false,
+        "properties": {
+          "feedback": {
+            "$ref": "#/components/schemas/MealFeedback"
+          },
+          "knowledge": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeRevisionResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "learning_outcome": {
+            "$ref": "#/components/schemas/FeedbackLearningOutcome"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/MealRevision"
+          }
+        },
+        "required": [
+          "feedback",
+          "revision",
+          "learning_outcome"
+        ],
+        "title": "MealFeedbackLearningResult",
+        "type": "object"
       },
       "MealFeedbackRequest": {
         "properties": {
@@ -1511,28 +1898,22 @@
           },
           "kind": {
             "$ref": "#/components/schemas/MealFeedbackKind"
+          },
+          "learning_disposition": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MealFeedbackLearningDisposition"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
           "kind"
         ],
         "title": "MealFeedbackRequest",
-        "type": "object"
-      },
-      "MealFeedbackResult": {
-        "properties": {
-          "feedback": {
-            "$ref": "#/components/schemas/MealFeedback"
-          },
-          "revision": {
-            "$ref": "#/components/schemas/MealRevision"
-          }
-        },
-        "required": [
-          "feedback",
-          "revision"
-        ],
-        "title": "MealFeedbackResult",
         "type": "object"
       },
       "MealInference": {
@@ -2956,7 +3337,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MealFeedbackResult"
+                  "$ref": "#/components/schemas/MealFeedbackLearningResult"
                 }
               }
             },

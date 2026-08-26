@@ -471,6 +471,16 @@ The UI asks for both the actual meal and why the inference failed, but permits p
 - **meal and explanation:** correct the journal and create a versioned household-wiki revision when the explanation supports reusable knowledge;
 - **insufficient distinguishing information:** preserve the uncertainty and continue gathering evidence from later events.
 
+The correction contract records an explicit learning disposition whenever the
+explanation is intended as reusable guidance or explicitly says the available
+information was insufficient. The backend never guesses this from keywords. Wrong
+only, meal only, insufficient-information, and legacy unclassified explanations
+update the immutable journal history without a wiki write. A correction carrying a
+replacement, explanation, and `reusable` disposition stores the exact explanation
+as a confirmed, provenance-linked wiki revision. Repeating the same feedback is an
+exact no-op; later reusable guidance for the same normalized correction target
+appends a new immutable revision rather than creating a duplicate page.
+
 The raw feedback is preserved. The agent turns supported feedback into a structured meal revision and, when justified, an automatically applied wiki revision with provenance; it does not replace the raw response with an opaque summary. There is no mandatory second approval step. The UI shows what was learned and lets the user correct or retire it later.
 
 An agent-generated generalization cannot receive broader user-confirmed scope than the user's words support. Unsupported extrapolation begins as inferred knowledge. If a rule is too strong, later corrections contradict and revise it through the normal belief lifecycle rather than erasing history.

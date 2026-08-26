@@ -126,6 +126,51 @@ class HouseholdKnowledgeUpdater:
             idempotency_key=idempotency_key,
         )
 
+    async def apply_current(
+        self,
+        *,
+        account_id: str,
+        proposal: KnowledgeUpdateProposal,
+        idempotency_key: str,
+    ) -> KnowledgeRevisionResult:
+        existing = await self._repository.knowledge_revision_result_for_request(
+            account_id=account_id,
+            idempotency_key=idempotency_key,
+        )
+        if existing is not None:
+            return existing
+
+        current = await self._repository.current_knowledge_revision(
+            account_id=account_id,
+            topic_key=proposal.topic_key,
+        )
+        active_proposal = proposal
+        if current is not None:
+            predecessor = KnowledgeEvidenceReference(
+                kind=KnowledgeEvidenceKind.KNOWLEDGE_REVISION,
+                id=current.revision.id,
+                role=KnowledgeEvidenceRole.CONTEXT,
+            )
+            evidence = (
+                *(
+                    item
+                    for item in proposal.evidence
+                    if item.kind != KnowledgeEvidenceKind.KNOWLEDGE_REVISION
+                ),
+                predecessor,
+            )
+            active_proposal = KnowledgeUpdateProposal.model_validate(
+                {**proposal.model_dump(), "evidence": evidence}
+            )
+        return await self.apply(
+            account_id=account_id,
+            proposal=active_proposal,
+            expected_revision_number=(
+                current.revision.number if current is not None else None
+            ),
+            idempotency_key=idempotency_key,
+        )
+
     @staticmethod
     def _derive_belief(
         proposal: KnowledgeUpdateProposal,

@@ -69,10 +69,22 @@ export interface MealFeedbackInput {
   kind: MealFeedbackKind;
   actual_meal?: string;
   explanation?: string;
+  learning_disposition?: "reusable" | "insufficient_information";
 }
 
 export interface MealFeedbackResult {
   revision: MealRevision;
+  learning_outcome:
+    | "confirmation_only"
+    | "wrong_only"
+    | "meal_only"
+    | "insufficient_information"
+    | "unclassified_explanation"
+    | "knowledge_applied";
+  knowledge: {
+    page: { id: string; title: string; statement: string };
+    revision: { id: string; number: number; statement: string };
+  } | null;
 }
 
 export interface ClarificationQuestion {

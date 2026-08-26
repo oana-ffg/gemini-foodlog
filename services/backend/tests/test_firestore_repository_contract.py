@@ -411,6 +411,16 @@ def test_firestore_knowledge_revisions_are_atomic_provenanced_and_tenant_scoped(
             idempotency_key=f"knowledge-contract-competing-{winner_index}",
         )
         assert winner_retry == winner
+        request_result = await repository.knowledge_revision_result_for_request(
+            account_id=owner.id,
+            idempotency_key=f"knowledge-contract-competing-{winner_index}",
+        )
+        current_result = await repository.current_knowledge_revision(
+            account_id=owner.id,
+            topic_key=initial.page.topic_key,
+        )
+        assert request_result == winner
+        assert current_result == winner
 
         page = await repository.knowledge_page_for_owner(
             "knowledge-contract-owner", initial.page.id
@@ -729,11 +739,12 @@ def test_deployed_repository_smoke_is_rerunnable_without_duplicate_revisions() -
         second = await run_smoke(repository)
 
         assert first == second
-        assert first["revision_numbers"] == [1, 2, 3, 4]
+        assert first["revision_numbers"] == [1, 2, 3, 4, 5]
         assert first["knowledge_revision_numbers"] == [1, 2]
         assert first["knowledge_lifecycle"] == "reinforced"
         assert first["proposed_knowledge_revision_numbers"] == [1, 2]
         assert first["proposed_knowledge_lifecycle"] == "confirmed"
+        assert first["feedback_knowledge_revision"] == 1
         assert first["model_calls"] == 0
         feedback = [
             snapshot
@@ -742,7 +753,7 @@ def test_deployed_repository_smoke_is_rerunnable_without_duplicate_revisions() -
             .collection("feedback")
             .stream()
         ]
-        assert len(feedback) == 3
+        assert len(feedback) == 4
         client.close()
 
     asyncio.run(scenario())

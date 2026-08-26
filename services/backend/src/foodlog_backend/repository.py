@@ -713,6 +713,20 @@ class Repository(Protocol):
         idempotency_key: str,
     ) -> KnowledgeRevisionResult: ...
 
+    async def knowledge_revision_result_for_request(
+        self,
+        *,
+        account_id: str,
+        idempotency_key: str,
+    ) -> KnowledgeRevisionResult | None: ...
+
+    async def current_knowledge_revision(
+        self,
+        *,
+        account_id: str,
+        topic_key: str,
+    ) -> KnowledgeRevisionResult | None: ...
+
     async def knowledge_page_for_owner(
         self,
         owner_user_id: str,
@@ -2317,6 +2331,37 @@ class InMemoryRepository:
             )
             return result.model_copy(deep=True)
 
+    async def knowledge_revision_result_for_request(
+        self,
+        *,
+        account_id: str,
+        idempotency_key: str,
+    ) -> KnowledgeRevisionResult | None:
+        async with self._lock:
+            if account_id not in self._accounts:
+                raise AccountNotProvisioned
+            stored = self._knowledge_revision_requests.get((account_id, idempotency_key))
+            return stored[1].model_copy(deep=True) if stored is not None else None
+
+    async def current_knowledge_revision(
+        self,
+        *,
+        account_id: str,
+        topic_key: str,
+    ) -> KnowledgeRevisionResult | None:
+        async with self._lock:
+            if account_id not in self._accounts:
+                raise AccountNotProvisioned
+            page_id = knowledge_page_id(account_id, topic_key)
+            page = self._knowledge_pages.get(page_id)
+            if page is None:
+                return None
+            revision = self._knowledge_revisions[page_id][-1]
+            return KnowledgeRevisionResult(
+                page=page.model_copy(deep=True),
+                revision=revision.model_copy(deep=True),
+            )
+
     async def knowledge_page_for_owner(
         self,
         owner_user_id: str,
@@ -2551,6 +2596,7 @@ class InMemoryRepository:
                 or feedback.explanation != request.explanation
                 or feedback.correction != request.correction
                 or feedback.base_revision_number != request.base_revision_number
+                or feedback.learning_disposition != request.learning_disposition
                 or feedback.question_id != question_id
             ):
                 raise IdempotencyConflict
@@ -2568,6 +2614,7 @@ class InMemoryRepository:
             explanation=request.explanation,
             correction=request.correction,
             base_revision_number=request.base_revision_number,
+            learning_disposition=request.learning_disposition,
             idempotency_key=idempotency_key,
             question_id=question_id,
         )

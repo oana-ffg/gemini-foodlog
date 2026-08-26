@@ -38,6 +38,7 @@ from .errors import (
     TrialQuotaExhausted,
     WaitlistUnavailable,
 )
+from .feedback_learning import FeedbackLearningService, MealFeedbackLearningResult
 from .firestore_repository import FirestoreRepository
 from .image_events import (
     CaptureEventPublisher,
@@ -62,7 +63,6 @@ from .models import (
     LaunchMailConsentRequest,
     MealEntry,
     MealFeedbackRequest,
-    MealFeedbackResult,
     MealRevision,
     QuestionAnswerRequest,
     QuestionAnswerResult,
@@ -145,6 +145,7 @@ class Container:
     notification_publisher: NotificationPublisher
     capture_event_publisher: CaptureEventPublisher
     inbound_mail_address_service: InboundMailAddressService
+    feedback_learning_service: FeedbackLearningService
 
 
 def create_app(
@@ -220,6 +221,7 @@ def create_app(
             repository=repository,
             domain=active_settings.inbound_mail_domain,
         ),
+        feedback_learning_service=FeedbackLearningService(repository),
     )
     app = FastAPI(title="Gemini FoodLog API", version="0.1.0")
     app.state.container = container
@@ -652,15 +654,15 @@ def create_app(
 
     @app.post(
         "/v1/meals/{meal_id}/feedback",
-        response_model=MealFeedbackResult,
+        response_model=MealFeedbackLearningResult,
     )
     async def record_meal_feedback(
         meal_id: str,
         request: MealFeedbackRequest,
         idempotency_key: str = Header(min_length=8, max_length=128),
         user_id: str = Depends(request_user_id),
-    ) -> MealFeedbackResult:
-        return await container.repository.record_meal_feedback(
+    ) -> MealFeedbackLearningResult:
+        return await container.feedback_learning_service.record(
             owner_user_id=user_id,
             meal_id=meal_id,
             request=request,

@@ -947,6 +947,39 @@ def test_correction_keeps_original_inference_and_supports_unresolved_feedback() 
         assert revisions[2]["status"] == "contradicted"
 
 
+def test_reusable_correction_applies_one_visible_idempotent_knowledge_revision() -> None:
+    with build_client() as client:
+        _, camera = provision(client)
+        image = (FIXTURES / "synthetic-steak-airfryer.png").read_bytes()
+        post_fixture_capture(
+            client,
+            camera=camera,
+            image=image,
+            idempotency_key="learning-capture-0001",
+        )
+        meal = client.get("/v1/journal", headers=USER_HEADER).json()[0]
+        request = {
+            "headers": {**USER_HEADER, "Idempotency-Key": "learning-feedback-0001"},
+            "json": {
+                "kind": "correct",
+                "actual_meal": "Ribeye steak",
+                "explanation": "The dark green beef label means this package is ribeye steak.",
+                "learning_disposition": "reusable",
+            },
+        }
+
+        first = client.post(f"/v1/meals/{meal['id']}/feedback", **request)
+        retry = client.post(f"/v1/meals/{meal['id']}/feedback", **request)
+
+        assert first.status_code == retry.status_code == 200
+        assert retry.json() == first.json()
+        assert first.json()["learning_outcome"] == "knowledge_applied"
+        assert first.json()["knowledge"]["revision"]["number"] == 1
+        assert first.json()["knowledge"]["revision"]["statement"] == request["json"][
+            "explanation"
+        ]
+
+
 def test_targeted_corrections_preserve_unrelated_meal_structure_and_history() -> None:
     with build_client() as client:
         _, camera = provision(client)

@@ -2483,6 +2483,76 @@ class FirestoreRepository:
 
         return await record(transaction)
 
+    async def knowledge_revision_result_for_request(
+        self,
+        *,
+        account_id: str,
+        idempotency_key: str,
+    ) -> KnowledgeRevisionResult | None:
+        revision_id = sha256(idempotency_key.encode()).hexdigest()
+        request_snapshot = await self._collection(
+            account_id,
+            "knowledge_revision_requests",
+        ).document(revision_id).get()
+        if not request_snapshot.exists:
+            account_snapshot = await self._account(account_id).get()
+            if not account_snapshot.exists:
+                raise AccountNotProvisioned
+            return None
+        request_data = request_snapshot.to_dict() or {}
+        if request_data.get("account_id") != account_id:
+            raise KnowledgePageNotFound
+        page_id = request_data.get("page_id")
+        stored_revision_id = request_data.get("revision_id")
+        if not isinstance(page_id, str) or not isinstance(stored_revision_id, str):
+            raise ValueError("knowledge revision idempotency record is incomplete")
+        page_ref = self._collection(account_id, "knowledge").document(page_id)
+        page_snapshot = await page_ref.get()
+        revision_snapshot = await page_ref.collection("revisions").document(
+            stored_revision_id
+        ).get()
+        if not page_snapshot.exists or not revision_snapshot.exists:
+            raise ValueError("knowledge revision idempotency record is incomplete")
+        current_page = _model(page_snapshot, KnowledgePage)
+        revision = _model(revision_snapshot, KnowledgeRevision)
+        return KnowledgeRevisionResult(
+            page=materialize_knowledge_page(
+                topic_key=current_page.topic_key,
+                revision=revision,
+                created_at=current_page.created_at,
+            ),
+            revision=revision,
+        )
+
+    async def current_knowledge_revision(
+        self,
+        *,
+        account_id: str,
+        topic_key: str,
+    ) -> KnowledgeRevisionResult | None:
+        normalized_topic = normalize_knowledge_topic(topic_key)
+        page_ref = self._collection(account_id, "knowledge").document(
+            knowledge_page_id(account_id, normalized_topic)
+        )
+        page_snapshot = await page_ref.get()
+        if not page_snapshot.exists:
+            account_snapshot = await self._account(account_id).get()
+            if not account_snapshot.exists:
+                raise AccountNotProvisioned
+            return None
+        page = _model(page_snapshot, KnowledgePage)
+        if page.account_id != account_id:
+            raise KnowledgePageNotFound
+        revision_snapshot = await page_ref.collection("revisions").document(
+            page.current_revision_id
+        ).get()
+        if not revision_snapshot.exists:
+            raise ValueError("current knowledge revision is missing")
+        return KnowledgeRevisionResult(
+            page=page,
+            revision=_model(revision_snapshot, KnowledgeRevision),
+        )
+
     async def knowledge_page_for_owner(
         self,
         owner_user_id: str,
@@ -2561,6 +2631,7 @@ class FirestoreRepository:
                     or feedback.explanation != request.explanation
                     or feedback.correction != request.correction
                     or feedback.base_revision_number != request.base_revision_number
+                    or feedback.learning_disposition != request.learning_disposition
                     or feedback.question_id is not None
                 ):
                     raise IdempotencyConflict
@@ -2585,6 +2656,7 @@ class FirestoreRepository:
                     explanation=request.explanation,
                     correction=request.correction,
                     base_revision_number=request.base_revision_number,
+                    learning_disposition=request.learning_disposition,
                     idempotency_key=idempotency_key,
                 )
                 inference, status = revised_inference(meal, request)
