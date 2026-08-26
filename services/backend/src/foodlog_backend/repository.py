@@ -9,6 +9,7 @@ from .errors import (
     AccountAlreadyProvisioned,
     AccountCapacityReached,
     AccountNotProvisioned,
+    ActivityEventNotFound,
     CameraNotFound,
     CaptureNotFound,
     CrossAccountAccess,
@@ -32,6 +33,7 @@ from .grouping import (
     CaptureGroupingResult,
     GroupingPolicy,
     capture_activity_time,
+    capture_evidence_order,
     segment_identity,
 )
 from .models import (
@@ -384,6 +386,13 @@ class Repository(Protocol):
         lease_owner: str,
         policy: GroupingPolicy,
     ) -> CaptureGroupingResult | None: ...
+
+    async def event_evidence_for_account(
+        self,
+        *,
+        account_id: str,
+        event_id: str,
+    ) -> tuple[ActivityEvent, list[CaptureRecord]]: ...
 
     async def save_meal(self, *, account_id: str, meal: MealEntry) -> MealEntry: ...
 
@@ -1547,6 +1556,25 @@ class InMemoryRepository:
                 event_created=event_created,
                 segment_created=segment_created,
             )
+
+    async def event_evidence_for_account(
+        self,
+        *,
+        account_id: str,
+        event_id: str,
+    ) -> tuple[ActivityEvent, list[CaptureRecord]]:
+        async with self._lock:
+            event = self._events.get((account_id, event_id))
+            if event is None:
+                raise ActivityEventNotFound
+            captures = [
+                capture.model_copy(deep=True)
+                for capture in self._captures.values()
+                if capture.account_id == account_id and capture.event_id == event_id
+            ]
+            if len(captures) != event.capture_count:
+                raise ValueError("Activity event evidence is incomplete")
+            return event.model_copy(deep=True), sorted(captures, key=capture_evidence_order)
 
     async def save_meal(self, *, account_id: str, meal: MealEntry) -> MealEntry:
         if meal.account_id != account_id:

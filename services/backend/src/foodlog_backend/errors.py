@@ -66,6 +66,10 @@ class CaptureNotFound(FoodLogError):
     pass
 
 
+class ActivityEventNotFound(FoodLogError):
+    pass
+
+
 class IdempotencyConflict(FoodLogError):
     pass
 

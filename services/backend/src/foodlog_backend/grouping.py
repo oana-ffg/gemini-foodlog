@@ -140,6 +140,19 @@ def capture_activity_time(capture: CaptureRecord):
     return capture.metadata.captured_at if capture.metadata is not None else capture.created_at
 
 
+def capture_evidence_order(capture: CaptureRecord) -> tuple:
+    """Order event evidence chronologically with a stable multi-camera tie-break."""
+    metadata = capture.metadata
+    return (
+        capture_activity_time(capture),
+        capture.camera_id,
+        metadata.sequence_id if metadata is not None else "",
+        metadata.sequence_number if metadata is not None else -1,
+        capture.created_at,
+        capture.id,
+    )
+
+
 def segment_identity(capture: CaptureRecord) -> tuple[str, str]:
     if capture.metadata is not None and capture.metadata.burst_id is not None:
         source_key = f"burst:{capture.metadata.burst_id}"

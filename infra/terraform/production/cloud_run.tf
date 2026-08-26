@@ -243,6 +243,11 @@ resource "google_cloud_run_v2_job" "adk_agent_smoke" {
         }
 
         env {
+          name  = "FOODLOG_MEDIA_BUCKET"
+          value = google_storage_bucket.retained["media"].name
+        }
+
+        env {
           name  = "GOOGLE_CLOUD_LOCATION"
           value = "eu"
         }

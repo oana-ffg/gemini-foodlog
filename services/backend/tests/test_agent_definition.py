@@ -11,3 +11,7 @@ def test_adk_agent_definition_is_importable_without_calling_a_model() -> None:
     assert root_agent.instruction == INSTRUCTION
     assert PROMPT_VERSION == "food-event-v4"
     assert root_agent.generate_content_config.max_output_tokens == 2_048
+    assert [tool.name for tool in root_agent.tools] == [
+        "get_current_event_evidence",
+        "load_artifacts",
+    ]

@@ -13,6 +13,7 @@ from .errors import (
     AccountAlreadyProvisioned,
     AccountCapacityReached,
     AccountNotProvisioned,
+    ActivityEventNotFound,
     CameraNotFound,
     CaptureNotFound,
     CrossAccountAccess,
@@ -35,6 +36,7 @@ from .grouping import (
     CaptureGroupingResult,
     GroupingPolicy,
     capture_activity_time,
+    capture_evidence_order,
     segment_identity,
 )
 from .models import (
@@ -1765,6 +1767,31 @@ class FirestoreRepository:
             )
 
         return await group(transaction)
+
+    async def event_evidence_for_account(
+        self,
+        *,
+        account_id: str,
+        event_id: str,
+    ) -> tuple[ActivityEvent, list[CaptureRecord]]:
+        event_snapshot = await self._collection(account_id, "events").document(event_id).get()
+        if not event_snapshot.exists:
+            raise ActivityEventNotFound
+        event = _model(event_snapshot, ActivityEvent)
+        if event.account_id != account_id:
+            raise ActivityEventNotFound
+
+        query = self._collection(account_id, "captures").where(
+            filter=FieldFilter("event_id", "==", event_id)
+        )
+        captures = [
+            self._capture_from_snapshot(snapshot, "") async for snapshot in query.stream()
+        ]
+        if any(capture.account_id != account_id for capture in captures):
+            raise ValueError("Activity event evidence escaped its account scope")
+        if len(captures) != event.capture_count:
+            raise ValueError("Activity event evidence is incomplete")
+        return event, sorted(captures, key=capture_evidence_order)
 
     async def save_meal(self, *, account_id: str, meal: MealEntry) -> MealEntry:
         if meal.account_id != account_id:
