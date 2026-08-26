@@ -319,12 +319,24 @@ The mail gateway is deliberately thin:
 7. Let the normal backend worker parse and normalize the relevant order or invoice data.
 
 Inbound email is untrusted input. Parsing must enforce message-size limits, attachment limits, supported content types, sender/message checks appropriate to forwarded Nemlig mail, and idempotency. Email contents and attachments are never treated as agent instructions.
-The gateway accepts only bounded plain text, HTML, common inline image, and PDF parts;
-active/unknown types, malformed structures, unsafe filenames, and excessive depth,
-parts, headers, or attachments are discarded before persistence. Accepted raw bytes
+The gateway accepts only bounded plain text, HTML, common inline image, and PDF parts.
+Nemlig's observed final-invoice attachment is declared as `application/octet-stream`,
+so that one fallback is accepted only for an attachment with a `.pdf` filename whose
+decoded bytes carry the PDF signature. Other active/unknown types, malformed structures,
+unsafe filenames, and excessive depth, parts, headers, or attachments are discarded
+before persistence. Accepted raw bytes
 stay opaque in private storage. Only account/mail references plus an explicit
 `untrusted_external` trust class enter Pub/Sub; recognizing instruction-like prose is
 not used as a security control.
+
+The private mail worker independently requires the exact Nemlig sender plus aligned
+DKIM and DMARC results before it promotes any content into purchase evidence. Its
+first structural classifier recognizes the observed `Tak for din ordre` confirmation
+and numbered `Faktura` final-invoice shapes. The retailer's ten-digit identifier is
+explicitly labelled as the order number in the confirmation and appears in both the
+invoice subject and matching PDF filename, so the worker records that exact identifier
+as the final document's order and invoice aliases. Unrelated or incomplete Nemlig mail
+remains retained raw evidence but is not turned into a purchase.
 
 ## 7. Agent reasoning workflow
 

@@ -1,0 +1,17 @@
+From: nemlig.com <kontakt@nemlig.com>
+To: foodlog-test@example.test
+Message-ID: <synthetic-order-confirmation@example.test>
+Subject: Tak for din ordre
+Authentication-Results: mx.example.test; dkim=pass header.d=nemlig.com; dmarc=pass header.from=nemlig.com
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+Tak for din ordre
+
+Du kan tilføje eller fjerne varer fra din ordre frem til den viste frist.
+
+Ordrenummer:
+9000000001
+
+Ordreoversigt
+Dette er en syntetisk testmail uden person- eller købsdata.

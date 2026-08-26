@@ -1,0 +1,8 @@
+From: nemlig.com <kontakt@nemlig.com>
+To: foodlog-test@example.test
+Message-ID: <synthetic-delivery-update@example.test>
+Subject: Levering fra Nemlig
+Authentication-Results: mx.example.test; dkim=pass header.d=nemlig.com; dmarc=pass header.from=nemlig.com
+Content-Type: text/plain; charset=utf-8
+
+Din levering nærmer sig. Dette er ikke et købsdokument.

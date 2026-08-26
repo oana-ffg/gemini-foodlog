@@ -40,6 +40,7 @@ ALLOWED_LEAF_TYPES = frozenset(
         "text/plain",
     }
 )
+PDF_FALLBACK_CONTENT_TYPE = "application/octet-stream"
 ALLOWED_TRANSFER_ENCODINGS = frozenset({"7bit", "8bit", "base64", "binary", "quoted-printable"})
 
 
@@ -230,7 +231,17 @@ def inspect_untrusted_mime(raw_message: bytes) -> MimeInspection:
                 raise UnsafeMail("unsupported_multipart_type")
             continue
         if content_type not in ALLOWED_LEAF_TYPES:
-            raise UnsafeMail("unsafe_or_unsupported_content_type")
+            if content_type != PDF_FALLBACK_CONTENT_TYPE:
+                raise UnsafeMail("unsafe_or_unsupported_content_type")
+            filename = part.get_filename() or ""
+            decoded = part.get_payload(decode=True)
+            if (
+                part.get_content_disposition() != "attachment"
+                or not filename.casefold().endswith(".pdf")
+                or not isinstance(decoded, bytes)
+                or not decoded.startswith(b"%PDF-")
+            ):
+                raise UnsafeMail("unsafe_octet_stream_attachment")
         transfer_encoding = (part.get("Content-Transfer-Encoding") or "7bit").strip().casefold()
         if transfer_encoding not in ALLOWED_TRANSFER_ENCODINGS:
             raise UnsafeMail("unsupported_transfer_encoding")

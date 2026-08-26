@@ -251,6 +251,41 @@ def test_safe_pdf_attachment_is_bounded_metadata_not_event_content(gateway) -> N
     assert "receipt.pdf" not in repr(gateway[3].events[0].as_dict())
 
 
+def test_real_nemlig_octet_stream_pdf_shape_is_narrowly_accepted(gateway) -> None:
+    message = mime_message()
+    message.add_attachment(
+        b"%PDF-1.7 synthetic",
+        maintype="application",
+        subtype="octet-stream",
+        filename="Faktura - 9000000001.pdf",
+    )
+
+    record = gateway[0].receive(recipient=RECIPIENT, raw_message=as_smtp_bytes(message))
+
+    assert record.attachment_count == 1
+    assert record.content_types == (
+        "application/octet-stream",
+        "multipart/mixed",
+        "text/plain",
+    )
+
+
+def test_octet_stream_pdf_name_without_pdf_magic_is_rejected(gateway) -> None:
+    message = mime_message()
+    message.add_attachment(
+        b"synthetic non-PDF bytes",
+        maintype="application",
+        subtype="octet-stream",
+        filename="Faktura - 9000000001.pdf",
+    )
+
+    assert_rejected_without_side_effects(
+        gateway,
+        as_smtp_bytes(message),
+        "unsafe_octet_stream_attachment",
+    )
+
+
 @pytest.mark.parametrize(
     ("raw_message", "code"),
     [

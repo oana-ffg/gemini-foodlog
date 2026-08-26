@@ -1,0 +1,24 @@
+From: nemlig.com <kontakt@nemlig.com>
+To: foodlog-test@example.test
+Message-ID: <synthetic-final-invoice@example.test>
+Subject: Faktura - 9000000001
+Authentication-Results: mx.example.test; dkim=pass header.d=nemlig.com; dmarc=pass header.from=nemlig.com
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="foodlog-synthetic-boundary"
+
+--foodlog-synthetic-boundary
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+nemlig.com - Din ordre er på vej
+
+Din ordre er på vej.
+Du finder din faktura i den vedhæftede fil, Faktura.pdf.
+
+--foodlog-synthetic-boundary
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename="Faktura - 9000000001.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjcKU3ludGhldGljIE5lbWxpZyBpbnZvaWNlIGZpeHR1cmUK
+--foodlog-synthetic-boundary--

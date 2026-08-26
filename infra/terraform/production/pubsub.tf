@@ -29,6 +29,11 @@ locals {
       service_account_email = google_service_account.runtime["worker"].email
       audience              = google_cloud_run_v2_service.image.uri
     }
+    mail = {
+      endpoint              = "${google_cloud_run_v2_service.mail_worker.uri}/internal/pubsub/raw-mail-stored"
+      service_account_email = google_service_account.runtime["worker"].email
+      audience              = google_cloud_run_v2_service.mail_worker.uri
+    }
     notification = {
       endpoint              = "${google_cloud_run_v2_service.notification.uri}/internal/pubsub/account-created"
       service_account_email = google_service_account.runtime["notification"].email

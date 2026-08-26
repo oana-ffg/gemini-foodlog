@@ -55,6 +55,14 @@ locals {
     FOODLOG_IMAGE_TRIAL_IMAGE_LIMIT       = "200"
     FOODLOG_TRACE_BUCKET                  = google_storage_bucket.retained["traces"].name
   }
+
+  mail_worker_runtime_environment = {
+    FOODLOG_MAIL_WORKER_ENVIRONMENT          = var.environment
+    FOODLOG_MAIL_WORKER_GCP_PROJECT_ID       = var.project_id
+    FOODLOG_MAIL_WORKER_PUBLIC_ACCOUNT_LIMIT = "25"
+    FOODLOG_MAIL_WORKER_RAW_MAIL_BUCKET      = google_storage_bucket.retained["raw_mail"].name
+    FOODLOG_MAIL_WORKER_TRIAL_IMAGE_LIMIT    = "200"
+  }
 }
 
 resource "google_cloud_run_v2_service" "api" {
@@ -624,6 +632,115 @@ resource "google_cloud_run_v2_service_iam_member" "image_invoker" {
   member   = "serviceAccount:${google_service_account.runtime["worker"].email}"
 }
 
+resource "google_cloud_run_v2_service" "mail_worker" {
+  project  = var.project_id
+  name     = "foodlog-mail-worker"
+  location = var.region
+
+  deletion_protection = true
+  ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+
+  labels = merge(local.common_labels, {
+    component = "mail-worker"
+  })
+
+  template {
+    service_account                  = google_service_account.runtime["worker"].email
+    timeout                          = "30s"
+    max_instance_request_concurrency = 1
+
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 1
+    }
+
+    containers {
+      name    = "mail-worker"
+      image   = var.api_container_image
+      command = ["uvicorn"]
+      args = [
+        "foodlog_backend.mail_worker_main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8080",
+      ]
+
+      ports {
+        name           = "http1"
+        container_port = 8080
+      }
+
+      resources {
+        limits = {
+          cpu    = "1"
+          memory = "512Mi"
+        }
+
+        cpu_idle          = true
+        startup_cpu_boost = false
+      }
+
+      dynamic "env" {
+        for_each = local.mail_worker_runtime_environment
+
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+
+      startup_probe {
+        initial_delay_seconds = 0
+        timeout_seconds       = 5
+        period_seconds        = 5
+        failure_threshold     = 12
+
+        http_get {
+          path = "/health"
+          port = 8080
+        }
+      }
+
+      liveness_probe {
+        initial_delay_seconds = 10
+        timeout_seconds       = 5
+        period_seconds        = 30
+        failure_threshold     = 3
+
+        http_get {
+          path = "/health"
+          port = 8080
+        }
+      }
+    }
+  }
+
+  traffic {
+    type    = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
+    percent = 100
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [
+    google_project_service.required["run.googleapis.com"],
+    google_storage_bucket_iam_policy.retained["raw_mail"],
+  ]
+}
+
+# The same private worker identity that reads raw mail from GCS is the only
+# principal allowed to invoke this internal service through Pub/Sub OIDC.
+resource "google_cloud_run_v2_service_iam_member" "mail_worker_invoker" {
+  project  = var.project_id
+  location = google_cloud_run_v2_service.mail_worker.location
+  name     = google_cloud_run_v2_service.mail_worker.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.runtime["worker"].email}"
+}
+
 resource "google_cloud_run_v2_service" "notification" {
   project  = var.project_id
   name     = "foodlog-notification"
@@ -774,4 +891,9 @@ output "notification_service_url" {
 output "image_service_url" {
   description = "Private Pub/Sub-authenticated capture-grouping worker URL."
   value       = google_cloud_run_v2_service.image.uri
+}
+
+output "mail_worker_service_url" {
+  description = "Private Pub/Sub-authenticated purchase-mail classifier URL."
+  value       = google_cloud_run_v2_service.mail_worker.uri
 }
