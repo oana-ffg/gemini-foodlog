@@ -407,6 +407,22 @@ When evidence conflicts, the starting precedence is:
 
 Recent conflicting evidence can still reduce confidence. For example, an established pattern that red meat in the air fryer is steak should not suppress a question when lamb was newly purchased and the images cannot distinguish them.
 
+The backend applies this ordering as a deterministic policy over normalized claims.
+Each claim names one dimension and value plus the exact conditions under which it
+applies. Precedence is evaluated before specificity; specificity only selects the
+narrower claim among evidence at the same precedence. Contradicted, retired, and
+expired claims are excluded. A recent conflicting lower-precedence claim preserves
+the higher-precedence best guess but requires a focused clarification, while a
+current explicit correction or instruction settles weaker conflict for that event.
+This keeps purchase evidence probabilistic rather than silently treating a grocery
+order as pantry ground truth.
+
+Scope inheritance is intentionally syntactic and conservative. A derived claim can
+inherit user-confirmed status only when it preserves the normalized dimension and
+value and includes every condition in the user's source claim. Adding conditions is
+narrowing; removing one is broadening and therefore produces inferred, weak
+knowledge. Semantic paraphrase or scope expansion is never guessed by this policy.
+
 ### 8.3 Belief lifecycle
 
 Reusable learnings are tiered rather than absolute. A belief can be:
