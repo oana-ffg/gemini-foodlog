@@ -31,7 +31,10 @@ SMOKE_SESSION_ID = "foodlog-adk-smoke-v1"
 SMOKE_EVENT_ID = "adk-smoke-event-v1"
 MAX_OUTPUT_TOKENS = 2_048
 MAX_LLM_CALLS = 2
-PROMPT_OVERHEAD_TOKEN_CEILING = 50_000
+# The second ADK turn can include every event image returned by the evidence
+# tool. Reserve substantially more than the expected multimodal token count so
+# the immutable reservation remains a true upper bound for unfamiliar bundles.
+PROMPT_OVERHEAD_TOKEN_CEILING = 250_000
 
 _CONTEXT_SOURCE_FIELDS = {
     ContextSourceKind.PURCHASE: ("recent_purchases", "purchase_id"),
