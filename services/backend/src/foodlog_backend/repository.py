@@ -18,8 +18,10 @@ from .errors import (
     InboundAddressCollision,
     InboundAddressStateConflict,
     InvalidDeviceCredential,
+    InvalidMealCorrectionTarget,
     JobIdentityConflict,
     MealNotFound,
+    MealRevisionConflict,
     ModelSpendLimitExceeded,
     ModelSpendReservationConflict,
     ModelUsageConflict,
@@ -55,6 +57,7 @@ from .models import (
     CaptureRecord,
     CaptureStatus,
     ClarificationQuestion,
+    ComponentCorrection,
     Confidence,
     DeviceCamera,
     DeviceCredentialRecord,
@@ -63,6 +66,7 @@ from .models import (
     EntitlementMode,
     InboundMailAddress,
     InboundMailRoute,
+    IngredientCorrection,
     JobKind,
     JobStatus,
     LaunchMailConsent,
@@ -79,6 +83,7 @@ from .models import (
     ModelSpendReservation,
     ModelUsageRecord,
     NotificationOutboxStatus,
+    PreparationMethodCorrection,
     Purchase,
     PurchaseDocument,
     PurchaseDocumentCandidate,
@@ -96,6 +101,7 @@ from .models import (
     QuestionStatus,
     VerifiedDeviceIdentity,
     WaitlistEntry,
+    WholeMealCorrection,
     capture_grouping_job_id,
     event_inference_job_id,
     utc_now,
@@ -2305,6 +2311,8 @@ class InMemoryRepository:
                 or feedback.kind != request.kind
                 or feedback.actual_meal != request.actual_meal
                 or feedback.explanation != request.explanation
+                or feedback.correction != request.correction
+                or feedback.base_revision_number != request.base_revision_number
                 or feedback.question_id != question_id
             ):
                 raise IdempotencyConflict
@@ -2320,6 +2328,8 @@ class InMemoryRepository:
             kind=request.kind,
             actual_meal=request.actual_meal,
             explanation=request.explanation,
+            correction=request.correction,
+            base_revision_number=request.base_revision_number,
             idempotency_key=idempotency_key,
             question_id=question_id,
         )
@@ -2334,6 +2344,8 @@ class InMemoryRepository:
             activity_hypothesis=meal.activity_hypothesis,
             source=MealRevisionSource.USER_FEEDBACK,
             feedback_id=feedback.id,
+            base_revision_number=request.base_revision_number,
+            correction=request.correction,
         )
         updated_meal = MealEntry(
             **inference.model_dump(),
@@ -2381,6 +2393,11 @@ def revised_inference(
     if request.kind == MealFeedbackKind.CONFIRM:
         return inference_from_meal(meal), MealStatus.CONFIRMED
 
+    if request.correction is not None:
+        if request.base_revision_number != meal.revision_number:
+            raise MealRevisionConflict
+        return targeted_correction_inference(meal, request)
+
     alternatives = list(dict.fromkeys([meal.title, *meal.alternatives]))
     if request.actual_meal:
         rationale = (
@@ -2426,3 +2443,77 @@ def revised_inference(
         ),
         MealStatus.CONTRADICTED,
     )
+
+
+def targeted_correction_inference(
+    meal: MealEntry,
+    request: MealFeedbackRequest,
+) -> tuple[MealInference, MealStatus]:
+    correction = request.correction
+    if correction is None:
+        raise ValueError("targeted correction is required")
+
+    components = [component.model_copy(deep=True) for component in meal.components]
+    title = meal.title
+    confidence = meal.confidence
+    if isinstance(correction, WholeMealCorrection):
+        title = correction.title
+        confidence = Confidence.CONFIDENT
+        components = (
+            [component.model_copy(deep=True) for component in correction.components]
+            if correction.components is not None
+            else [
+                MealComponent(
+                    name=correction.title,
+                    ingredients=[],
+                    preparation_methods=[],
+                )
+            ]
+        )
+    elif isinstance(correction, ComponentCorrection):
+        if correction.component_index >= len(components):
+            raise InvalidMealCorrectionTarget
+        old_component = components[correction.component_index]
+        components[correction.component_index] = correction.replacement.model_copy(deep=True)
+        if len(components) == 1 and title == old_component.name:
+            title = correction.replacement.name
+    elif isinstance(correction, IngredientCorrection):
+        component = _correction_component(components, correction.component_index)
+        if correction.ingredient_index >= len(component.ingredients):
+            raise InvalidMealCorrectionTarget
+        component.ingredients[correction.ingredient_index] = correction.replacement
+    elif isinstance(correction, PreparationMethodCorrection):
+        component = _correction_component(components, correction.component_index)
+        if correction.preparation_method_index >= len(component.preparation_methods):
+            raise InvalidMealCorrectionTarget
+        component.preparation_methods[correction.preparation_method_index] = (
+            correction.replacement
+        )
+    else:  # pragma: no cover - the discriminated model union is exhaustive
+        raise InvalidMealCorrectionTarget
+
+    correction_note = (
+        f"User correction ({correction.scope}): {request.explanation}"
+        if request.explanation
+        else f"The account owner corrected the {correction.scope.replace('_', ' ')}."
+    )
+    return (
+        MealInference(
+            title=title,
+            confidence=confidence,
+            components=components,
+            observations=list(meal.observations),
+            alternatives=list(meal.alternatives),
+            rationale=f"{meal.rationale}\n\n{correction_note}",
+        ),
+        MealStatus.CORRECTED,
+    )
+
+
+def _correction_component(
+    components: list[MealComponent],
+    component_index: int,
+) -> MealComponent:
+    if component_index >= len(components):
+        raise InvalidMealCorrectionTarget
+    return components[component_index]

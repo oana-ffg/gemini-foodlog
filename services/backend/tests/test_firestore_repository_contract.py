@@ -10,6 +10,7 @@ from google.cloud.firestore_v1.async_client import AsyncClient
 
 from foodlog_backend.errors import (
     IdempotencyConflict,
+    MealRevisionConflict,
     QuestionAlreadyAnswered,
     QuestionNotFound,
     QuestionSuperseded,
@@ -224,6 +225,62 @@ def test_firestore_meal_question_feedback_and_revisions_are_atomic() -> None:
                     actual_meal="Different payload",
                 ),
                 idempotency_key="firestore-contract-confirm",
+            )
+
+        targeted_request = MealFeedbackRequest.model_validate(
+            {
+                "kind": "correct",
+                "base_revision_number": 3,
+                "correction": {
+                    "scope": "component",
+                    "component_index": 0,
+                    "replacement": {
+                        "name": "Ribeye steak",
+                        "ingredients": ["beef ribeye"],
+                        "preparation_methods": ["air frying"],
+                    },
+                },
+                "explanation": "The package showed ribeye.",
+            }
+        )
+        targeted = await repository.record_meal_feedback(
+            owner_user_id=owner_user_id,
+            meal_id=meal.id,
+            request=targeted_request,
+            idempotency_key="firestore-contract-targeted",
+        )
+        targeted_retry = await repository.record_meal_feedback(
+            owner_user_id=owner_user_id,
+            meal_id=meal.id,
+            request=targeted_request,
+            idempotency_key="firestore-contract-targeted",
+        )
+        assert targeted_retry == targeted
+        assert targeted.revision.number == 4
+        assert targeted.revision.base_revision_number == 3
+        assert targeted.revision.correction == targeted_request.correction
+        assert targeted.revision.inference.components[0].name == "Ribeye steak"
+
+        targeted_ref = (
+            client.collection("accounts")
+            .document(account.id)
+            .collection("feedback")
+            .document(sha256(b"firestore-contract-targeted").hexdigest())
+        )
+        targeted_raw = (await targeted_ref.get()).to_dict() or {}
+        assert targeted_raw["base_revision_number"] == 3
+        assert targeted_raw["correction"]["scope"] == "component"
+        assert "idempotency_key" not in targeted_raw
+        current = await repository.meal_for_owner(owner_user_id, meal.id)
+        assert current.revision_number == 4
+        assert current.components[0].name == "Ribeye steak"
+
+        with pytest.raises(MealRevisionConflict):
+            await repository.record_meal_feedback(
+                owner_user_id=owner_user_id,
+                meal_id=meal.id,
+                request=targeted_request,
+                idempotency_key="firestore-contract-stale-targeted",
             )
         client.close()
 

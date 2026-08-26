@@ -29,7 +29,9 @@ from .errors import (
     IdempotencyConflict,
     InboundAddressGenerationFailed,
     InvalidDeviceCredential,
+    InvalidMealCorrectionTarget,
     MealNotFound,
+    MealRevisionConflict,
     QuestionAlreadyAnswered,
     QuestionNotFound,
     QuestionSuperseded,
@@ -406,6 +408,22 @@ def create_app(
         return Response(
             status_code=status.HTTP_409_CONFLICT,
             content='{"detail":"idempotency_key_reused_with_different_payload"}',
+            media_type="application/json",
+        )
+
+    @app.exception_handler(MealRevisionConflict)
+    async def meal_revision_conflict_handler(*_: object) -> Response:
+        return Response(
+            status_code=status.HTTP_409_CONFLICT,
+            content='{"detail":"meal_revision_changed"}',
+            media_type="application/json",
+        )
+
+    @app.exception_handler(InvalidMealCorrectionTarget)
+    async def invalid_meal_correction_target_handler(*_: object) -> Response:
+        return Response(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content='{"detail":"invalid_meal_correction_target"}',
             media_type="application/json",
         )
 

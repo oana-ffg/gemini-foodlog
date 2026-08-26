@@ -554,6 +554,30 @@
         "title": "ClarificationQuestion",
         "type": "object"
       },
+      "ComponentCorrection": {
+        "properties": {
+          "component_index": {
+            "minimum": 0.0,
+            "title": "Component Index",
+            "type": "integer"
+          },
+          "replacement": {
+            "$ref": "#/components/schemas/MealComponent"
+          },
+          "scope": {
+            "const": "component",
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "component_index",
+          "replacement"
+        ],
+        "title": "ComponentCorrection",
+        "type": "object"
+      },
       "Confidence": {
         "enum": [
           "confident",
@@ -1030,6 +1054,39 @@
         "title": "InferenceMealComponent",
         "type": "object"
       },
+      "IngredientCorrection": {
+        "properties": {
+          "component_index": {
+            "minimum": 0.0,
+            "title": "Component Index",
+            "type": "integer"
+          },
+          "ingredient_index": {
+            "minimum": 0.0,
+            "title": "Ingredient Index",
+            "type": "integer"
+          },
+          "replacement": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Replacement",
+            "type": "string"
+          },
+          "scope": {
+            "const": "ingredient",
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "component_index",
+          "ingredient_index",
+          "replacement"
+        ],
+        "title": "IngredientCorrection",
+        "type": "object"
+      },
       "LaunchMailConsent": {
         "properties": {
           "account_id": {
@@ -1271,6 +1328,51 @@
             ],
             "title": "Actual Meal"
           },
+          "base_revision_number": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Revision Number"
+          },
+          "correction": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "component": "#/components/schemas/ComponentCorrection",
+                    "ingredient": "#/components/schemas/IngredientCorrection",
+                    "meal": "#/components/schemas/WholeMealCorrection",
+                    "preparation_method": "#/components/schemas/PreparationMethodCorrection"
+                  },
+                  "propertyName": "scope"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/WholeMealCorrection"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ComponentCorrection"
+                  },
+                  {
+                    "$ref": "#/components/schemas/IngredientCorrection"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PreparationMethodCorrection"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -1348,6 +1450,51 @@
               }
             ],
             "title": "Actual Meal"
+          },
+          "base_revision_number": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Revision Number"
+          },
+          "correction": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "component": "#/components/schemas/ComponentCorrection",
+                    "ingredient": "#/components/schemas/IngredientCorrection",
+                    "meal": "#/components/schemas/WholeMealCorrection",
+                    "preparation_method": "#/components/schemas/PreparationMethodCorrection"
+                  },
+                  "propertyName": "scope"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/WholeMealCorrection"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ComponentCorrection"
+                  },
+                  {
+                    "$ref": "#/components/schemas/IngredientCorrection"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PreparationMethodCorrection"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction"
           },
           "explanation": {
             "anyOf": [
@@ -1472,6 +1619,51 @@
               }
             ]
           },
+          "base_revision_number": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Revision Number"
+          },
+          "correction": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "component": "#/components/schemas/ComponentCorrection",
+                    "ingredient": "#/components/schemas/IngredientCorrection",
+                    "meal": "#/components/schemas/WholeMealCorrection",
+                    "preparation_method": "#/components/schemas/PreparationMethodCorrection"
+                  },
+                  "propertyName": "scope"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/WholeMealCorrection"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ComponentCorrection"
+                  },
+                  {
+                    "$ref": "#/components/schemas/IngredientCorrection"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PreparationMethodCorrection"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -1540,6 +1732,39 @@
         ],
         "title": "MealStatus",
         "type": "string"
+      },
+      "PreparationMethodCorrection": {
+        "properties": {
+          "component_index": {
+            "minimum": 0.0,
+            "title": "Component Index",
+            "type": "integer"
+          },
+          "preparation_method_index": {
+            "minimum": 0.0,
+            "title": "Preparation Method Index",
+            "type": "integer"
+          },
+          "replacement": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Replacement",
+            "type": "string"
+          },
+          "scope": {
+            "const": "preparation_method",
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "component_index",
+          "preparation_method_index",
+          "replacement"
+        ],
+        "title": "PreparationMethodCorrection",
+        "type": "object"
       },
       "QuestionAnswerRequest": {
         "properties": {
@@ -1942,6 +2167,42 @@
           "join"
         ],
         "title": "WaitlistJoinRequest",
+        "type": "object"
+      },
+      "WholeMealCorrection": {
+        "properties": {
+          "components": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MealComponent"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Components"
+          },
+          "scope": {
+            "const": "meal",
+            "title": "Scope",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "title"
+        ],
+        "title": "WholeMealCorrection",
         "type": "object"
       }
     }

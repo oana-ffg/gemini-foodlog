@@ -2412,6 +2412,8 @@ class FirestoreRepository:
                     or feedback.kind != request.kind
                     or feedback.actual_meal != request.actual_meal
                     or feedback.explanation != request.explanation
+                    or feedback.correction != request.correction
+                    or feedback.base_revision_number != request.base_revision_number
                     or feedback.question_id is not None
                 ):
                     raise IdempotencyConflict
@@ -2434,6 +2436,8 @@ class FirestoreRepository:
                     kind=request.kind,
                     actual_meal=request.actual_meal,
                     explanation=request.explanation,
+                    correction=request.correction,
+                    base_revision_number=request.base_revision_number,
                     idempotency_key=idempotency_key,
                 )
                 inference, status = revised_inference(meal, request)
@@ -2447,6 +2451,8 @@ class FirestoreRepository:
                     activity_hypothesis=meal.activity_hypothesis,
                     source=MealRevisionSource.USER_FEEDBACK,
                     feedback_id=feedback.id,
+                    base_revision_number=request.base_revision_number,
+                    correction=request.correction,
                 )
                 updated = MealEntry(
                     **inference.model_dump(),
@@ -2713,6 +2719,8 @@ class FirestoreRepository:
                         kind=feedback_request.kind,
                         actual_meal=feedback_request.actual_meal,
                         explanation=feedback_request.explanation,
+                        correction=feedback_request.correction,
+                        base_revision_number=feedback_request.base_revision_number,
                         idempotency_key=idempotency_key,
                         question_id=question.id,
                     )
@@ -2727,6 +2735,8 @@ class FirestoreRepository:
                         activity_hypothesis=meal.activity_hypothesis,
                         source=MealRevisionSource.USER_FEEDBACK,
                         feedback_id=feedback.id,
+                        base_revision_number=feedback_request.base_revision_number,
+                        correction=feedback_request.correction,
                     )
                     updated_meal = MealEntry(
                         **inference.model_dump(),

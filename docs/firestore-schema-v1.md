@@ -79,10 +79,10 @@ belong in private Cloud Storage rather than Firestore.
 | `model_usage/{reservation_id}` | Immutable per-invocation spend reconciliation | Reservation, account, and event scope; model/version, region, prompt version, purpose, retry/evaluation flags, success/failure outcome, integer token counts, integer USD nanos, conservative/actual DKK micros, bounded error code, and creation time. Raw prompts, responses, secrets, and chain-of-thought are forbidden. |
 | `event_heads/{camera_id}` and `event_heads/account-affinity` | Transactional temporal-grouping pointers | latest event ID for one account camera or across the account plus update time; internal state only, never agent evidence. The account pointer lets temporally related evidence from different cameras join one event without any global or cross-tenant query. |
 | `meals/{meal_id}` | Current materialized journal view | `event_id`, tentative `title`, `classification` (`guess`, `unknown`, or `not_cooking`), confidence, review state, bounded components/observations/alternatives, rationale <= 8,000 chars, `current_revision`, `occurred_at`; a truly unknown record cannot be confirmed as correct. |
-| `meals/{meal_id}/revisions/{revision_id}` | Immutable inference/correction history | revision number, source, status, complete bounded inference snapshot, `feedback_id`, `trace_id`; unique revision number per meal. |
+| `meals/{meal_id}/revisions/{revision_id}` | Immutable inference/correction history | revision number, source, status, complete bounded inference snapshot, optional `feedback_id`, `base_revision_number`, and discriminated correction target (`meal`, `component`, `ingredient`, or `preparation_method`), plus `trace_id`; unique revision number per meal. Targeted corrections require the current base revision and preserve every field outside their exact path. |
 | `questions/{question_id}` | Agent-surfaced event or pattern question | `kind` (`event_clarification` or `pattern_hypothesis`), optional `meal_id`/`event_id`, prompt <= 500 chars, reason <= 2,000 chars, evidence refs <= 20, concrete choices for event questions, tentative claim for pattern questions, source revision, response linkage, and `status` (`open`, `answered`, or `superseded`). Generic “what meal were you cooking?” questions are not permitted: event corrections belong on the meal card. |
 | `question_responses/{sha256_key}` | Immutable user response to an agent question | question ID, `kind` (`confirm`, `correct`, or `reject`), optional exact correction <= 500 chars and explanation <= 4,000 chars, optional derived meal-feedback ID, and `idempotency_hash`; the raw response remains separate from later meal or knowledge derivations. |
-| `feedback/{feedback_id}` | Immutable user confirmation/correction/discard | optional `meal_id`/`question_id`, `kind`, actual value <= 500 chars, explanation <= 4,000 chars, `idempotency_hash`; never overwrites the original inference. |
+| `feedback/{feedback_id}` | Immutable user confirmation/correction/discard | optional `meal_id`/`question_id`, `kind`, legacy whole-meal actual value, optional exact correction target and base revision, explanation <= 4,000 chars, `idempotency_hash`; never overwrites the original inference. |
 | `knowledge/{knowledge_id}` | Revisable household facts and hypotheses | statement <= 2,000 chars, `kind`, confidence, status, evidence refs <= 50, supersedes ID, learned-from feedback/question IDs; conflicts create revisions, not silent replacement. |
 | `purchases/{purchase_id}` | One retailer purchase lifecycle | merchant, bounded `revision_count`, creation/update timestamps; order/invoice aliases and source documents remain separate so the root never grows arrays. |
 | `purchase_identities/{sha256_merchant_kind_reference}` | Exact business-identity alias | purchase ID, merchant, kind (`order` or `invoice`), reference hash, creation time; aliases are account-scoped, contain no plaintext reference, and conflicting aliases never trigger an automatic merge. |
@@ -106,21 +106,25 @@ belong in private Cloud Storage rather than Firestore.
 4. Immutable records—media links, feedback, meal revisions, consent events, raw-mail
    identity, and trace identity—are append-only. Corrections update a materialized
    view and append evidence.
-5. Every reference is verified to remain inside the same account before commit.
-6. Growing arrays are forbidden. Evidence lists have explicit caps; full evidence,
+5. A targeted meal correction names its immutable base revision and exact structural
+   path. The transaction rejects stale bases or invalid paths, copies every unrelated
+   component and evidence field forward, appends one revision, and only then updates
+   the materialized meal view.
+6. Every reference is verified to remain inside the same account before commit.
+7. Growing arrays are forbidden. Evidence lists have explicit caps; full evidence,
    frames, line items, and revisions use subcollections.
-7. Firestore documents remain comfortably below its 1 MiB limit; application writes
+8. Firestore documents remain comfortably below its 1 MiB limit; application writes
    reject the tighter bounds above before serialization.
-8. Inbound mail reserves its deterministic account-scoped transport identity before
+9. Inbound mail reserves its deterministic account-scoped transport identity before
    object upload, moves through stored/published states, and retries unfinished
    publication. A reused Message-ID with different bytes falls back to a
    content-qualified identity so conflicting evidence is preserved rather than
    overwritten or dropped.
-9. Inbound MIME bytes are always `untrusted_external`. The gateway validates bounded
+10. Inbound MIME bytes are always `untrusted_external`. The gateway validates bounded
    structure and supported passive content before storage, publishes no message body
    or attachment content, and never promotes email text into executable agent
    instructions.
-10. Purchase identity uses only explicit account/merchant/order/invoice aliases. A
+11. Purchase identity uses only explicit account/merchant/order/invoice aliases. A
     raw-message retry is one immutable source document; later documents sharing an
     exact alias append revisions. Identifier-free or merely similar documents remain
     separate, and a message bridging aliases already owned by different purchases

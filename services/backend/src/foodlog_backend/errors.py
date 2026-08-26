@@ -102,6 +102,14 @@ class MealNotFound(FoodLogError):
     pass
 
 
+class MealRevisionConflict(FoodLogError):
+    pass
+
+
+class InvalidMealCorrectionTarget(FoodLogError):
+    pass
+
+
 class QuestionNotFound(FoodLogError):
     pass
 

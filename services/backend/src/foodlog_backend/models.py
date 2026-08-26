@@ -18,6 +18,10 @@ CameraName = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=80),
 ]
+CorrectionText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=200),
+]
 
 
 def utc_now() -> datetime:
@@ -604,6 +608,41 @@ class MealComponent(BaseModel):
     preparation_methods: list[str]
 
 
+class WholeMealCorrection(BaseModel):
+    scope: Literal["meal"]
+    title: CorrectionText
+    components: list[MealComponent] | None = Field(default=None, max_length=20)
+
+
+class ComponentCorrection(BaseModel):
+    scope: Literal["component"]
+    component_index: int = Field(ge=0)
+    replacement: MealComponent
+
+
+class IngredientCorrection(BaseModel):
+    scope: Literal["ingredient"]
+    component_index: int = Field(ge=0)
+    ingredient_index: int = Field(ge=0)
+    replacement: CorrectionText
+
+
+class PreparationMethodCorrection(BaseModel):
+    scope: Literal["preparation_method"]
+    component_index: int = Field(ge=0)
+    preparation_method_index: int = Field(ge=0)
+    replacement: CorrectionText
+
+
+MealCorrection = Annotated[
+    WholeMealCorrection
+    | ComponentCorrection
+    | IngredientCorrection
+    | PreparationMethodCorrection,
+    Field(discriminator="scope"),
+]
+
+
 class MealInference(BaseModel):
     title: str
     confidence: Confidence
@@ -645,6 +684,8 @@ class MealFeedbackRequest(BaseModel):
     kind: MealFeedbackKind
     actual_meal: str | None = Field(default=None, min_length=1, max_length=200)
     explanation: str | None = Field(default=None, min_length=1, max_length=2_000)
+    correction: MealCorrection | None = None
+    base_revision_number: int | None = Field(default=None, ge=1)
 
     @field_validator("actual_meal", "explanation")
     @classmethod
@@ -657,11 +698,20 @@ class MealFeedbackRequest(BaseModel):
         return stripped
 
     @model_validator(mode="after")
-    def confirmation_has_no_correction_payload(self) -> "MealFeedbackRequest":
+    def correction_payload_is_consistent(self) -> "MealFeedbackRequest":
         if self.kind == MealFeedbackKind.CONFIRM and (
-            self.actual_meal is not None or self.explanation is not None
+            self.actual_meal is not None
+            or self.explanation is not None
+            or self.correction is not None
+            or self.base_revision_number is not None
         ):
             raise ValueError("confirmation cannot include correction fields")
+        if self.actual_meal is not None and self.correction is not None:
+            raise ValueError("use either actual_meal or correction, not both")
+        if self.correction is not None and self.base_revision_number is None:
+            raise ValueError("targeted correction requires base_revision_number")
+        if self.correction is None and self.base_revision_number is not None:
+            raise ValueError("base_revision_number requires a targeted correction")
         return self
 
 
@@ -672,6 +722,8 @@ class MealFeedback(BaseModel):
     kind: MealFeedbackKind
     actual_meal: str | None
     explanation: str | None
+    correction: MealCorrection | None = None
+    base_revision_number: int | None = Field(default=None, ge=1)
     idempotency_key: str
     question_id: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
@@ -687,6 +739,8 @@ class MealRevision(BaseModel):
     activity_hypothesis: ActivityMealInferenceV1 | None = None
     source: MealRevisionSource
     feedback_id: str | None = None
+    base_revision_number: int | None = Field(default=None, ge=1)
+    correction: MealCorrection | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
 

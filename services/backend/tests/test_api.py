@@ -15,11 +15,16 @@ from foodlog_backend.errors import AccountCapacityReached
 from foodlog_backend.inference import FixtureInferenceEngine, verify_fixture_files
 from foodlog_backend.models import (
     CaptureEnvelopeV1,
+    Confidence,
+    MealComponent,
     MealEntry,
+    MealFeedbackKind,
+    MealFeedbackRequest,
     QuestionEvidenceKind,
     QuestionEvidenceReference,
     utc_now,
 )
+from foodlog_backend.repository import revised_inference
 from foodlog_backend.settings import Settings
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -940,6 +945,244 @@ def test_correction_keeps_original_inference_and_supports_unresolved_feedback() 
         assert revisions[0]["inference"]["title"] == "Air-fried chicken breast"
         assert revisions[1]["inference"]["title"] == "Turkey breast"
         assert revisions[2]["status"] == "contradicted"
+
+
+def test_targeted_corrections_preserve_unrelated_meal_structure_and_history() -> None:
+    with build_client() as client:
+        _, camera = provision(client)
+        image = (FIXTURES / "synthetic-leftover-pasta.png").read_bytes()
+        post_fixture_capture(
+            client,
+            camera=camera,
+            image=image,
+            idempotency_key="granular-capture-0001",
+        )
+        meal = client.get("/v1/journal", headers=USER_HEADER).json()[0]
+        original_observations = meal["observations"]
+
+        ingredient_payload = {
+            "kind": "correct",
+            "base_revision_number": 1,
+            "correction": {
+                "scope": "ingredient",
+                "component_index": 0,
+                "ingredient_index": 1,
+                "replacement": "basil pesto",
+            },
+            "explanation": "The sauce was green pesto, not tomato sauce.",
+        }
+        ingredient = client.post(
+            f"/v1/meals/{meal['id']}/feedback",
+            headers={**USER_HEADER, "Idempotency-Key": "granular-ingredient-0001"},
+            json=ingredient_payload,
+        )
+        ingredient_retry = client.post(
+            f"/v1/meals/{meal['id']}/feedback",
+            headers={**USER_HEADER, "Idempotency-Key": "granular-ingredient-0001"},
+            json=ingredient_payload,
+        )
+        assert ingredient.status_code == ingredient_retry.status_code == 200
+        assert ingredient.json() == ingredient_retry.json()
+        ingredient_result = ingredient.json()
+        assert ingredient_result["feedback"]["correction"] == ingredient_payload["correction"]
+        assert ingredient_result["revision"]["base_revision_number"] == 1
+        assert ingredient_result["revision"]["inference"]["components"] == [
+            {
+                "name": "Tomato fusilli",
+                "ingredients": ["fusilli pasta", "basil pesto"],
+                "preparation_methods": ["reheating"],
+            }
+        ]
+
+        preparation = client.post(
+            f"/v1/meals/{meal['id']}/feedback",
+            headers={**USER_HEADER, "Idempotency-Key": "granular-preparation-0001"},
+            json={
+                "kind": "correct",
+                "base_revision_number": 2,
+                "correction": {
+                    "scope": "preparation_method",
+                    "component_index": 0,
+                    "preparation_method_index": 0,
+                    "replacement": "served cold",
+                },
+            },
+        )
+        assert preparation.status_code == 200
+        assert preparation.json()["revision"]["inference"]["components"][0] == {
+            "name": "Tomato fusilli",
+            "ingredients": ["fusilli pasta", "basil pesto"],
+            "preparation_methods": ["served cold"],
+        }
+
+        component = client.post(
+            f"/v1/meals/{meal['id']}/feedback",
+            headers={**USER_HEADER, "Idempotency-Key": "granular-component-0001"},
+            json={
+                "kind": "correct",
+                "base_revision_number": 3,
+                "correction": {
+                    "scope": "component",
+                    "component_index": 0,
+                    "replacement": {
+                        "name": "Pesto fusilli",
+                        "ingredients": ["fusilli pasta", "basil pesto", "parmesan"],
+                        "preparation_methods": ["served cold"],
+                    },
+                },
+            },
+        )
+        assert component.status_code == 200
+        assert component.json()["revision"]["inference"]["components"][0]["name"] == (
+            "Pesto fusilli"
+        )
+
+        whole_meal = client.post(
+            f"/v1/meals/{meal['id']}/feedback",
+            headers={**USER_HEADER, "Idempotency-Key": "granular-meal-0001"},
+            json={
+                "kind": "correct",
+                "base_revision_number": 4,
+                "correction": {
+                    "scope": "meal",
+                    "title": "Pancakes with berries",
+                    "components": [
+                        {
+                            "name": "Pancakes",
+                            "ingredients": ["flour", "milk", "egg"],
+                            "preparation_methods": ["pan frying"],
+                        },
+                        {
+                            "name": "Berry topping",
+                            "ingredients": ["blueberries"],
+                            "preparation_methods": [],
+                        },
+                    ],
+                },
+            },
+        )
+        assert whole_meal.status_code == 200
+        current = client.get("/v1/journal", headers=USER_HEADER).json()[0]
+        assert current["title"] == "Pancakes with berries"
+        assert [part["name"] for part in current["components"]] == [
+            "Pancakes",
+            "Berry topping",
+        ]
+        assert current["observations"] == original_observations
+        assert current["revision_number"] == 5
+        revisions = client.get(
+            f"/v1/meals/{meal['id']}/revisions", headers=USER_HEADER
+        ).json()
+        assert [revision["number"] for revision in revisions] == [1, 2, 3, 4, 5]
+        assert revisions[0]["inference"]["title"] == "Reheated tomato pasta"
+        assert revisions[1]["correction"]["scope"] == "ingredient"
+        assert revisions[2]["correction"]["scope"] == "preparation_method"
+        assert revisions[3]["correction"]["scope"] == "component"
+        assert revisions[4]["correction"]["scope"] == "meal"
+
+
+def test_targeted_correction_rejects_stale_revision_and_invalid_path() -> None:
+    with build_client() as client:
+        _, camera = provision(client)
+        image = (FIXTURES / "synthetic-steak-airfryer.png").read_bytes()
+        post_fixture_capture(
+            client,
+            camera=camera,
+            image=image,
+            idempotency_key="granular-conflict-capture-0001",
+        )
+        meal = client.get("/v1/journal", headers=USER_HEADER).json()[0]
+        confirmed = client.post(
+            f"/v1/meals/{meal['id']}/feedback",
+            headers={**USER_HEADER, "Idempotency-Key": "granular-confirm-0001"},
+            json={"kind": "confirm"},
+        )
+        stale = client.post(
+            f"/v1/meals/{meal['id']}/feedback",
+            headers={**USER_HEADER, "Idempotency-Key": "granular-stale-0001"},
+            json={
+                "kind": "correct",
+                "base_revision_number": 1,
+                "correction": {
+                    "scope": "ingredient",
+                    "component_index": 0,
+                    "ingredient_index": 0,
+                    "replacement": "lamb steak",
+                },
+            },
+        )
+        invalid_path = client.post(
+            f"/v1/meals/{meal['id']}/feedback",
+            headers={**USER_HEADER, "Idempotency-Key": "granular-invalid-0001"},
+            json={
+                "kind": "correct",
+                "base_revision_number": 2,
+                "correction": {
+                    "scope": "component",
+                    "component_index": 99,
+                    "replacement": {
+                        "name": "Impossible component",
+                        "ingredients": [],
+                        "preparation_methods": [],
+                    },
+                },
+            },
+        )
+
+        assert confirmed.status_code == 200
+        assert stale.status_code == 409
+        assert stale.json() == {"detail": "meal_revision_changed"}
+        assert invalid_path.status_code == 422
+        assert invalid_path.json() == {"detail": "invalid_meal_correction_target"}
+        current = client.get("/v1/journal", headers=USER_HEADER).json()[0]
+        assert current["revision_number"] == 2
+
+
+def test_component_correction_preserves_a_separate_correct_component() -> None:
+    meal = MealEntry(
+        id="meal-two-components",
+        account_id="account-a",
+        capture_id="capture-a",
+        title="Steak and salad",
+        confidence=Confidence.LIKELY,
+        components=[
+            MealComponent(
+                name="Steak",
+                ingredients=["beef"],
+                preparation_methods=["air frying"],
+            ),
+            MealComponent(
+                name="Side salad",
+                ingredients=["lettuce", "tomato"],
+                preparation_methods=["raw"],
+            ),
+        ],
+        observations=["Two meal components are visible."],
+        alternatives=[],
+        rationale="The frame appears to show steak and a side salad.",
+    )
+    request = MealFeedbackRequest.model_validate(
+        {
+            "kind": MealFeedbackKind.CORRECT,
+            "base_revision_number": 1,
+            "correction": {
+                "scope": "component",
+                "component_index": 0,
+                "replacement": {
+                    "name": "Pork chop",
+                    "ingredients": ["pork"],
+                    "preparation_methods": ["air frying"],
+                },
+            },
+        }
+    )
+
+    corrected, status = revised_inference(meal, request)
+
+    assert status == "corrected"
+    assert corrected.components[0].name == "Pork chop"
+    assert corrected.components[1] == meal.components[1]
+    assert meal.components[0].name == "Steak"
 
 
 def test_raw_partial_corrections_are_exact_immutable_and_idempotent() -> None:
