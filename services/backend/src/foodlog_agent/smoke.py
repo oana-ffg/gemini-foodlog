@@ -7,12 +7,12 @@ import os
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from foodlog_agent.event_processing import AdkEventReasoner, EventInferenceProcessor
 from foodlog_agent.event_reasoning import (
     MAX_LLM_CALLS,
     _structured_response,
     _validate_source_identities,
     event_bundle,
-    run_accounted_event_inference,
 )
 from foodlog_agent.prompt import PROMPT_VERSION
 from foodlog_backend.firestore_repository import FirestoreRepository
@@ -69,19 +69,28 @@ async def run_smoke(
     account_id: str,
     event_id: str,
 ) -> AdkSmokeRecord:
-    event, captures = await repository.event_evidence_for_account(
+    event, _ = await repository.event_evidence_for_account(
         account_id=account_id,
         event_id=event_id,
     )
-    accounted = await run_accounted_event_inference(
+    processor = EventInferenceProcessor(
         repository=repository,
-        event=event,
-        captures=captures,
-        invocation_key=invocation_key,
+        reasoner=AdkEventReasoner(),
         purpose="deployment_smoke",
-        retry_attempt=0,
         evaluation=True,
     )
+    claimed = await processor.process(
+        account_id=account_id,
+        event_id=event_id,
+        expected_revision=event.current_revision,
+        worker_id="deployment-smoke",
+        invocation_key=invocation_key,
+    )
+    if claimed is None:
+        raise RuntimeError("Event inference job was not claimable for the deployment smoke")
+    accounted = claimed.accounted
+    if not await processor.release_evaluation(claimed):
+        raise RuntimeError("Deployment smoke lost its event inference lease after success")
     inference = accounted.inference
     usage = accounted.usage
 

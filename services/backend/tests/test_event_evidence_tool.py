@@ -11,6 +11,7 @@ from foodlog_agent.event_evidence_tool import (
     ACCOUNT_ID_STATE_KEY,
     EVENT_EVIDENCE_SCHEMA_VERSION,
     EVENT_ID_STATE_KEY,
+    EVENT_REVISION_STATE_KEY,
     EventEvidenceToolService,
     build_event_evidence_tool,
 )
@@ -22,7 +23,7 @@ from foodlog_backend.storage import InMemoryObjectStore
 
 
 class RecordingArtifactContext:
-    def __init__(self, state: dict[str, str]) -> None:
+    def __init__(self, state: dict[str, object]) -> None:
         self.state = state
         self.saved: list[tuple[str, types.Part, dict[str, Any] | None]] = []
 
@@ -131,6 +132,7 @@ def test_event_tool_uses_trusted_scope_and_returns_ordered_private_artifacts() -
             {
                 ACCOUNT_ID_STATE_KEY: account.id,
                 EVENT_ID_STATE_KEY: later.event.id,
+                EVENT_REVISION_STATE_KEY: earlier.event.current_revision,
             }
         )
         tool = build_event_evidence_tool(repository=repository, object_store=object_store)
@@ -161,6 +163,17 @@ def test_event_tool_uses_trusted_scope_and_returns_ordered_private_artifacts() -
             "event-tool-capture-earlier",
             "event-tool-capture-later",
         ]
+
+        stale_context = RecordingArtifactContext(
+            {
+                ACCOUNT_ID_STATE_KEY: account.id,
+                EVENT_ID_STATE_KEY: later.event.id,
+                EVENT_REVISION_STATE_KEY: earlier.event.current_revision - 1,
+            }
+        )
+        with pytest.raises(ValueError, match="revision changed"):
+            await tool.run_async(args={}, tool_context=stale_context)  # type: ignore[arg-type]
+        assert stale_context.saved == []
 
         live_smoke = await run_smoke(
             account_id=account.id,
@@ -236,7 +249,7 @@ def test_event_tool_cannot_read_another_accounts_event() -> None:
         {ACCOUNT_ID_STATE_KEY: " account-a", EVENT_ID_STATE_KEY: "event-a"},
     ],
 )
-def test_event_tool_fails_closed_without_valid_trusted_scope(state: dict[str, str]) -> None:
+def test_event_tool_fails_closed_without_valid_trusted_scope(state: dict[str, object]) -> None:
     async def scenario() -> None:
         repository = InMemoryRepository(public_account_limit=25, trial_image_limit=200)
         context = RecordingArtifactContext(state)
