@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 
 import pytest
@@ -86,6 +87,17 @@ def test_unknown_activity_rejects_a_question_even_when_it_names_options() -> Non
     payload["question"]["evidence_ids"] = ["obs_meat"]
     with pytest.raises(ValidationError, match="only a tentative meal"):
         ActivityMealInferenceV1.model_validate(payload)
+
+
+def test_zero_sized_image_region_is_rejected_without_vertex_exclusive_minimum() -> None:
+    payload = base_payload()
+    payload["direct_observations"][0]["image_evidence"][0]["region"]["width"] = 0
+    with pytest.raises(ValidationError, match="image region dimensions must be positive"):
+        ActivityMealInferenceV1.model_validate(payload)
+
+
+def test_model_facing_schema_avoids_unsupported_exclusive_minimum() -> None:
+    assert "exclusiveMinimum" not in json.dumps(ActivityMealInferenceV1.model_json_schema())
 
 
 @pytest.mark.parametrize(

@@ -217,14 +217,14 @@
       "additionalProperties": false,
       "properties": {
         "height": {
-          "exclusiveMinimum": 0,
           "maximum": 1,
+          "minimum": 0,
           "title": "Height",
           "type": "number"
         },
         "width": {
-          "exclusiveMinimum": 0,
           "maximum": 1,
+          "minimum": 0,
           "title": "Width",
           "type": "number"
         },

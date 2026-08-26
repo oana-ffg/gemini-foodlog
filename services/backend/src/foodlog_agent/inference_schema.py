@@ -44,11 +44,15 @@ class ContextSourceKind(StrEnum):
 class ImageRegion(InferenceModel):
     x: float = Field(ge=0, le=1)
     y: float = Field(ge=0, le=1)
-    width: float = Field(gt=0, le=1)
-    height: float = Field(gt=0, le=1)
+    # Vertex structured-output schemas support minimum, but not exclusiveMinimum.
+    # The validator below retains the product's stricter positive-size invariant.
+    width: float = Field(ge=0, le=1)
+    height: float = Field(ge=0, le=1)
 
     @model_validator(mode="after")
     def stay_inside_image(self) -> ImageRegion:
+        if self.width <= 0 or self.height <= 0:
+            raise ValueError("image region dimensions must be positive")
         if self.x + self.width > 1 or self.y + self.height > 1:
             raise ValueError("image region must stay inside normalized image bounds")
         return self
