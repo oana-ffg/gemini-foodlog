@@ -1,4 +1,6 @@
 import asyncio
+import json
+from hashlib import sha256
 
 import pytest
 
@@ -18,7 +20,7 @@ from foodlog_backend.models import (
     KnowledgeRevisionDraft,
     KnowledgeRevisionSource,
 )
-from foodlog_backend.repository import InMemoryRepository
+from foodlog_backend.repository import InMemoryRepository, knowledge_revision_request_hash
 
 
 def evidence(
@@ -45,6 +47,38 @@ def draft(
         source=source,
         evidence=evidence_refs,
         reason=f"Record the {lifecycle.value} household belief with exact provenance.",
+    )
+
+
+def test_absent_structured_claim_preserves_legacy_idempotency_hash() -> None:
+    legacy_draft = draft(
+        lifecycle=KnowledgeLifecycle.INFERRED,
+        strength=KnowledgeBeliefStrength.WEAK,
+        statement="Steak may be the usual red meat cooked in the air fryer.",
+        evidence_refs=[
+            evidence(
+                KnowledgeEvidenceKind.MEAL_REVISION,
+                "meal-revision-legacy-001",
+                KnowledgeEvidenceRole.SUPPORTS,
+            )
+        ],
+    )
+    legacy_payload = {
+        "topic_key": "air-fryer meat preference",
+        "expected_revision_number": None,
+        "draft": legacy_draft.model_dump(mode="json", exclude={"claim"}),
+    }
+    expected = sha256(
+        json.dumps(legacy_payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+    assert (
+        knowledge_revision_request_hash(
+            topic_key="Air-Fryer  Meat Preference",
+            expected_revision_number=None,
+            draft=legacy_draft,
+        )
+        == expected
     )
 
 

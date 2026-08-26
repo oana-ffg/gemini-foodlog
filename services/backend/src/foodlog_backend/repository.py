@@ -148,10 +148,16 @@ def knowledge_revision_request_hash(
     expected_revision_number: int | None,
     draft: KnowledgeRevisionDraft,
 ) -> str:
+    draft_payload = draft.model_dump(mode="json")
+    # `claim` was added after the first production wiki revisions. Omitting only
+    # its absent value preserves the exact legacy request hash while still making
+    # every structured claim part of new idempotency identity.
+    if draft_payload.get("claim") is None:
+        draft_payload.pop("claim", None)
     payload = {
         "topic_key": normalize_knowledge_topic(topic_key),
         "expected_revision_number": expected_revision_number,
-        "draft": draft.model_dump(mode="json"),
+        "draft": draft_payload,
     }
     return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
