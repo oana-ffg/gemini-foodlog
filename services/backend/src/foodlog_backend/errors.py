@@ -108,3 +108,7 @@ class QuestionNotFound(FoodLogError):
 
 class QuestionAlreadyAnswered(FoodLogError):
     pass
+
+
+class QuestionSuperseded(FoodLogError):
+    pass

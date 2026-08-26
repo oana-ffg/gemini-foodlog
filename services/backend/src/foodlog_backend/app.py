@@ -32,6 +32,7 @@ from .errors import (
     MealNotFound,
     QuestionAlreadyAnswered,
     QuestionNotFound,
+    QuestionSuperseded,
     TrialQuotaExhausted,
     WaitlistUnavailable,
 )
@@ -63,6 +64,8 @@ from .models import (
     MealRevision,
     QuestionAnswerRequest,
     QuestionAnswerResult,
+    QuestionResponseRequest,
+    QuestionResponseResult,
     QuestionStatus,
     VerifiedDeviceIdentity,
     WaitlistEntry,
@@ -414,6 +417,14 @@ def create_app(
             media_type="application/json",
         )
 
+    @app.exception_handler(QuestionSuperseded)
+    async def question_superseded_handler(*_: object) -> Response:
+        return Response(
+            status_code=status.HTTP_409_CONFLICT,
+            content='{"detail":"question_superseded"}',
+            media_type="application/json",
+        )
+
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok", "mode": active_settings.environment}
@@ -659,6 +670,23 @@ def create_app(
         user_id: str = Depends(request_user_id),
     ) -> QuestionAnswerResult:
         return await container.repository.answer_question(
+            owner_user_id=user_id,
+            question_id=question_id,
+            request=request,
+            idempotency_key=idempotency_key,
+        )
+
+    @app.post(
+        "/v1/questions/{question_id}/responses",
+        response_model=QuestionResponseResult,
+    )
+    async def respond_to_question(
+        question_id: str,
+        request: QuestionResponseRequest,
+        idempotency_key: str = Header(min_length=8, max_length=128),
+        user_id: str = Depends(request_user_id),
+    ) -> QuestionResponseResult:
+        return await container.repository.respond_to_question(
             owner_user_id=user_id,
             question_id=question_id,
             request=request,

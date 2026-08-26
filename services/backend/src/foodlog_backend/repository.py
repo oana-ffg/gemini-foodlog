@@ -28,6 +28,7 @@ from .errors import (
     PurchaseIdentityConflict,
     QuestionAlreadyAnswered,
     QuestionNotFound,
+    QuestionSuperseded,
     RawMailNotFound,
     TrialQuotaExhausted,
     WaitlistUnavailable,
@@ -85,6 +86,13 @@ from .models import (
     PurchaseIdentityResult,
     QuestionAnswerRequest,
     QuestionAnswerResult,
+    QuestionEvidenceKind,
+    QuestionEvidenceReference,
+    QuestionKind,
+    QuestionResponse,
+    QuestionResponseKind,
+    QuestionResponseRequest,
+    QuestionResponseResult,
     QuestionStatus,
     VerifiedDeviceIdentity,
     WaitlistEntry,
@@ -92,6 +100,69 @@ from .models import (
     event_inference_job_id,
     utc_now,
 )
+
+
+def event_question_id(meal_id: str, revision_number: int) -> str:
+    identity = f"event-question-v1:{meal_id}:{revision_number}"
+    return sha256(identity.encode()).hexdigest()
+
+
+def pattern_question_id(account_id: str, tentative_claim: str) -> str:
+    normalized = " ".join(tentative_claim.casefold().split())
+    return sha256(f"pattern-question-v1:{account_id}:{normalized}".encode()).hexdigest()
+
+
+def validate_focused_question_prompt(prompt: str) -> None:
+    normalized = " ".join(prompt.casefold().split())
+    forbidden = (
+        "what meal",
+        "which meal",
+        "what ingredient",
+        "what were you cooking",
+        "what are you cooking",
+    )
+    if any(phrase in normalized for phrase in forbidden):
+        raise ValueError("question must distinguish specific hypotheses, not request a label")
+
+
+def event_question_from_hypothesis(
+    *,
+    meal: MealEntry,
+    revision: MealRevision,
+    hypothesis: ActivityMealInferenceV1,
+    created_at: datetime,
+) -> ClarificationQuestion | None:
+    if hypothesis.question is None:
+        return None
+    choices = [hypothesis.best_guess, *(item.label for item in hypothesis.alternatives)]
+    concrete_choices = list(dict.fromkeys(choice for choice in choices if choice))[:8]
+    if len(concrete_choices) < 2:
+        raise ValueError("focused event questions require at least two concrete choices")
+    return ClarificationQuestion(
+        id=event_question_id(meal.id, revision.number),
+        account_id=meal.account_id,
+        kind=QuestionKind.EVENT_CLARIFICATION,
+        meal_id=meal.id,
+        event_id=meal.event_id,
+        prompt=hypothesis.question.prompt,
+        reason=hypothesis.question.justification,
+        evidence=[
+            QuestionEvidenceReference(
+                kind=QuestionEvidenceKind.MEAL_REVISION,
+                id=revision.id,
+            ),
+            *(
+                QuestionEvidenceReference(
+                    kind=QuestionEvidenceKind.INFERENCE_EVIDENCE,
+                    id=evidence_id,
+                )
+                for evidence_id in hypothesis.question.evidence_ids
+            ),
+        ],
+        choices=concrete_choices,
+        source_revision_number=revision.number,
+        created_at=created_at,
+    )
 
 
 def validate_enqueueable_job(job: DurableJob) -> None:
@@ -487,6 +558,17 @@ class Repository(Protocol):
         reason: str,
     ) -> ClarificationQuestion: ...
 
+    async def open_pattern_question(
+        self,
+        *,
+        account_id: str,
+        prompt: str,
+        reason: str,
+        tentative_claim: str,
+        evidence: list[QuestionEvidenceReference],
+        supersedes_question_id: str | None = None,
+    ) -> ClarificationQuestion: ...
+
     async def list_meals(self, owner_user_id: str) -> list[MealEntry]: ...
 
     async def meal_for_owner(self, owner_user_id: str, meal_id: str) -> MealEntry: ...
@@ -517,6 +599,15 @@ class Repository(Protocol):
         request: QuestionAnswerRequest,
         idempotency_key: str,
     ) -> QuestionAnswerResult: ...
+
+    async def respond_to_question(
+        self,
+        *,
+        owner_user_id: str,
+        question_id: str,
+        request: QuestionResponseRequest,
+        idempotency_key: str,
+    ) -> QuestionResponseResult: ...
 
     async def capture_for_owner(self, owner_user_id: str, capture_id: str) -> CaptureRecord: ...
 
@@ -571,6 +662,8 @@ class InMemoryRepository:
         self._revision_by_feedback: dict[str, MealRevision] = {}
         self._questions: dict[str, ClarificationQuestion] = {}
         self._question_by_meal: dict[str, str] = {}
+        self._question_responses: dict[str, QuestionResponse] = {}
+        self._question_response_by_idempotency: dict[tuple[str, str], str] = {}
         self._lock = asyncio.Lock()
 
     async def provision_account(self, owner_user_id: str) -> Account:
@@ -1736,6 +1829,27 @@ class InMemoryRepository:
                 source=MealRevisionSource.INFERENCE,
                 created_at=now,
             )
+            question = event_question_from_hypothesis(
+                meal=meal,
+                revision=revision,
+                hypothesis=hypothesis,
+                created_at=now,
+            )
+            previous_question_id = self._question_by_meal.get(meal.id)
+            previous_question = (
+                self._questions.get(previous_question_id)
+                if previous_question_id is not None
+                else None
+            )
+            if previous_question is not None and previous_question.status == QuestionStatus.OPEN:
+                previous_question.status = QuestionStatus.SUPERSEDED
+                previous_question.superseded_by_question_id = question.id if question else None
+                previous_question.superseded_at = now
+            if question is not None:
+                self._questions[question.id] = question
+                self._question_by_meal[meal.id] = question.id
+            else:
+                self._question_by_meal.pop(meal.id, None)
 
             self._meals[meal.id] = meal
             self._meal_by_capture[meal.capture_id] = meal.id
@@ -1873,6 +1987,7 @@ class InMemoryRepository:
     ) -> ClarificationQuestion:
         if meal.account_id != account_id:
             raise CrossAccountAccess
+        validate_focused_question_prompt(prompt)
         async with self._lock:
             stored_meal = self._meals.get(meal.id)
             if stored_meal is None or stored_meal.account_id != account_id:
@@ -1883,15 +1998,77 @@ class InMemoryRepository:
                 if existing.account_id != account_id:
                     raise QuestionNotFound
                 return existing.model_copy(deep=True)
+            choices = list(dict.fromkeys([stored_meal.title, *stored_meal.alternatives]))[:8]
+            if len(choices) < 2:
+                raise ValueError("focused event questions require at least two concrete choices")
+            revision = self._meal_revisions[meal.id][-1]
             question = ClarificationQuestion(
-                id=str(uuid4()),
+                id=meal.id,
                 account_id=account_id,
+                kind=QuestionKind.EVENT_CLARIFICATION,
                 meal_id=stored_meal.id,
+                event_id=stored_meal.event_id,
                 prompt=prompt,
                 reason=reason,
+                evidence=[
+                    QuestionEvidenceReference(
+                        kind=QuestionEvidenceKind.MEAL_REVISION,
+                        id=revision.id,
+                    )
+                ],
+                choices=choices,
+                source_revision_number=revision.number,
             )
             self._questions[question.id] = question
             self._question_by_meal[meal.id] = question.id
+            return question.model_copy(deep=True)
+
+    async def open_pattern_question(
+        self,
+        *,
+        account_id: str,
+        prompt: str,
+        reason: str,
+        tentative_claim: str,
+        evidence: list[QuestionEvidenceReference],
+        supersedes_question_id: str | None = None,
+    ) -> ClarificationQuestion:
+        async with self._lock:
+            if account_id not in self._accounts:
+                raise AccountNotProvisioned
+            question_id = pattern_question_id(account_id, tentative_claim)
+            existing = self._questions.get(question_id)
+            if existing is not None:
+                if existing.account_id != account_id:
+                    raise QuestionNotFound
+                return existing.model_copy(deep=True)
+            superseded = None
+            if supersedes_question_id is not None:
+                superseded = self._questions.get(supersedes_question_id)
+                if (
+                    superseded is None
+                    or superseded.account_id != account_id
+                    or superseded.kind != QuestionKind.PATTERN_HYPOTHESIS
+                ):
+                    raise QuestionNotFound
+                if superseded.status != QuestionStatus.OPEN:
+                    raise QuestionSuperseded
+            now = utc_now()
+            question = ClarificationQuestion(
+                id=question_id,
+                account_id=account_id,
+                kind=QuestionKind.PATTERN_HYPOTHESIS,
+                prompt=prompt,
+                reason=reason,
+                evidence=evidence,
+                tentative_claim=tentative_claim,
+                created_at=now,
+            )
+            if superseded is not None:
+                superseded.status = QuestionStatus.SUPERSEDED
+                superseded.superseded_by_question_id = question.id
+                superseded.superseded_at = now
+            self._questions[question.id] = question
             return question.model_copy(deep=True)
 
     async def list_meals(self, owner_user_id: str) -> list[MealEntry]:
@@ -1973,40 +2150,128 @@ class InMemoryRepository:
         request: QuestionAnswerRequest,
         idempotency_key: str,
     ) -> QuestionAnswerResult:
+        result = await self.respond_to_question(
+            owner_user_id=owner_user_id,
+            question_id=question_id,
+            request=QuestionResponseRequest(
+                kind=QuestionResponseKind.CORRECT,
+                correction=request.answer,
+                explanation=request.learning_tip,
+            ),
+            idempotency_key=idempotency_key,
+        )
+        if result.feedback is None or result.revision is None:
+            raise ValueError("legacy event answer did not create a meal revision")
+        return QuestionAnswerResult(
+            question=result.question,
+            feedback=result.feedback,
+            revision=result.revision,
+        )
+
+    async def respond_to_question(
+        self,
+        *,
+        owner_user_id: str,
+        question_id: str,
+        request: QuestionResponseRequest,
+        idempotency_key: str,
+    ) -> QuestionResponseResult:
         account = await self.account_for_owner(owner_user_id)
         async with self._lock:
             question = self._questions.get(question_id)
-            if not question:
+            if not question or question.account_id != account.id:
                 raise QuestionNotFound
-            if question.account_id != account.id:
-                raise CrossAccountAccess
-
-            feedback_request = MealFeedbackRequest(
-                kind=MealFeedbackKind.CORRECT,
-                actual_meal=request.answer,
-                explanation=request.learning_tip,
+            duplicate_id = self._question_response_by_idempotency.get(
+                (account.id, idempotency_key)
             )
-            duplicate_id = self._feedback_by_idempotency.get((account.id, idempotency_key))
-            if question.status == QuestionStatus.ANSWERED and duplicate_id is None:
+            if duplicate_id is not None:
+                response = self._question_responses[duplicate_id]
+                if (
+                    response.question_id != question.id
+                    or response.kind != request.kind
+                    or response.correction != request.correction
+                    or response.explanation != request.explanation
+                ):
+                    raise IdempotencyConflict
+                feedback = (
+                    self._feedback.get(response.feedback_id)
+                    if response.feedback_id is not None
+                    else None
+                )
+                revision = (
+                    self._revision_by_feedback.get(response.feedback_id)
+                    if response.feedback_id is not None
+                    else None
+                )
+                return QuestionResponseResult(
+                    question=question.model_copy(deep=True),
+                    response=response.model_copy(deep=True),
+                    feedback=feedback.model_copy(deep=True) if feedback else None,
+                    revision=revision.model_copy(deep=True) if revision else None,
+                )
+            if question.status == QuestionStatus.SUPERSEDED:
+                raise QuestionSuperseded
+            if question.status != QuestionStatus.OPEN:
                 raise QuestionAlreadyAnswered
 
-            meal = self._owned_meal(account.id, question.meal_id)
-            result = self._record_feedback_locked(
+            feedback_result = None
+            if question.kind == QuestionKind.EVENT_CLARIFICATION and request.kind in {
+                QuestionResponseKind.CONFIRM,
+                QuestionResponseKind.CORRECT,
+            }:
+                if question.meal_id is None:
+                    raise ValueError("event question is missing its meal")
+                meal = self._owned_meal(account.id, question.meal_id)
+                feedback_request = MealFeedbackRequest(
+                    kind=(
+                        MealFeedbackKind.CONFIRM
+                        if request.kind == QuestionResponseKind.CONFIRM
+                        else MealFeedbackKind.CORRECT
+                    ),
+                    actual_meal=(
+                        request.correction
+                        if request.kind == QuestionResponseKind.CORRECT
+                        else None
+                    ),
+                    explanation=(
+                        request.explanation
+                        if request.kind == QuestionResponseKind.CORRECT
+                        else None
+                    ),
+                )
+                feedback_result = self._record_feedback_locked(
+                    account_id=account.id,
+                    meal=meal,
+                    request=feedback_request,
+                    idempotency_key=idempotency_key,
+                    question_id=question.id,
+                )
+
+            response = QuestionResponse(
+                id=sha256(idempotency_key.encode()).hexdigest(),
                 account_id=account.id,
-                meal=meal,
-                request=feedback_request,
-                idempotency_key=idempotency_key,
                 question_id=question.id,
+                kind=request.kind,
+                correction=request.correction,
+                explanation=request.explanation,
+                idempotency_key=idempotency_key,
+                feedback_id=(
+                    feedback_result.feedback.id if feedback_result is not None else None
+                ),
             )
-            if question.status == QuestionStatus.OPEN:
-                question.status = QuestionStatus.ANSWERED
-                question.answer = request.answer
-                question.learning_tip = request.learning_tip
-                question.answered_at = utc_now()
-            return QuestionAnswerResult(
+            question.status = QuestionStatus.ANSWERED
+            question.response_kind = request.kind
+            question.response_id = response.id
+            question.answer = request.correction or request.kind.value
+            question.learning_tip = request.explanation
+            question.answered_at = response.created_at
+            self._question_responses[response.id] = response
+            self._question_response_by_idempotency[(account.id, idempotency_key)] = response.id
+            return QuestionResponseResult(
                 question=question.model_copy(deep=True),
-                feedback=result.feedback,
-                revision=result.revision,
+                response=response.model_copy(deep=True),
+                feedback=(feedback_result.feedback if feedback_result else None),
+                revision=(feedback_result.revision if feedback_result else None),
             )
 
     async def capture_for_owner(self, owner_user_id: str, capture_id: str) -> CaptureRecord:

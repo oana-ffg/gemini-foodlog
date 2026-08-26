@@ -13,7 +13,13 @@ from PIL import Image
 from foodlog_backend.app import create_app, image_dimensions
 from foodlog_backend.errors import AccountCapacityReached
 from foodlog_backend.inference import FixtureInferenceEngine, verify_fixture_files
-from foodlog_backend.models import CaptureEnvelopeV1, MealEntry, utc_now
+from foodlog_backend.models import (
+    CaptureEnvelopeV1,
+    MealEntry,
+    QuestionEvidenceKind,
+    QuestionEvidenceReference,
+    utc_now,
+)
 from foodlog_backend.settings import Settings
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -370,6 +376,49 @@ def post_fixture_capture(
 
     asyncio.run(seed_deterministic_result())
     return response
+
+
+def open_focused_question(client: TestClient, meal_id: str, owner: str = "owner-a") -> dict:
+    async def open_question() -> None:
+        repository = client.app.state.container.repository
+        meal = await repository.meal_for_owner(owner, meal_id)
+        await repository.open_question(
+            account_id=meal.account_id,
+            meal=meal,
+            prompt="Was this beef steak or another red-meat cut?",
+            reason="The image supports two concrete red-meat alternatives.",
+        )
+
+    asyncio.run(open_question())
+    return client.get(
+        "/v1/questions",
+        headers={"X-FoodLog-Local-User": owner},
+    ).json()[0]
+
+
+def open_pattern_question(
+    client: TestClient,
+    *,
+    account_id: str,
+    claim: str,
+    supersedes_question_id: str | None = None,
+):
+    async def open_question():
+        return await client.app.state.container.repository.open_pattern_question(
+            account_id=account_id,
+            prompt=f"I am noticing that {claim}. Is that accurate?",
+            reason="Three account meal revisions support this tentative pattern.",
+            tentative_claim=claim,
+            evidence=[
+                QuestionEvidenceReference(
+                    kind=QuestionEvidenceKind.MEAL_REVISION,
+                    id="meal-revision-evidence-001",
+                )
+            ],
+            supersedes_question_id=supersedes_question_id,
+        )
+
+    return asyncio.run(open_question())
 
 
 def test_shared_browser_ingestion_stores_metadata_and_bytes_without_inference() -> None:
@@ -771,8 +820,8 @@ def test_adversarial_camera_fixtures_remain_uncertain_without_model_call() -> No
             assert entry["title"] == "Unrecognized kitchen activity"
             assert entry["confidence"] == "uncertain"
             questions = client.get("/v1/questions", headers=USER_HEADER).json()
-            assert len(questions) == 1
-            assert questions[0]["meal_id"] == entry["id"]
+            assert questions == []
+            assert entry["clarification_question"] is None
 
 
 def test_declared_image_type_must_match_content() -> None:
@@ -960,18 +1009,15 @@ def test_raw_partial_corrections_are_exact_immutable_and_idempotent() -> None:
 def test_uncertain_question_answer_revises_meal_and_closes_inbox() -> None:
     with build_client() as client:
         _, camera = provision(client)
-        one_pixel_png = b64decode(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
-        )
+        steak_image = (FIXTURES / "synthetic-steak-airfryer.png").read_bytes()
         post_fixture_capture(
             client,
             camera=camera,
-            image=one_pixel_png,
+            image=steak_image,
             idempotency_key="question-capture-0001",
         )
-        questions = client.get("/v1/questions", headers=USER_HEADER).json()
-        assert len(questions) == 1
-        question = questions[0]
+        meal = client.get("/v1/journal", headers=USER_HEADER).json()[0]
+        question = open_focused_question(client, meal["id"])
         request = {
             "headers": {**USER_HEADER, "Idempotency-Key": "question-answer-0001"},
             "json": {
@@ -1001,21 +1047,185 @@ def test_uncertain_question_answer_revises_meal_and_closes_inbox() -> None:
         assert current["status"] == "corrected"
 
 
+@pytest.mark.parametrize(
+    ("response_payload", "expected_status", "has_meal_revision"),
+    [
+        ({"kind": "confirm", "explanation": "The red meat was clearly beef."}, "confirmed", True),
+        (
+            {
+                "kind": "correct",
+                "correction": "Air-fried lamb",
+                "explanation": "The package label said lamb.",
+            },
+            "corrected",
+            True,
+        ),
+        ({"kind": "reject", "explanation": "Neither proposed option fits."}, None, False),
+    ],
+)
+def test_focused_event_question_supports_typed_response_outcomes(
+    response_payload: dict[str, str],
+    expected_status: str | None,
+    has_meal_revision: bool,
+) -> None:
+    with build_client() as client:
+        _, camera = provision(client)
+        steak_image = (FIXTURES / "synthetic-steak-airfryer.png").read_bytes()
+        post_fixture_capture(
+            client,
+            camera=camera,
+            image=steak_image,
+            idempotency_key=f"typed-event-capture-{response_payload['kind']}",
+        )
+        meal = client.get("/v1/journal", headers=USER_HEADER).json()[0]
+        question = open_focused_question(client, meal["id"])
+        assert question["kind"] == "event_clarification"
+        assert question["choices"] == ["Air-fried steak", "another cut of red meat"]
+        assert question["evidence"][0]["kind"] == "meal_revision"
+
+        request = {
+            "headers": {
+                **USER_HEADER,
+                "Idempotency-Key": f"typed-event-response-{response_payload['kind']}",
+            },
+            "json": response_payload,
+        }
+        first = client.post(f"/v1/questions/{question['id']}/responses", **request)
+        retry = client.post(f"/v1/questions/{question['id']}/responses", **request)
+
+        assert first.status_code == retry.status_code == 200
+        assert first.json()["response"]["id"] == retry.json()["response"]["id"]
+        assert first.json()["question"]["response_kind"] == response_payload["kind"]
+        assert (first.json()["revision"] is not None) is has_meal_revision
+        assert (first.json()["feedback"] is not None) is has_meal_revision
+        if expected_status is not None:
+            assert first.json()["revision"]["status"] == expected_status
+        else:
+            unchanged = client.get("/v1/journal", headers=USER_HEADER).json()[0]
+            assert unchanged["revision_number"] == 1
+
+        changed_retry = client.post(
+            f"/v1/questions/{question['id']}/responses",
+            headers=request["headers"],
+            json={"kind": "reject" if response_payload["kind"] != "reject" else "confirm"},
+        )
+        assert changed_retry.status_code == 409
+        assert changed_retry.json() == {
+            "detail": "idempotency_key_reused_with_different_payload"
+        }
+
+
+@pytest.mark.parametrize("response_kind", ["confirm", "correct", "reject"])
+def test_pattern_question_response_is_raw_and_does_not_invent_a_meal_revision(
+    response_kind: str,
+) -> None:
+    with build_client() as client:
+        account, _ = provision(client)
+        question = open_pattern_question(
+            client,
+            account_id=account["id"],
+            claim=f"weekday breakfast pattern {response_kind}",
+        )
+        payload = {
+            "kind": response_kind,
+            "explanation": "This is the user's exact explanation.",
+        }
+        if response_kind == "correct":
+            payload["correction"] = "Weekday breakfasts vary with work schedule."
+        request = {
+            "headers": {
+                **USER_HEADER,
+                "Idempotency-Key": f"pattern-response-{response_kind}-0001",
+            },
+            "json": payload,
+        }
+        first = client.post(f"/v1/questions/{question.id}/responses", **request)
+        retry = client.post(f"/v1/questions/{question.id}/responses", **request)
+
+        assert first.status_code == retry.status_code == 200
+        body = first.json()
+        assert body["question"]["kind"] == "pattern_hypothesis"
+        assert body["question"]["response_kind"] == response_kind
+        assert body["response"]["correction"] == payload.get("correction")
+        assert body["feedback"] is None
+        assert body["revision"] is None
+        assert body["response"]["id"] == retry.json()["response"]["id"]
+
+
+def test_pattern_questions_deduplicate_supersede_and_remain_tenant_scoped() -> None:
+    with build_client() as client:
+        account, _ = provision(client, "owner-a")
+        foreign_account, _ = provision(client, "owner-b")
+        first = open_pattern_question(
+            client,
+            account_id=account["id"],
+            claim="steak is usually eaten on Thursdays",
+        )
+        duplicate = open_pattern_question(
+            client,
+            account_id=account["id"],
+            claim="  Steak is usually eaten on THURSDAYS  ",
+        )
+        assert duplicate.id == first.id
+        foreign_same_claim = open_pattern_question(
+            client,
+            account_id=foreign_account["id"],
+            claim="steak is usually eaten on Thursdays",
+        )
+        assert foreign_same_claim.id != first.id
+
+        replacement = open_pattern_question(
+            client,
+            account_id=account["id"],
+            claim="steak is usually eaten late in the work week",
+            supersedes_question_id=first.id,
+        )
+        superseded = client.get(
+            "/v1/questions?question_status=superseded",
+            headers=USER_HEADER,
+        )
+        assert superseded.status_code == 200
+        assert superseded.json()[0]["superseded_by_question_id"] == replacement.id
+
+        stale = client.post(
+            f"/v1/questions/{first.id}/responses",
+            headers={**USER_HEADER, "Idempotency-Key": "stale-pattern-response-0001"},
+            json={"kind": "reject"},
+        )
+        foreign = client.post(
+            f"/v1/questions/{replacement.id}/responses",
+            headers={
+                "X-FoodLog-Local-User": "owner-b",
+                "Idempotency-Key": "foreign-pattern-response-0001",
+            },
+            json={"kind": "confirm"},
+        )
+        foreign_list = client.get(
+            "/v1/questions",
+            headers={"X-FoodLog-Local-User": "owner-b"},
+        )
+
+        assert stale.status_code == 409
+        assert stale.json() == {"detail": "question_superseded"}
+        assert foreign.status_code == 404
+        assert [question["id"] for question in foreign_list.json()] == [
+            foreign_same_claim.id
+        ]
+
+
 def test_feedback_and_question_access_are_tenant_scoped() -> None:
     with build_client() as client:
         _, camera = provision(client, "owner-a")
         provision(client, "owner-b")
-        one_pixel_png = b64decode(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
-        )
+        steak_image = (FIXTURES / "synthetic-steak-airfryer.png").read_bytes()
         post_fixture_capture(
             client,
             camera=camera,
-            image=one_pixel_png,
+            image=steak_image,
             idempotency_key="scoped-question-capture-0001",
         )
         meal = client.get("/v1/journal", headers=USER_HEADER).json()[0]
-        question = client.get("/v1/questions", headers=USER_HEADER).json()[0]
+        question = open_focused_question(client, meal["id"])
         owner_b = {"X-FoodLog-Local-User": "owner-b"}
 
         feedback = client.post(

@@ -12,6 +12,7 @@ from foodlog_agent.event_reasoning import (
     AccountedEventInference,
     InvalidModelOutputError,
 )
+from foodlog_backend.errors import QuestionSuperseded
 from foodlog_backend.grouping import GroupingPolicy
 from foodlog_backend.inference_schema import ActivityMealInferenceV1
 from foodlog_backend.model_accounting import ModelInvocationExecutionError
@@ -23,6 +24,9 @@ from foodlog_backend.models import (
     MealStatus,
     ModelSpendReservation,
     ModelUsageRecord,
+    QuestionResponseKind,
+    QuestionResponseRequest,
+    QuestionStatus,
     capture_grouping_job_id,
     event_inference_job_id,
     utc_now,
@@ -162,6 +166,7 @@ def _accounted_hypothesis(
     event_id: str,
     capture_ids: list[str],
     kind: str = "tentative_meal",
+    with_question: bool = False,
 ) -> AccountedEventInference:
     payload = base_payload()
     payload["event_id"] = event_id
@@ -177,7 +182,17 @@ def _accounted_hypothesis(
         }
     ]
     payload["components"][0]["evidence_ids"] = ["obs_meat", "ded_meat"]
-    payload["question"] = None
+    payload["question"] = (
+        {
+            "prompt": "Was this beef steak or the lamb alternative?",
+            "justification": "The visible red meat supports both named candidates.",
+            "evidence_ids": ["obs_meat"],
+        }
+        if with_question
+        else None
+    )
+    if with_question:
+        payload["confidence"] = "uncertain"
     if kind == "unknown_activity":
         payload.update(
             kind=kind,
@@ -512,5 +527,87 @@ def test_superseded_event_revision_cannot_publish_a_claimed_hypothesis() -> None
         assert current_event.status == ActivityEventStatus.OPEN
         assert current_event.meal_id is None
         assert repository._meals == {}
+
+    asyncio.run(scenario())
+
+
+def test_reinference_supersedes_the_old_event_question_and_rejects_stale_response() -> None:
+    async def scenario() -> None:
+        repository, account, event = await _prepared_event()
+        first = _accounted_hypothesis(
+            event_id=event.id,
+            capture_ids=["event-processing-earlier", "event-processing-later"],
+            with_question=True,
+        )
+        processor = EventInferenceProcessor(
+            repository=repository,
+            reasoner=RecordingReasoner(result=first),
+        )
+        claimed = await processor.process(
+            account_id=account.id,
+            event_id=event.id,
+            expected_revision=event.current_revision,
+            worker_id="first-question-worker",
+        )
+        assert claimed is not None
+        meal = await processor.publish(claimed)
+        assert meal is not None
+        old_question = (await repository.list_questions(account.owner_user_id))[0]
+        assert old_question.status == QuestionStatus.OPEN
+        assert old_question.choices == ["Air-fried steak", "Air-fried lamb"]
+
+        await _store_and_group(
+            repository,
+            account=account,
+            camera=await repository.camera_for_owner(
+                account.owner_user_id,
+                event.camera_ids[0],
+            ),
+            capture_id="event-processing-reopen-question",
+            captured_at=utc_now(),
+            sequence_number=2,
+        )
+        reopened, captures = await repository.event_evidence_for_account(
+            account_id=account.id,
+            event_id=event.id,
+        )
+        second = _accounted_hypothesis(
+            event_id=event.id,
+            capture_ids=[capture.id for capture in captures],
+            with_question=True,
+        )
+        processor = EventInferenceProcessor(
+            repository=repository,
+            reasoner=RecordingReasoner(result=second),
+        )
+        claimed = await processor.process(
+            account_id=account.id,
+            event_id=event.id,
+            expected_revision=reopened.current_revision,
+            worker_id="replacement-question-worker",
+        )
+        assert claimed is not None
+        revised_meal = await processor.publish(claimed)
+        assert revised_meal is not None
+        assert revised_meal.id == meal.id
+        assert revised_meal.revision_number == 2
+
+        questions = await repository.list_questions(
+            account.owner_user_id,
+            question_status=None,
+        )
+        replacement = next(item for item in questions if item.status == QuestionStatus.OPEN)
+        superseded = next(
+            item for item in questions if item.status == QuestionStatus.SUPERSEDED
+        )
+        assert superseded.id == old_question.id
+        assert superseded.superseded_by_question_id == replacement.id
+        with pytest.raises(QuestionSuperseded):
+            await repository.respond_to_question(
+                owner_user_id=account.owner_user_id,
+                question_id=old_question.id,
+                request=QuestionResponseRequest(kind=QuestionResponseKind.REJECT),
+                idempotency_key="stale-event-question-response",
+            )
 
     asyncio.run(scenario())

@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 from hashlib import sha256
 from typing import Any
@@ -32,6 +33,7 @@ from .errors import (
     PurchaseIdentityConflict,
     QuestionAlreadyAnswered,
     QuestionNotFound,
+    QuestionSuperseded,
     RawMailNotFound,
     TrialQuotaExhausted,
     WaitlistUnavailable,
@@ -85,6 +87,13 @@ from .models import (
     PurchaseIdentityResult,
     QuestionAnswerRequest,
     QuestionAnswerResult,
+    QuestionEvidenceKind,
+    QuestionEvidenceReference,
+    QuestionKind,
+    QuestionResponse,
+    QuestionResponseKind,
+    QuestionResponseRequest,
+    QuestionResponseResult,
     QuestionStatus,
     VerifiedDeviceIdentity,
     WaitlistEntry,
@@ -93,12 +102,16 @@ from .models import (
     utc_now,
 )
 from .repository import (
+    event_question_from_hypothesis,
+    event_question_id,
     inference_from_meal,
     materialize_activity_hypothesis,
+    pattern_question_id,
     purchase_identity_aliases,
     revised_inference,
     validate_capture_scope,
     validate_enqueueable_job,
+    validate_focused_question_prompt,
     validate_purchase_document_retry,
     validate_purchase_identity_alias,
 )
@@ -1913,6 +1926,32 @@ class FirestoreRepository:
                 source=MealRevisionSource.INFERENCE,
                 created_at=now,
             )
+            question = event_question_from_hypothesis(
+                meal=meal,
+                revision=revision,
+                hypothesis=hypothesis,
+                created_at=now,
+            )
+            previous_question_ref = None
+            previous_question = None
+            if existing_meal is not None and (
+                existing_meal.clarification_question is not None
+                or (
+                    existing_meal.activity_hypothesis is not None
+                    and existing_meal.activity_hypothesis.question is not None
+                )
+            ):
+                previous_question_ref = self._collection(account_id, "questions").document(
+                    event_question_id(meal.id, existing_meal.revision_number)
+                )
+                previous_question_snapshot = await previous_question_ref.get(
+                    transaction=transaction
+                )
+                if previous_question_snapshot.exists:
+                    previous_question = _model(
+                        previous_question_snapshot,
+                        ClarificationQuestion,
+                    )
             inferred_event = event.model_copy(
                 update={
                     "status": ActivityEventStatus.INFERRED,
@@ -1939,6 +1978,21 @@ class FirestoreRepository:
                 meal_ref.collection("revisions").document(revision.id),
                 _document(revision),
             )
+            if previous_question is not None and previous_question.status == QuestionStatus.OPEN:
+                transaction.update(
+                    previous_question_ref,
+                    {
+                        "status": QuestionStatus.SUPERSEDED,
+                        "superseded_by_question_id": question.id if question else None,
+                        "superseded_at": now,
+                        "updated_at": now,
+                    },
+                )
+            if question is not None:
+                transaction.create(
+                    self._collection(account_id, "questions").document(question.id),
+                    _document(question),
+                )
             transaction.set(event_ref, _document(inferred_event))
             transaction.set(job_ref, _document(completed_job))
             for capture_ref in capture_refs:
@@ -2162,18 +2216,40 @@ class FirestoreRepository:
     ) -> ClarificationQuestion:
         if meal.account_id != account_id:
             raise CrossAccountAccess
+        validate_focused_question_prompt(prompt)
         meal_ref = self._collection(account_id, "meals").document(meal.id)
-        question_ref = self._collection(account_id, "questions").document(meal.id)
-        question = ClarificationQuestion(
-            id=meal.id,
-            account_id=account_id,
-            meal_id=meal.id,
-            prompt=prompt,
-            reason=reason,
-        )
         meal_snapshot = await meal_ref.get()
         if not meal_snapshot.exists or meal_snapshot.get("account_id") != account_id:
             raise MealNotFound
+        stored_meal = _model(meal_snapshot, MealEntry)
+        choices = list(dict.fromkeys([stored_meal.title, *stored_meal.alternatives]))[:8]
+        if len(choices) < 2:
+            raise ValueError("focused event questions require at least two concrete choices")
+        revision_query = meal_ref.collection("revisions").where(
+            filter=FieldFilter("number", "==", stored_meal.revision_number)
+        )
+        revision_snapshots = [snapshot async for snapshot in revision_query.stream()]
+        if len(revision_snapshots) != 1:
+            raise ValueError("meal revision is missing or ambiguous")
+        revision = _model(revision_snapshots[0], MealRevision)
+        question = ClarificationQuestion(
+            id=meal.id,
+            account_id=account_id,
+            kind=QuestionKind.EVENT_CLARIFICATION,
+            meal_id=meal.id,
+            event_id=stored_meal.event_id,
+            prompt=prompt,
+            reason=reason,
+            evidence=[
+                QuestionEvidenceReference(
+                    kind=QuestionEvidenceKind.MEAL_REVISION,
+                    id=revision.id,
+                )
+            ],
+            choices=choices,
+            source_revision_number=revision.number,
+        )
+        question_ref = self._collection(account_id, "questions").document(question.id)
         try:
             await question_ref.create(_document(question))
             return question
@@ -2185,6 +2261,81 @@ class FirestoreRepository:
             if stored.account_id != account_id or stored.meal_id != meal.id:
                 raise QuestionNotFound from None
             return stored
+
+    async def open_pattern_question(
+        self,
+        *,
+        account_id: str,
+        prompt: str,
+        reason: str,
+        tentative_claim: str,
+        evidence: list[QuestionEvidenceReference],
+        supersedes_question_id: str | None = None,
+    ) -> ClarificationQuestion:
+        question = ClarificationQuestion(
+            id=pattern_question_id(account_id, tentative_claim),
+            account_id=account_id,
+            kind=QuestionKind.PATTERN_HYPOTHESIS,
+            prompt=prompt,
+            reason=reason,
+            evidence=evidence,
+            tentative_claim=tentative_claim,
+        )
+        question_ref = self._collection(account_id, "questions").document(question.id)
+        superseded_ref = (
+            self._collection(account_id, "questions").document(supersedes_question_id)
+            if supersedes_question_id is not None
+            else None
+        )
+        account_ref = self._account(account_id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def open_pattern(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
+            existing_snapshot = await question_ref.get(transaction=transaction)
+            superseded_snapshot = (
+                await superseded_ref.get(transaction=transaction)
+                if superseded_ref is not None
+                else None
+            )
+            if (
+                not account_snapshot.exists
+                or account_snapshot.get("id") != account_id
+                or account_snapshot.get("status") != "active"
+            ):
+                raise AccountNotProvisioned
+            if existing_snapshot.exists:
+                existing = _model(existing_snapshot, ClarificationQuestion)
+                if existing.account_id != account_id:
+                    raise QuestionNotFound
+                return existing
+            superseded = None
+            if superseded_snapshot is not None:
+                if not superseded_snapshot.exists:
+                    raise QuestionNotFound
+                superseded = _model(superseded_snapshot, ClarificationQuestion)
+                if (
+                    superseded.account_id != account_id
+                    or superseded.kind != QuestionKind.PATTERN_HYPOTHESIS
+                ):
+                    raise QuestionNotFound
+                if superseded.status != QuestionStatus.OPEN:
+                    raise QuestionSuperseded
+            transaction.create(question_ref, _document(question))
+            if superseded is not None:
+                transaction.update(
+                    superseded_ref,
+                    {
+                        "status": QuestionStatus.SUPERSEDED,
+                        "superseded_by_question_id": question.id,
+                        "superseded_at": question.created_at,
+                        "updated_at": question.created_at,
+                    },
+                )
+            return question
+
+        return await open_pattern(transaction)
 
     async def list_meals(self, owner_user_id: str) -> list[MealEntry]:
         account = await self.account_for_owner(owner_user_id)
@@ -2222,13 +2373,12 @@ class FirestoreRepository:
         idempotency_key: str,
     ) -> MealFeedbackResult:
         account = await self.account_for_owner(owner_user_id)
-        result, _ = await self._record_feedback(
+        return await self._record_feedback(
             account_id=account.id,
             meal_id=meal_id,
             request=request,
             idempotency_key=idempotency_key,
         )
-        return result
 
     async def _record_feedback(
         self,
@@ -2237,47 +2387,19 @@ class FirestoreRepository:
         meal_id: str,
         request: MealFeedbackRequest,
         idempotency_key: str,
-        question_id: str | None = None,
-        question_answer: QuestionAnswerRequest | None = None,
-    ) -> tuple[MealFeedbackResult, ClarificationQuestion | None]:
-        if (question_id is None) != (question_answer is None):
-            raise ValueError("question ID and answer must be supplied together")
+    ) -> MealFeedbackResult:
         feedback_id = sha256(idempotency_key.encode()).hexdigest()
         feedback_ref = self._collection(account_id, "feedback").document(feedback_id)
         meal_ref = self._collection(account_id, "meals").document(meal_id)
-        question_ref = (
-            self._collection(account_id, "questions").document(question_id)
-            if question_id is not None
-            else None
-        )
         transaction = self._client.transaction()
 
         @firestore.async_transactional
         async def record(transaction):
             existing = await feedback_ref.get(transaction=transaction)
             meal_snapshot = await meal_ref.get(transaction=transaction)
-            question_snapshot = (
-                await question_ref.get(transaction=transaction)
-                if question_ref is not None
-                else None
-            )
             if not meal_snapshot.exists:
                 raise MealNotFound
             meal = _model(meal_snapshot, MealEntry)
-            question = None
-            if question_snapshot is not None:
-                if not question_snapshot.exists:
-                    raise QuestionNotFound
-                question = _model(question_snapshot, ClarificationQuestion)
-                if question.account_id != account_id or question.meal_id != meal.id:
-                    raise QuestionNotFound
-                if question.status == QuestionStatus.ANSWERED and not existing.exists:
-                    raise QuestionAlreadyAnswered
-                if question.status == QuestionStatus.ANSWERED and (
-                    question.answer != question_answer.answer
-                    or question.learning_tip != question_answer.learning_tip
-                ):
-                    raise QuestionAlreadyAnswered
             if existing.exists:
                 feedback_data = existing.to_dict()
                 feedback_data.pop("schema_version", None)
@@ -2290,7 +2412,7 @@ class FirestoreRepository:
                     or feedback.kind != request.kind
                     or feedback.actual_meal != request.actual_meal
                     or feedback.explanation != request.explanation
-                    or feedback.question_id != question_id
+                    or feedback.question_id is not None
                 ):
                     raise IdempotencyConflict
                 revision_snapshot = (
@@ -2313,7 +2435,6 @@ class FirestoreRepository:
                     actual_meal=request.actual_meal,
                     explanation=request.explanation,
                     idempotency_key=idempotency_key,
-                    question_id=question_id,
                 )
                 inference, status = revised_inference(meal, request)
                 revision = MealRevision(
@@ -2347,28 +2468,7 @@ class FirestoreRepository:
                 )
                 transaction.set(meal_ref, _document(updated))
                 result = MealFeedbackResult(feedback=feedback, revision=revision)
-
-            if question is not None and question.status == QuestionStatus.OPEN:
-                answered_at = utc_now()
-                transaction.update(
-                    question_ref,
-                    {
-                        "status": QuestionStatus.ANSWERED,
-                        "answer": question_answer.answer,
-                        "learning_tip": question_answer.learning_tip,
-                        "answered_at": answered_at,
-                        "updated_at": answered_at,
-                    },
-                )
-                question = question.model_copy(
-                    update={
-                        "status": QuestionStatus.ANSWERED,
-                        "answer": question_answer.answer,
-                        "learning_tip": question_answer.learning_tip,
-                        "answered_at": answered_at,
-                    }
-                )
-            return result, question
+            return result
 
         return await record(transaction)
 
@@ -2393,40 +2493,323 @@ class FirestoreRepository:
         request: QuestionAnswerRequest,
         idempotency_key: str,
     ) -> QuestionAnswerResult:
-        account = await self.account_for_owner(owner_user_id)
-        feedback_request = MealFeedbackRequest(
-            kind=MealFeedbackKind.CORRECT,
-            actual_meal=request.answer,
-            explanation=request.learning_tip,
+        result = await self.respond_to_question(
+            owner_user_id=owner_user_id,
+            question_id=question_id,
+            request=QuestionResponseRequest(
+                kind=QuestionResponseKind.CORRECT,
+                correction=request.answer,
+                explanation=request.learning_tip,
+            ),
+            idempotency_key=idempotency_key,
         )
-
-        async def record_once():
-            return await self._record_feedback(
-                account_id=account.id,
-                meal_id=question_id,
-                request=feedback_request,
-                idempotency_key=idempotency_key,
-                question_id=question_id,
-                question_answer=request,
-            )
-
-        try:
-            result, question = await record_once()
-        except ValueError as error:
-            if str(error) != "Failed to commit transaction in 5 attempts.":
-                raise
-            # The Firestore client can exhaust its internal retries under a direct
-            # competing-answer race. One fresh bounded transaction observes the
-            # committed winner and returns either its exact retry or the domain
-            # QuestionAlreadyAnswered result instead of leaking an opaque 500.
-            result, question = await record_once()
-        if question is None:
-            raise ValueError("Question transaction returned no question")
+        if result.feedback is None or result.revision is None:
+            raise ValueError("legacy event answer did not create a meal revision")
         return QuestionAnswerResult(
-            question=question,
+            question=result.question,
             feedback=result.feedback,
             revision=result.revision,
         )
+
+    async def respond_to_question(
+        self,
+        *,
+        owner_user_id: str,
+        question_id: str,
+        request: QuestionResponseRequest,
+        idempotency_key: str,
+    ) -> QuestionResponseResult:
+        account = await self.account_for_owner(owner_user_id)
+        response_id = sha256(idempotency_key.encode()).hexdigest()
+        question_ref = self._collection(account.id, "questions").document(question_id)
+        response_ref = self._collection(account.id, "question_responses").document(
+            response_id
+        )
+
+        async def record_once() -> QuestionResponseResult:
+            transaction = self._client.transaction()
+
+            @firestore.async_transactional
+            async def record(transaction):
+                question_snapshot = await question_ref.get(transaction=transaction)
+                response_snapshot = await response_ref.get(transaction=transaction)
+                if not question_snapshot.exists:
+                    raise QuestionNotFound
+                question = _model(question_snapshot, ClarificationQuestion)
+                if question.account_id != account.id:
+                    raise QuestionNotFound
+
+                if response_snapshot.exists:
+                    response_data = response_snapshot.to_dict() or {}
+                    response_data.pop("schema_version", None)
+                    response_data.pop("idempotency_hash", None)
+                    response_data["idempotency_key"] = idempotency_key
+                    response = QuestionResponse.model_validate(response_data)
+                    if (
+                        response.account_id != account.id
+                        or response.question_id != question.id
+                        or response.kind != request.kind
+                        or response.correction != request.correction
+                        or response.explanation != request.explanation
+                    ):
+                        raise IdempotencyConflict
+                    feedback = None
+                    revision = None
+                    if response.feedback_id is not None:
+                        if question.meal_id is None:
+                            raise ValueError("event response is missing its meal")
+                        feedback_snapshot = await (
+                            self._collection(account.id, "feedback")
+                            .document(response.feedback_id)
+                            .get(transaction=transaction)
+                        )
+                        revision_snapshot = await (
+                            self._collection(account.id, "meals")
+                            .document(question.meal_id)
+                            .collection("revisions")
+                            .document(response.feedback_id)
+                            .get(transaction=transaction)
+                        )
+                        if not feedback_snapshot.exists or not revision_snapshot.exists:
+                            raise ValueError("question response derivation is incomplete")
+                        feedback_data = feedback_snapshot.to_dict() or {}
+                        feedback_data.pop("schema_version", None)
+                        feedback_data.pop("idempotency_hash", None)
+                        feedback_data["idempotency_key"] = idempotency_key
+                        feedback = MealFeedback.model_validate(feedback_data)
+                        revision = _model(revision_snapshot, MealRevision)
+                    return QuestionResponseResult(
+                        question=question,
+                        response=response,
+                        feedback=feedback,
+                        revision=revision,
+                    )
+
+                if (
+                    question.status == QuestionStatus.ANSWERED
+                    and question.response_id is None
+                    and question.kind == QuestionKind.EVENT_CLARIFICATION
+                    and question.meal_id is not None
+                ):
+                    legacy_feedback_ref = self._collection(
+                        account.id, "feedback"
+                    ).document(response_id)
+                    legacy_revision_ref = (
+                        self._collection(account.id, "meals")
+                        .document(question.meal_id)
+                        .collection("revisions")
+                        .document(response_id)
+                    )
+                    legacy_feedback_snapshot = await legacy_feedback_ref.get(
+                        transaction=transaction
+                    )
+                    legacy_revision_snapshot = await legacy_revision_ref.get(
+                        transaction=transaction
+                    )
+                    if legacy_feedback_snapshot.exists and legacy_revision_snapshot.exists:
+                        feedback_data = legacy_feedback_snapshot.to_dict() or {}
+                        feedback_data.pop("schema_version", None)
+                        feedback_data.pop("idempotency_hash", None)
+                        feedback_data["idempotency_key"] = idempotency_key
+                        feedback = MealFeedback.model_validate(feedback_data)
+                        if (
+                            request.kind != QuestionResponseKind.CORRECT
+                            or feedback.account_id != account.id
+                            or feedback.question_id != question.id
+                            or feedback.kind != MealFeedbackKind.CORRECT
+                            or feedback.actual_meal != request.correction
+                            or feedback.explanation != request.explanation
+                        ):
+                            raise IdempotencyConflict
+                        revision = _model(legacy_revision_snapshot, MealRevision)
+                        response = QuestionResponse(
+                            id=response_id,
+                            account_id=account.id,
+                            question_id=question.id,
+                            kind=request.kind,
+                            correction=request.correction,
+                            explanation=request.explanation,
+                            idempotency_key=idempotency_key,
+                            feedback_id=feedback.id,
+                            created_at=feedback.created_at,
+                        )
+                        response_data = _document(
+                            response,
+                            exclude={"idempotency_key"},
+                        )
+                        response_data["idempotency_hash"] = response_id
+                        transaction.create(response_ref, response_data)
+                        transaction.update(
+                            question_ref,
+                            {
+                                "response_kind": request.kind,
+                                "response_id": response.id,
+                                "updated_at": response.created_at,
+                            },
+                        )
+                        upgraded_question = question.model_copy(
+                            update={
+                                "response_kind": request.kind,
+                                "response_id": response.id,
+                            }
+                        )
+                        return QuestionResponseResult(
+                            question=upgraded_question,
+                            response=response,
+                            feedback=feedback,
+                            revision=revision,
+                        )
+
+                if question.status == QuestionStatus.SUPERSEDED:
+                    raise QuestionSuperseded
+                if question.status != QuestionStatus.OPEN:
+                    raise QuestionAlreadyAnswered
+
+                feedback = None
+                revision = None
+                feedback_id = None
+                if question.kind == QuestionKind.EVENT_CLARIFICATION and request.kind in {
+                    QuestionResponseKind.CONFIRM,
+                    QuestionResponseKind.CORRECT,
+                }:
+                    if question.meal_id is None:
+                        raise ValueError("event question is missing its meal")
+                    meal_ref = self._collection(account.id, "meals").document(
+                        question.meal_id
+                    )
+                    feedback_ref = self._collection(account.id, "feedback").document(
+                        response_id
+                    )
+                    meal_snapshot = await meal_ref.get(transaction=transaction)
+                    feedback_snapshot = await feedback_ref.get(transaction=transaction)
+                    if not meal_snapshot.exists:
+                        raise MealNotFound
+                    if feedback_snapshot.exists:
+                        raise IdempotencyConflict
+                    meal = _model(meal_snapshot, MealEntry)
+                    if meal.account_id != account.id:
+                        raise MealNotFound
+                    feedback_request = MealFeedbackRequest(
+                        kind=(
+                            MealFeedbackKind.CONFIRM
+                            if request.kind == QuestionResponseKind.CONFIRM
+                            else MealFeedbackKind.CORRECT
+                        ),
+                        actual_meal=(
+                            request.correction
+                            if request.kind == QuestionResponseKind.CORRECT
+                            else None
+                        ),
+                        explanation=(
+                            request.explanation
+                            if request.kind == QuestionResponseKind.CORRECT
+                            else None
+                        ),
+                    )
+                    feedback = MealFeedback(
+                        id=response_id,
+                        account_id=account.id,
+                        meal_id=meal.id,
+                        kind=feedback_request.kind,
+                        actual_meal=feedback_request.actual_meal,
+                        explanation=feedback_request.explanation,
+                        idempotency_key=idempotency_key,
+                        question_id=question.id,
+                    )
+                    inference, meal_status = revised_inference(meal, feedback_request)
+                    revision = MealRevision(
+                        id=feedback.id,
+                        account_id=account.id,
+                        meal_id=meal.id,
+                        number=meal.revision_number + 1,
+                        status=meal_status,
+                        inference=inference,
+                        activity_hypothesis=meal.activity_hypothesis,
+                        source=MealRevisionSource.USER_FEEDBACK,
+                        feedback_id=feedback.id,
+                    )
+                    updated_meal = MealEntry(
+                        **inference.model_dump(),
+                        id=meal.id,
+                        account_id=meal.account_id,
+                        capture_id=meal.capture_id,
+                        event_id=meal.event_id,
+                        occurred_at=meal.occurred_at,
+                        activity_hypothesis=meal.activity_hypothesis,
+                        status=meal_status,
+                        revision_number=revision.number,
+                        created_at=meal.created_at,
+                    )
+                    feedback_data = _document(feedback, exclude={"idempotency_key"})
+                    feedback_data["idempotency_hash"] = response_id
+                    transaction.create(feedback_ref, feedback_data)
+                    transaction.create(
+                        meal_ref.collection("revisions").document(revision.id),
+                        _document(revision),
+                    )
+                    transaction.set(meal_ref, _document(updated_meal))
+                    feedback_id = feedback.id
+
+                response = QuestionResponse(
+                    id=response_id,
+                    account_id=account.id,
+                    question_id=question.id,
+                    kind=request.kind,
+                    correction=request.correction,
+                    explanation=request.explanation,
+                    idempotency_key=idempotency_key,
+                    feedback_id=feedback_id,
+                )
+                response_data = _document(response, exclude={"idempotency_key"})
+                response_data["idempotency_hash"] = response_id
+                transaction.create(response_ref, response_data)
+                transaction.update(
+                    question_ref,
+                    {
+                        "status": QuestionStatus.ANSWERED,
+                        "answer": request.correction or request.kind.value,
+                        "learning_tip": request.explanation,
+                        "response_kind": request.kind,
+                        "response_id": response.id,
+                        "answered_at": response.created_at,
+                        "updated_at": response.created_at,
+                    },
+                )
+                answered_question = question.model_copy(
+                    update={
+                        "status": QuestionStatus.ANSWERED,
+                        "answer": request.correction or request.kind.value,
+                        "learning_tip": request.explanation,
+                        "response_kind": request.kind,
+                        "response_id": response.id,
+                        "answered_at": response.created_at,
+                    }
+                )
+                return QuestionResponseResult(
+                    question=answered_question,
+                    response=response,
+                    feedback=feedback,
+                    revision=revision,
+                )
+
+            return await record(transaction)
+
+        retry_jitter = int(response_id[:4], 16) / 65_535 * 0.01
+        for fresh_attempt in range(5):
+            try:
+                return await record_once()
+            except ValueError as error:
+                if (
+                    str(error) != "Failed to commit transaction in 5 attempts."
+                    or fresh_attempt == 4
+                ):
+                    raise
+                # Firestore already retries one transaction internally. A pair of
+                # simultaneous responses can still exhaust those attempts in lockstep,
+                # especially in the emulator. Fresh transactions use bounded,
+                # identity-jittered backoff so one observes the committed winner.
+                await asyncio.sleep((0.01 * (2**fresh_attempt)) + retry_jitter)
+        raise AssertionError("unreachable transaction retry state")
 
     async def capture_for_owner(self, owner_user_id: str, capture_id: str) -> CaptureRecord:
         account = await self.account_for_owner(owner_user_id)

@@ -8,7 +8,12 @@ from hashlib import sha256
 import pytest
 from google.cloud.firestore_v1.async_client import AsyncClient
 
-from foodlog_backend.errors import IdempotencyConflict, QuestionAlreadyAnswered
+from foodlog_backend.errors import (
+    IdempotencyConflict,
+    QuestionAlreadyAnswered,
+    QuestionNotFound,
+    QuestionSuperseded,
+)
 from foodlog_backend.firestore_repository import FirestoreRepository
 from foodlog_backend.firestore_repository_smoke import (
     SMOKE_ACCOUNT_ID,
@@ -32,6 +37,11 @@ from foodlog_backend.models import (
     MealStatus,
     QuestionAnswerRequest,
     QuestionAnswerResult,
+    QuestionEvidenceKind,
+    QuestionEvidenceReference,
+    QuestionResponseKind,
+    QuestionResponseRequest,
+    QuestionResponseResult,
     QuestionStatus,
     event_inference_job_id,
     utc_now,
@@ -127,7 +137,7 @@ def test_firestore_meal_question_feedback_and_revisions_are_atomic() -> None:
         outcomes = await asyncio.gather(
             repository.answer_question(
                 owner_user_id=owner_user_id,
-                question_id=meal.id,
+                question_id=questions[0].id,
                 request=QuestionAnswerRequest(
                     answer="Steak",
                     learning_tip="The beef packet has a dark green label.",
@@ -136,7 +146,7 @@ def test_firestore_meal_question_feedback_and_revisions_are_atomic() -> None:
             ),
             repository.answer_question(
                 owner_user_id=owner_user_id,
-                question_id=meal.id,
+                question_id=questions[0].id,
                 request=QuestionAnswerRequest(answer="Lamb"),
                 idempotency_key="firestore-contract-answer-lamb",
             ),
@@ -215,6 +225,147 @@ def test_firestore_meal_question_feedback_and_revisions_are_atomic() -> None:
                 ),
                 idempotency_key="firestore-contract-confirm",
             )
+        client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.skipif(
+    "FIRESTORE_EMULATOR_HOST" not in os.environ,
+    reason="requires the Firestore emulator",
+)
+def test_firestore_pattern_question_lifecycle_is_atomic_and_tenant_scoped() -> None:
+    async def scenario() -> None:
+        project_id = "gemini-foodlog-pattern-question-contract-test"
+        client = AsyncClient(project=project_id)
+        repository = FirestoreRepository(
+            project_id=project_id,
+            public_account_limit=25,
+            trial_image_limit=200,
+            client=client,
+        )
+        owner = await repository.provision_account("pattern-owner")
+        await repository.provision_account("pattern-foreign-owner")
+        evidence = [
+            QuestionEvidenceReference(
+                kind=QuestionEvidenceKind.MEAL_REVISION,
+                id="pattern-meal-revision-001",
+            )
+        ]
+        first = await repository.open_pattern_question(
+            account_id=owner.id,
+            prompt="Steak appears most Thursdays. Is that accurate?",
+            reason="Three Thursday meal revisions support the tentative pattern.",
+            tentative_claim="Steak is usually eaten on Thursdays",
+            evidence=evidence,
+        )
+        duplicate = await repository.open_pattern_question(
+            account_id=owner.id,
+            prompt="A differently worded duplicate should not create a record.",
+            reason="The same normalized claim is already durable.",
+            tentative_claim="  steak is usually eaten on THURSDAYS ",
+            evidence=evidence,
+        )
+        assert duplicate.id == first.id
+
+        replacement = await repository.open_pattern_question(
+            account_id=owner.id,
+            prompt="Steak appears late in the work week. Is that accurate?",
+            reason="New evidence narrows the earlier pattern.",
+            tentative_claim="Steak is usually eaten late in the work week",
+            evidence=evidence,
+            supersedes_question_id=first.id,
+        )
+        all_questions = await repository.list_questions(
+            "pattern-owner",
+            question_status=None,
+        )
+        old = next(question for question in all_questions if question.id == first.id)
+        assert old.status == QuestionStatus.SUPERSEDED
+        assert old.superseded_by_question_id == replacement.id
+        with pytest.raises(QuestionSuperseded):
+            await repository.respond_to_question(
+                owner_user_id="pattern-owner",
+                question_id=first.id,
+                request=QuestionResponseRequest(kind=QuestionResponseKind.REJECT),
+                idempotency_key="pattern-stale-response",
+            )
+        with pytest.raises(QuestionNotFound):
+            await repository.respond_to_question(
+                owner_user_id="pattern-foreign-owner",
+                question_id=replacement.id,
+                request=QuestionResponseRequest(kind=QuestionResponseKind.CONFIRM),
+                idempotency_key="pattern-foreign-response",
+            )
+
+        request = QuestionResponseRequest(
+            kind=QuestionResponseKind.CORRECT,
+            correction="Steak is common near the end of the work week.",
+            explanation="Thursday is not strict when plans move.",
+        )
+        result = await repository.respond_to_question(
+            owner_user_id="pattern-owner",
+            question_id=replacement.id,
+            request=request,
+            idempotency_key="pattern-correct-response",
+        )
+        retry = await repository.respond_to_question(
+            owner_user_id="pattern-owner",
+            question_id=replacement.id,
+            request=request,
+            idempotency_key="pattern-correct-response",
+        )
+        assert retry == result
+        assert result.feedback is None
+        assert result.revision is None
+        assert result.question.response_kind == QuestionResponseKind.CORRECT
+        response_snapshot = await (
+            client.collection("accounts")
+            .document(owner.id)
+            .collection("question_responses")
+            .document(result.response.id)
+            .get()
+        )
+        response_raw = response_snapshot.to_dict() or {}
+        assert "idempotency_key" not in response_raw
+        assert response_raw["idempotency_hash"] == result.response.id
+        assert response_raw["correction"] == request.correction
+        with pytest.raises(IdempotencyConflict):
+            await repository.respond_to_question(
+                owner_user_id="pattern-owner",
+                question_id=replacement.id,
+                request=QuestionResponseRequest(kind=QuestionResponseKind.REJECT),
+                idempotency_key="pattern-correct-response",
+            )
+
+        competing = await repository.open_pattern_question(
+            account_id=owner.id,
+            prompt="Weekday breakfasts appear different from weekends. Is that accurate?",
+            reason="The cited meal revisions show two candidate routines.",
+            tentative_claim="Weekday and weekend breakfasts follow different routines",
+            evidence=evidence,
+        )
+        outcomes = await asyncio.gather(
+            repository.respond_to_question(
+                owner_user_id="pattern-owner",
+                question_id=competing.id,
+                request=QuestionResponseRequest(kind=QuestionResponseKind.CONFIRM),
+                idempotency_key="pattern-race-confirm",
+            ),
+            repository.respond_to_question(
+                owner_user_id="pattern-owner",
+                question_id=competing.id,
+                request=QuestionResponseRequest(kind=QuestionResponseKind.REJECT),
+                idempotency_key="pattern-race-reject",
+            ),
+            return_exceptions=True,
+        )
+        assert (
+            len([item for item in outcomes if isinstance(item, QuestionResponseResult)]) == 1
+        ), repr(outcomes)
+        failures = [item for item in outcomes if isinstance(item, Exception)]
+        assert len(failures) == 1
+        assert isinstance(failures[0], QuestionAlreadyAnswered)
         client.close()
 
     asyncio.run(scenario())
@@ -311,6 +462,10 @@ def test_firestore_event_publication_atomically_fences_lease_and_revision() -> N
         stored_event = await account_ref.collection("events").document(event.id).get()
         stored_job = await account_ref.collection("jobs").document(job.id).get()
         stored_capture = await account_ref.collection("captures").document(capture.id).get()
+        questions = await repository.list_questions(
+            "event-publication-owner",
+            question_status=QuestionStatus.OPEN,
+        )
         revisions = [
             snapshot
             async for snapshot in account_ref.collection("meals")
@@ -323,6 +478,12 @@ def test_firestore_event_publication_atomically_fences_lease_and_revision() -> N
         assert stored_job.get("status") == JobStatus.COMPLETED
         assert stored_capture.get("status") == CaptureStatus.PROCESSED
         assert len(revisions) == 1
+        assert len(questions) == 1
+        assert questions[0].kind == "event_clarification"
+        assert questions[0].meal_id == meal.id
+        assert questions[0].event_id == event.id
+        assert questions[0].choices == ["Air-fried steak", "Air-fried lamb"]
+        assert questions[0].source_revision_number == 1
         client.close()
 
     asyncio.run(scenario())

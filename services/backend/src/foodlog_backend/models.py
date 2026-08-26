@@ -50,6 +50,27 @@ class MealRevisionSource(StrEnum):
 class QuestionStatus(StrEnum):
     OPEN = "open"
     ANSWERED = "answered"
+    SUPERSEDED = "superseded"
+
+
+class QuestionKind(StrEnum):
+    EVENT_CLARIFICATION = "event_clarification"
+    PATTERN_HYPOTHESIS = "pattern_hypothesis"
+
+
+class QuestionResponseKind(StrEnum):
+    CONFIRM = "confirm"
+    CORRECT = "correct"
+    REJECT = "reject"
+
+
+class QuestionEvidenceKind(StrEnum):
+    CAPTURE = "capture"
+    MEAL_REVISION = "meal_revision"
+    PURCHASE_DOCUMENT = "purchase_document"
+    KNOWLEDGE_REVISION = "knowledge_revision"
+    QUESTION = "question"
+    INFERENCE_EVIDENCE = "inference_evidence"
 
 
 class CaptureStatus(StrEnum):
@@ -674,17 +695,132 @@ class MealFeedbackResult(BaseModel):
     revision: MealRevision
 
 
+class QuestionEvidenceReference(BaseModel):
+    kind: QuestionEvidenceKind
+    id: str = Field(min_length=1, max_length=200)
+
+
 class ClarificationQuestion(BaseModel):
     id: str
     account_id: str
-    meal_id: str
-    prompt: str
-    reason: str
+    kind: QuestionKind = QuestionKind.EVENT_CLARIFICATION
+    meal_id: str | None = None
+    event_id: str | None = None
+    prompt: str = Field(min_length=1, max_length=500)
+    reason: str = Field(min_length=1, max_length=2_000)
+    evidence: list[QuestionEvidenceReference] = Field(default_factory=list, max_length=20)
+    choices: list[str] = Field(default_factory=list, max_length=8)
+    tentative_claim: str | None = Field(default=None, min_length=1, max_length=2_000)
+    source_revision_number: int | None = Field(default=None, ge=1)
     status: QuestionStatus = QuestionStatus.OPEN
     answer: str | None = None
     learning_tip: str | None = None
+    response_kind: QuestionResponseKind | None = None
+    response_id: str | None = None
+    superseded_by_question_id: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     answered_at: datetime | None = None
+    superseded_at: datetime | None = None
+
+    @field_validator("choices")
+    @classmethod
+    def strip_question_choices(cls, values: list[str]) -> list[str]:
+        stripped = [value.strip() for value in values]
+        if any(not value for value in stripped):
+            raise ValueError("question choices must contain non-whitespace text")
+        if len(set(value.casefold() for value in stripped)) != len(stripped):
+            raise ValueError("question choices must be unique")
+        return stripped
+
+    @field_validator("evidence")
+    @classmethod
+    def question_evidence_is_unique(
+        cls,
+        values: list[QuestionEvidenceReference],
+    ) -> list[QuestionEvidenceReference]:
+        identities = [(value.kind, value.id) for value in values]
+        if len(set(identities)) != len(identities):
+            raise ValueError("question evidence references must be unique")
+        return values
+
+    @model_validator(mode="after")
+    def validate_question_shape(self) -> "ClarificationQuestion":
+        if self.kind == QuestionKind.EVENT_CLARIFICATION:
+            if self.meal_id is None:
+                raise ValueError("event questions require a meal")
+            if self.tentative_claim is not None:
+                raise ValueError("event questions cannot contain a pattern claim")
+        elif self.meal_id is not None or self.event_id is not None:
+            raise ValueError("pattern questions cannot target one meal or event")
+        elif self.tentative_claim is None:
+            raise ValueError("pattern questions require a tentative claim")
+        elif not self.evidence:
+            raise ValueError("pattern questions require supporting evidence")
+        if self.status == QuestionStatus.OPEN and (
+            self.response_kind is not None
+            or self.response_id is not None
+            or self.answered_at is not None
+            or self.superseded_by_question_id is not None
+            or self.superseded_at is not None
+        ):
+            raise ValueError("open questions cannot contain a resolution")
+        if (
+            self.status == QuestionStatus.ANSWERED
+            and (
+                self.response_kind is None
+                or self.response_id is None
+                or self.answered_at is None
+            )
+            # Legacy persisted questions predate typed response fields.
+            and (self.answer is None or self.answered_at is None)
+        ):
+            raise ValueError("answered questions require a response")
+        if self.status == QuestionStatus.SUPERSEDED and self.superseded_at is None:
+            raise ValueError("superseded questions require a timestamp")
+        return self
+
+
+class QuestionResponseRequest(BaseModel):
+    kind: QuestionResponseKind
+    correction: str | None = Field(default=None, min_length=1, max_length=500)
+    explanation: str | None = Field(default=None, min_length=1, max_length=4_000)
+
+    @field_validator("correction", "explanation")
+    @classmethod
+    def strip_optional_response_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must contain non-whitespace text")
+        return stripped
+
+    @model_validator(mode="after")
+    def correction_matches_kind(self) -> "QuestionResponseRequest":
+        if self.kind == QuestionResponseKind.CORRECT and self.correction is None:
+            raise ValueError("a correction response requires corrected wording")
+        if self.kind != QuestionResponseKind.CORRECT and self.correction is not None:
+            raise ValueError("only a correction response may contain corrected wording")
+        return self
+
+
+class QuestionResponse(BaseModel):
+    id: str
+    account_id: str
+    question_id: str
+    kind: QuestionResponseKind
+    correction: str | None
+    explanation: str | None
+    idempotency_key: str
+    feedback_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class QuestionResponseResult(BaseModel):
+    question: ClarificationQuestion
+    response: QuestionResponse
+    feedback: MealFeedback | None = None
+    revision: MealRevision | None = None
 
 
 class QuestionAnswerRequest(BaseModel):

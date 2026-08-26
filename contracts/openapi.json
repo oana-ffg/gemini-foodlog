@@ -397,14 +397,45 @@
             ],
             "title": "Answered At"
           },
+          "choices": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Choices",
+            "type": "array"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
             "type": "string"
           },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionEvidenceReference"
+            },
+            "maxItems": 20,
+            "title": "Evidence",
+            "type": "array"
+          },
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/QuestionKind",
+            "default": "event_clarification"
           },
           "learning_tip": {
             "anyOf": [
@@ -418,26 +449,105 @@
             "title": "Learning Tip"
           },
           "meal_id": {
-            "title": "Meal Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Meal Id"
           },
           "prompt": {
+            "maxLength": 500,
+            "minLength": 1,
             "title": "Prompt",
             "type": "string"
           },
           "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
             "title": "Reason",
             "type": "string"
+          },
+          "response_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Id"
+          },
+          "response_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuestionResponseKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_revision_number": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Revision Number"
           },
           "status": {
             "$ref": "#/components/schemas/QuestionStatus",
             "default": "open"
+          },
+          "superseded_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded At"
+          },
+          "superseded_by_question_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded By Question Id"
+          },
+          "tentative_claim": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tentative Claim"
           }
         },
         "required": [
           "id",
           "account_id",
-          "meal_id",
           "prompt",
           "reason"
         ],
@@ -1465,10 +1575,205 @@
         "title": "QuestionAnswerResult",
         "type": "object"
       },
+      "QuestionEvidenceKind": {
+        "enum": [
+          "capture",
+          "meal_revision",
+          "purchase_document",
+          "knowledge_revision",
+          "question",
+          "inference_evidence"
+        ],
+        "title": "QuestionEvidenceKind",
+        "type": "string"
+      },
+      "QuestionEvidenceReference": {
+        "properties": {
+          "id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/QuestionEvidenceKind"
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ],
+        "title": "QuestionEvidenceReference",
+        "type": "object"
+      },
+      "QuestionKind": {
+        "enum": [
+          "event_clarification",
+          "pattern_hypothesis"
+        ],
+        "title": "QuestionKind",
+        "type": "string"
+      },
+      "QuestionResponse": {
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "correction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "explanation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Explanation"
+          },
+          "feedback_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feedback Id"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/QuestionResponseKind"
+          },
+          "question_id": {
+            "title": "Question Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "account_id",
+          "question_id",
+          "kind",
+          "correction",
+          "explanation",
+          "idempotency_key"
+        ],
+        "title": "QuestionResponse",
+        "type": "object"
+      },
+      "QuestionResponseKind": {
+        "enum": [
+          "confirm",
+          "correct",
+          "reject"
+        ],
+        "title": "QuestionResponseKind",
+        "type": "string"
+      },
+      "QuestionResponseRequest": {
+        "properties": {
+          "correction": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction"
+          },
+          "explanation": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Explanation"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/QuestionResponseKind"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "QuestionResponseRequest",
+        "type": "object"
+      },
+      "QuestionResponseResult": {
+        "properties": {
+          "feedback": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MealFeedback"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "question": {
+            "$ref": "#/components/schemas/ClarificationQuestion"
+          },
+          "response": {
+            "$ref": "#/components/schemas/QuestionResponse"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MealRevision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "question",
+          "response"
+        ],
+        "title": "QuestionResponseResult",
+        "type": "object"
+      },
       "QuestionStatus": {
         "enum": [
           "open",
-          "answered"
+          "answered",
+          "superseded"
         ],
         "title": "QuestionStatus",
         "type": "string"
@@ -2587,6 +2892,82 @@
           }
         },
         "summary": "Answer Question"
+      }
+    },
+    "/v1/questions/{question_id}/responses": {
+      "post": {
+        "operationId": "respond_to_question_v1_questions__question_id__responses_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "question_id",
+            "required": true,
+            "schema": {
+              "title": "Question Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuestionResponseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionResponseResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Respond To Question"
       }
     },
     "/v1/waitlist": {

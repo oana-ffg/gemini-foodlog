@@ -83,11 +83,6 @@ class FixtureInferenceEngine:
                 "have deterministic results; production inference remains disabled "
                 "until explicitly configured."
             ),
-            clarification_question="What meal or ingredient was being prepared?",
-            clarification_reason=(
-                "The local fixture engine cannot identify this frame, and the answer "
-                "would turn an unresolved journal entry into a confirmed household event."
-            ),
         )
 
 
