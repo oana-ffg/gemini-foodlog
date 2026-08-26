@@ -75,6 +75,7 @@ from .models import (
     InboundMailRoute,
     JobKind,
     JobStatus,
+    KnowledgeLifecycle,
     KnowledgePage,
     KnowledgeRevision,
     KnowledgeRevisionDraft,
@@ -2612,6 +2613,68 @@ class FirestoreRepository:
             page=page,
             revision=_model(revision_snapshot, KnowledgeRevision),
         )
+
+    async def knowledge_page_index_for_account(
+        self,
+        *,
+        account_id: str,
+        limit: int = 50,
+    ) -> list[KnowledgePage]:
+        if not 1 <= limit <= 100:
+            raise ValueError("knowledge page limit must be between 1 and 100")
+        account_snapshot = await self._account(account_id).get()
+        if not account_snapshot.exists or account_snapshot.get("status") != "active":
+            raise AccountNotProvisioned
+        pages: list[KnowledgePage] = []
+        for lifecycle in KnowledgeLifecycle:
+            if lifecycle == KnowledgeLifecycle.RETIRED:
+                continue
+            query = (
+                self._collection(account_id, "knowledge")
+                .where(filter=FieldFilter("lifecycle", "==", lifecycle.value))
+                .order_by("updated_at", direction=firestore.Query.DESCENDING)
+                .limit(limit)
+            )
+            pages.extend(
+                [_model(snapshot, KnowledgePage) async for snapshot in query.stream()]
+            )
+        if any(page.account_id != account_id for page in pages):
+            raise KnowledgePageNotFound
+        return sorted(
+            pages,
+            key=lambda item: (item.updated_at, item.id),
+            reverse=True,
+        )[:limit]
+
+    async def active_knowledge_revision_for_account(
+        self,
+        *,
+        account_id: str,
+        page_id: str,
+    ) -> KnowledgeRevisionResult:
+        account_snapshot = await self._account(account_id).get()
+        if not account_snapshot.exists or account_snapshot.get("status") != "active":
+            raise AccountNotProvisioned
+        page_ref = self._collection(account_id, "knowledge").document(page_id)
+        page_snapshot = await page_ref.get()
+        if not page_snapshot.exists:
+            raise KnowledgePageNotFound
+        page = _model(page_snapshot, KnowledgePage)
+        if page.account_id != account_id or page.lifecycle == KnowledgeLifecycle.RETIRED:
+            raise KnowledgePageNotFound
+        revision_snapshot = await page_ref.collection("revisions").document(
+            page.current_revision_id
+        ).get()
+        if not revision_snapshot.exists:
+            raise ValueError("current knowledge revision is missing")
+        revision = _model(revision_snapshot, KnowledgeRevision)
+        if (
+            revision.account_id != account_id
+            or revision.page_id != page.id
+            or revision.id != page.current_revision_id
+        ):
+            raise KnowledgePageNotFound
+        return KnowledgeRevisionResult(page=page, revision=revision)
 
     async def knowledge_page_for_owner(
         self,

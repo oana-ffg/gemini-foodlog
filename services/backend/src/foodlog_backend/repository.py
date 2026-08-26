@@ -752,6 +752,20 @@ class Repository(Protocol):
         topic_key: str,
     ) -> KnowledgeRevisionResult | None: ...
 
+    async def knowledge_page_index_for_account(
+        self,
+        *,
+        account_id: str,
+        limit: int = 50,
+    ) -> list[KnowledgePage]: ...
+
+    async def active_knowledge_revision_for_account(
+        self,
+        *,
+        account_id: str,
+        page_id: str,
+    ) -> KnowledgeRevisionResult: ...
+
     async def knowledge_page_for_owner(
         self,
         owner_user_id: str,
@@ -2456,6 +2470,60 @@ class InMemoryRepository:
             if page is None:
                 return None
             revision = self._knowledge_revisions[page_id][-1]
+            return KnowledgeRevisionResult(
+                page=page.model_copy(deep=True),
+                revision=revision.model_copy(deep=True),
+            )
+
+    async def knowledge_page_index_for_account(
+        self,
+        *,
+        account_id: str,
+        limit: int = 50,
+    ) -> list[KnowledgePage]:
+        if not 1 <= limit <= 100:
+            raise ValueError("knowledge page limit must be between 1 and 100")
+        async with self._lock:
+            if account_id not in self._accounts:
+                raise AccountNotProvisioned
+            pages = (
+                page
+                for page in self._knowledge_pages.values()
+                if page.account_id == account_id
+                and page.lifecycle != KnowledgeLifecycle.RETIRED
+            )
+            return [
+                page.model_copy(deep=True)
+                for page in sorted(
+                    pages,
+                    key=lambda item: (item.updated_at, item.id),
+                    reverse=True,
+                )[:limit]
+            ]
+
+    async def active_knowledge_revision_for_account(
+        self,
+        *,
+        account_id: str,
+        page_id: str,
+    ) -> KnowledgeRevisionResult:
+        async with self._lock:
+            if account_id not in self._accounts:
+                raise AccountNotProvisioned
+            page = self._knowledge_pages.get(page_id)
+            if (
+                page is None
+                or page.account_id != account_id
+                or page.lifecycle == KnowledgeLifecycle.RETIRED
+            ):
+                raise KnowledgePageNotFound
+            revision = self._knowledge_revisions[page.id][-1]
+            if (
+                revision.account_id != account_id
+                or revision.page_id != page.id
+                or revision.id != page.current_revision_id
+            ):
+                raise KnowledgePageNotFound
             return KnowledgeRevisionResult(
                 page=page.model_copy(deep=True),
                 revision=revision.model_copy(deep=True),

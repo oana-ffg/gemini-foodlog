@@ -607,7 +607,7 @@ def test_firestore_knowledge_revisions_are_atomic_provenanced_and_tenant_scoped(
             client=client,
         )
         owner = await repository.provision_account("knowledge-contract-owner")
-        await repository.provision_account("knowledge-contract-foreign-owner")
+        foreign = await repository.provision_account("knowledge-contract-foreign-owner")
         initial_draft = KnowledgeRevisionDraft(
             title="Thursday dinner pattern",
             statement="Steak may often be eaten on Thursdays.",
@@ -734,6 +734,16 @@ def test_firestore_knowledge_revisions_are_atomic_provenanced_and_tenant_scoped(
             and item.id == revisions[0].id
             for item in revisions[1].evidence
         )
+        assert await repository.knowledge_page_index_for_account(
+            account_id=owner.id
+        ) == [winner.page]
+        assert await repository.active_knowledge_revision_for_account(
+            account_id=owner.id,
+            page_id=winner.page.id,
+        ) == winner
+        assert await repository.knowledge_page_index_for_account(
+            account_id=foreign.id
+        ) == []
 
         account_ref = client.collection("accounts").document(owner.id)
         request_documents = [
@@ -747,6 +757,11 @@ def test_firestore_knowledge_revisions_are_atomic_provenanced_and_tenant_scoped(
         with pytest.raises(KnowledgePageNotFound):
             await repository.knowledge_page_for_owner(
                 "knowledge-contract-foreign-owner", initial.page.id
+            )
+        with pytest.raises(KnowledgePageNotFound):
+            await repository.active_knowledge_revision_for_account(
+                account_id=foreign.id,
+                page_id=winner.page.id,
             )
         client.close()
 

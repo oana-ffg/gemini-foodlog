@@ -1,6 +1,7 @@
 import asyncio
 import json
 from hashlib import sha256
+from pathlib import Path
 
 import pytest
 
@@ -325,3 +326,104 @@ def test_knowledge_draft_requires_unique_and_explicit_contradicting_provenance()
             statement="A contradiction needs explicit contradicting evidence.",
             evidence_refs=[duplicate],
         )
+
+
+def test_knowledge_page_index_is_bounded_current_and_tenant_scoped() -> None:
+    async def scenario() -> None:
+        repository = InMemoryRepository(public_account_limit=25, trial_image_limit=200)
+        owner = await repository.provision_account("knowledge-index-owner")
+        foreign = await repository.provision_account("knowledge-index-foreign")
+        created = []
+        for index in range(55):
+            created.append(
+                await repository.record_knowledge_revision(
+                    account_id=owner.id,
+                    topic_key=f"Indexed topic {index:02d}",
+                    expected_revision_number=None,
+                    draft=draft(
+                        lifecycle=KnowledgeLifecycle.INFERRED,
+                        strength=KnowledgeBeliefStrength.WEAK,
+                        statement=f"Indexed household statement {index:02d}.",
+                        evidence_refs=[
+                            evidence(
+                                KnowledgeEvidenceKind.MEAL_REVISION,
+                                f"knowledge-index-meal-{index:02d}",
+                                KnowledgeEvidenceRole.SUPPORTS,
+                            )
+                        ],
+                    ),
+                    idempotency_key=f"knowledge-index-{index:02d}",
+                )
+            )
+        retired = await repository.record_knowledge_revision(
+            account_id=owner.id,
+            topic_key="Retired indexed topic",
+            expected_revision_number=None,
+            draft=draft(
+                lifecycle=KnowledgeLifecycle.RETIRED,
+                strength=KnowledgeBeliefStrength.WEAK,
+                statement="This page must not be offered to the agent.",
+                evidence_refs=[
+                    evidence(
+                        KnowledgeEvidenceKind.USER_CONTEXT_NOTE,
+                        "knowledge-index-retired-note",
+                        KnowledgeEvidenceRole.SUPPORTS,
+                    )
+                ],
+                source=KnowledgeRevisionSource.USER_STATEMENT,
+            ),
+            idempotency_key="knowledge-index-retired",
+        )
+
+        index = await repository.knowledge_page_index_for_account(
+            account_id=owner.id
+        )
+        assert len(index) == 50
+        assert index[0].id == created[-1].page.id
+        assert retired.page.id not in {page.id for page in index}
+        assert all(page.account_id == owner.id for page in index)
+        selected = await repository.active_knowledge_revision_for_account(
+            account_id=owner.id,
+            page_id=created[20].page.id,
+        )
+        assert selected == created[20]
+        assert await repository.knowledge_page_index_for_account(
+            account_id=foreign.id
+        ) == []
+        with pytest.raises(KnowledgePageNotFound):
+            await repository.active_knowledge_revision_for_account(
+                account_id=foreign.id,
+                page_id=created[20].page.id,
+            )
+        with pytest.raises(KnowledgePageNotFound):
+            await repository.active_knowledge_revision_for_account(
+                account_id=owner.id,
+                page_id=retired.page.id,
+            )
+        with pytest.raises(ValueError, match="between 1 and 100"):
+            await repository.knowledge_page_index_for_account(
+                account_id=owner.id,
+                limit=101,
+            )
+
+    asyncio.run(scenario())
+
+
+def test_firestore_knowledge_index_matches_current_lifecycle_projection() -> None:
+    repository_root = Path(__file__).resolve().parents[3]
+    definition = json.loads(
+        (repository_root / "infra/firestore/firestore.indexes.json").read_text()
+    )
+    knowledge_indexes = [
+        item for item in definition["indexes"] if item["collectionGroup"] == "knowledge"
+    ]
+    assert knowledge_indexes == [
+        {
+            "collectionGroup": "knowledge",
+            "queryScope": "COLLECTION",
+            "fields": [
+                {"fieldPath": "lifecycle", "order": "ASCENDING"},
+                {"fieldPath": "updated_at", "order": "DESCENDING"},
+            ],
+        }
+    ]
