@@ -1,0 +1,509 @@
+{
+  "$defs": {
+    "Alternative": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_ids": {
+          "items": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "label": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "reason",
+        "evidence_ids"
+      ],
+      "title": "Alternative",
+      "type": "object"
+    },
+    "ContextEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "source_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Source Id",
+          "type": "string"
+        },
+        "source_kind": {
+          "$ref": "#/$defs/ContextSourceKind"
+        }
+      },
+      "required": [
+        "id",
+        "description",
+        "source_kind",
+        "source_id"
+      ],
+      "title": "ContextEvidence",
+      "type": "object"
+    },
+    "ContextSourceKind": {
+      "enum": [
+        "purchase",
+        "household_knowledge",
+        "recent_meal",
+        "user_note"
+      ],
+      "title": "ContextSourceKind",
+      "type": "string"
+    },
+    "Deduction": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "description",
+        "evidence_ids"
+      ],
+      "title": "Deduction",
+      "type": "object"
+    },
+    "DirectObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "image_evidence": {
+          "items": {
+            "$ref": "#/$defs/ImageEvidenceLink"
+          },
+          "maxItems": 12,
+          "minItems": 1,
+          "title": "Image Evidence",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "description",
+        "image_evidence"
+      ],
+      "title": "DirectObservation",
+      "type": "object"
+    },
+    "FocusedEventQuestion": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_ids": {
+          "items": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "justification": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Justification",
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 6,
+          "minItems": 2,
+          "title": "Options",
+          "type": "array"
+        },
+        "prompt": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Prompt",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prompt",
+        "justification",
+        "options",
+        "evidence_ids"
+      ],
+      "title": "FocusedEventQuestion",
+      "type": "object"
+    },
+    "ImageEvidenceLink": {
+      "additionalProperties": false,
+      "properties": {
+        "capture_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Capture Id",
+          "type": "string"
+        },
+        "region": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageRegion"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "capture_id"
+      ],
+      "title": "ImageEvidenceLink",
+      "type": "object"
+    },
+    "ImageRegion": {
+      "additionalProperties": false,
+      "properties": {
+        "height": {
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Height",
+          "type": "number"
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Width",
+          "type": "number"
+        },
+        "x": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "title": "ImageRegion",
+      "type": "object"
+    },
+    "InferenceConfidence": {
+      "enum": [
+        "confident",
+        "likely",
+        "uncertain"
+      ],
+      "title": "InferenceConfidence",
+      "type": "string"
+    },
+    "InferenceKind": {
+      "enum": [
+        "tentative_meal",
+        "unknown_activity",
+        "likely_non_cooking"
+      ],
+      "title": "InferenceKind",
+      "type": "string"
+    },
+    "InferenceMealComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "alternatives": {
+          "items": {
+            "$ref": "#/$defs/Alternative"
+          },
+          "maxItems": 8,
+          "title": "Alternatives",
+          "type": "array"
+        },
+        "confidence": {
+          "$ref": "#/$defs/InferenceConfidence"
+        },
+        "evidence_ids": {
+          "items": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "type": "string"
+          },
+          "maxItems": 24,
+          "minItems": 1,
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "ingredients": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 40,
+          "title": "Ingredients",
+          "type": "array"
+        },
+        "name": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "preparation_methods": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Preparation Methods",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "ingredients",
+        "preparation_methods",
+        "confidence",
+        "alternatives",
+        "evidence_ids"
+      ],
+      "title": "InferenceMealComponent",
+      "type": "object"
+    },
+    "ReasoningAssumption": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "knowledge_revision_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Knowledge Revision Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "description",
+        "knowledge_revision_id"
+      ],
+      "title": "ReasoningAssumption",
+      "type": "object"
+    },
+    "UserAction": {
+      "enum": [
+        "confirm_guess",
+        "correct",
+        "discard_not_cooking"
+      ],
+      "title": "UserAction",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "allowed_actions": {
+      "items": {
+        "$ref": "#/$defs/UserAction"
+      },
+      "maxItems": 3,
+      "minItems": 2,
+      "title": "Allowed Actions",
+      "type": "array"
+    },
+    "alternatives": {
+      "items": {
+        "$ref": "#/$defs/Alternative"
+      },
+      "maxItems": 12,
+      "title": "Alternatives",
+      "type": "array"
+    },
+    "assumptions": {
+      "items": {
+        "$ref": "#/$defs/ReasoningAssumption"
+      },
+      "maxItems": 40,
+      "title": "Assumptions",
+      "type": "array"
+    },
+    "best_guess": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Best Guess"
+    },
+    "components": {
+      "items": {
+        "$ref": "#/$defs/InferenceMealComponent"
+      },
+      "maxItems": 20,
+      "title": "Components",
+      "type": "array"
+    },
+    "confidence": {
+      "$ref": "#/$defs/InferenceConfidence"
+    },
+    "contextual_evidence": {
+      "items": {
+        "$ref": "#/$defs/ContextEvidence"
+      },
+      "maxItems": 80,
+      "title": "Contextual Evidence",
+      "type": "array"
+    },
+    "deductions": {
+      "items": {
+        "$ref": "#/$defs/Deduction"
+      },
+      "maxItems": 80,
+      "title": "Deductions",
+      "type": "array"
+    },
+    "direct_observations": {
+      "items": {
+        "$ref": "#/$defs/DirectObservation"
+      },
+      "maxItems": 80,
+      "minItems": 1,
+      "title": "Direct Observations",
+      "type": "array"
+    },
+    "event_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Event Id",
+      "type": "string"
+    },
+    "kind": {
+      "$ref": "#/$defs/InferenceKind"
+    },
+    "question": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FocusedEventQuestion"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "rationale": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Rationale",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "activity-meal-inference-v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_capture_ids": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 120,
+      "minItems": 1,
+      "title": "Source Capture Ids",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "event_id",
+    "source_capture_ids",
+    "kind",
+    "confidence",
+    "components",
+    "direct_observations",
+    "contextual_evidence",
+    "assumptions",
+    "deductions",
+    "alternatives",
+    "rationale",
+    "allowed_actions"
+  ],
+  "title": "ActivityMealInferenceV1",
+  "type": "object"
+}

@@ -2,6 +2,7 @@ import argparse
 import json
 from pathlib import Path
 
+from foodlog_agent.inference_schema import ActivityMealInferenceV1
 from foodlog_backend.app import create_app
 from foodlog_backend.auth import VerifiedIdentity
 from foodlog_backend.models import CaptureEnvelopeV1
@@ -30,6 +31,9 @@ def generated_contracts() -> dict[Path, str]:
         token_verifier=ContractTokenVerifier(),
     )
     return {
+        CONTRACTS_DIRECTORY / "activity-meal-inference-v1.schema.json": canonical_json(
+            ActivityMealInferenceV1.model_json_schema()
+        ),
         CONTRACTS_DIRECTORY / "capture-envelope-v1.schema.json": canonical_json(
             CaptureEnvelopeV1.model_json_schema()
         ),

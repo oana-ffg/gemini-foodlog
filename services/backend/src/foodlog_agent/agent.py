@@ -5,6 +5,7 @@ from google.adk.apps import App
 from google.adk.models import Gemini
 from google.genai import types
 
+from foodlog_agent.inference_schema import ActivityMealInferenceV1
 from foodlog_backend.model_probe import DEFAULT_MODEL
 
 MODEL = os.environ.get("FOODLOG_MODEL", DEFAULT_MODEL)
@@ -28,6 +29,7 @@ root_agent = Agent(
     ),
     instruction=INSTRUCTION,
     tools=[],
+    output_schema=ActivityMealInferenceV1,
 )
 
 app = App(root_agent=root_agent, name="foodlog_agent")
