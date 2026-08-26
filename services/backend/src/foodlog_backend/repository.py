@@ -42,6 +42,7 @@ from .errors import (
     QuestionSuperseded,
     RawMailNotFound,
     TrialQuotaExhausted,
+    UserContextNoteNotFound,
     WaitlistUnavailable,
 )
 from .grouping import (
@@ -115,6 +116,9 @@ from .models import (
     QuestionResponseRequest,
     QuestionResponseResult,
     QuestionStatus,
+    UserContextNote,
+    UserContextNoteCreate,
+    UserContextNoteStatus,
     VerifiedDeviceIdentity,
     WaitlistEntry,
     WholeMealCorrection,
@@ -132,6 +136,14 @@ def event_question_id(meal_id: str, revision_number: int) -> str:
 def pattern_question_id(account_id: str, tentative_claim: str) -> str:
     normalized = " ".join(tentative_claim.casefold().split())
     return sha256(f"pattern-question-v1:{account_id}:{normalized}".encode()).hexdigest()
+
+
+def user_context_note_request_hash(request: UserContextNoteCreate) -> str:
+    return sha256(request.model_dump_json().encode()).hexdigest()
+
+
+def user_context_note_id(account_id: str, idempotency_key: str) -> str:
+    return sha256(f"user-context-note-v1:{account_id}:{idempotency_key}".encode()).hexdigest()
 
 
 def normalize_knowledge_topic(value: str) -> str:
@@ -768,6 +780,29 @@ class Repository(Protocol):
         question_status: QuestionStatus | None = None,
     ) -> list[ClarificationQuestion]: ...
 
+    async def create_user_context_note(
+        self,
+        *,
+        owner_user_id: str,
+        request: UserContextNoteCreate,
+        idempotency_key: str,
+    ) -> UserContextNote: ...
+
+    async def list_user_context_notes(
+        self,
+        owner_user_id: str,
+        *,
+        include_inactive: bool = False,
+        active_at: datetime | None = None,
+    ) -> list[UserContextNote]: ...
+
+    async def retire_user_context_note(
+        self,
+        *,
+        owner_user_id: str,
+        note_id: str,
+    ) -> UserContextNote: ...
+
     async def answer_question(
         self,
         *,
@@ -847,6 +882,8 @@ class InMemoryRepository:
         self._question_by_meal: dict[str, str] = {}
         self._question_responses: dict[str, QuestionResponse] = {}
         self._question_response_by_idempotency: dict[tuple[str, str], str] = {}
+        self._user_context_notes: dict[str, UserContextNote] = {}
+        self._user_context_note_request_hashes: dict[str, str] = {}
         self._lock = asyncio.Lock()
 
     async def provision_account(self, owner_user_id: str) -> Account:
@@ -2443,6 +2480,82 @@ class InMemoryRepository:
                 request=request,
                 idempotency_key=idempotency_key,
             )
+
+    async def create_user_context_note(
+        self,
+        *,
+        owner_user_id: str,
+        request: UserContextNoteCreate,
+        idempotency_key: str,
+    ) -> UserContextNote:
+        account = await self.account_for_owner(owner_user_id)
+        note_id = user_context_note_id(account.id, idempotency_key)
+        request_hash = user_context_note_request_hash(request)
+        async with self._lock:
+            existing = self._user_context_notes.get(note_id)
+            if existing is not None:
+                if self._user_context_note_request_hashes[note_id] != request_hash:
+                    raise IdempotencyConflict
+                return existing.model_copy(deep=True)
+            note = UserContextNote(
+                id=note_id,
+                account_id=account.id,
+                author_user_id=owner_user_id,
+                **request.model_dump(mode="python"),
+            )
+            self._user_context_notes[note.id] = note
+            self._user_context_note_request_hashes[note.id] = request_hash
+            return note.model_copy(deep=True)
+
+    async def list_user_context_notes(
+        self,
+        owner_user_id: str,
+        *,
+        include_inactive: bool = False,
+        active_at: datetime | None = None,
+    ) -> list[UserContextNote]:
+        account = await self.account_for_owner(owner_user_id)
+        evaluated_at = active_at or utc_now()
+        async with self._lock:
+            notes = [
+                note
+                for note in self._user_context_notes.values()
+                if note.account_id == account.id
+                and (include_inactive or note.is_active_at(evaluated_at))
+            ]
+            return [
+                note.model_copy(deep=True)
+                for note in sorted(
+                    notes,
+                    key=lambda item: (item.created_at, item.id),
+                    reverse=True,
+                )
+            ]
+
+    async def retire_user_context_note(
+        self,
+        *,
+        owner_user_id: str,
+        note_id: str,
+    ) -> UserContextNote:
+        account = await self.account_for_owner(owner_user_id)
+        async with self._lock:
+            note = self._user_context_notes.get(note_id)
+            if note is None:
+                raise UserContextNoteNotFound
+            if note.account_id != account.id:
+                raise CrossAccountAccess
+            if note.status == UserContextNoteStatus.RETIRED:
+                return note.model_copy(deep=True)
+            retired = note.model_copy(
+                update={
+                    "status": UserContextNoteStatus.RETIRED,
+                    "retired_at": utc_now(),
+                },
+                deep=True,
+            )
+            self._user_context_notes[note_id] = retired
+            return retired.model_copy(deep=True)
 
     async def list_questions(
         self,

@@ -121,6 +121,74 @@ class KnowledgeEvidenceRole(StrEnum):
     CONTEXT = "context"
 
 
+class UserContextNoteStatus(StrEnum):
+    ACTIVE = "active"
+    RETIRED = "retired"
+
+
+class UserContextNoteCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    text: str = Field(min_length=1, max_length=4_000)
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
+
+    @model_validator(mode="after")
+    def validity_window_is_ordered(self) -> "UserContextNoteCreate":
+        for value in (self.valid_from, self.valid_until):
+            if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+                raise ValueError("context note validity timestamps must include a UTC offset")
+        if (
+            self.valid_from is not None
+            and self.valid_until is not None
+            and self.valid_until <= self.valid_from
+        ):
+            raise ValueError("context note valid_until must be after valid_from")
+        return self
+
+
+class UserContextNote(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    account_id: str = Field(min_length=1, max_length=128)
+    author_user_id: str = Field(min_length=1, max_length=128)
+    text: str = Field(min_length=1, max_length=4_000)
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
+    status: UserContextNoteStatus = UserContextNoteStatus.ACTIVE
+    created_at: datetime = Field(default_factory=utc_now)
+    retired_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def lifecycle_and_window_are_consistent(self) -> "UserContextNote":
+        UserContextNoteCreate(
+            text=self.text,
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+        if self.created_at.tzinfo is None or self.created_at.utcoffset() is None:
+            raise ValueError("context note creation timestamp must include a UTC offset")
+        if self.status == UserContextNoteStatus.ACTIVE and self.retired_at is not None:
+            raise ValueError("active context note cannot have retired_at")
+        if self.status == UserContextNoteStatus.RETIRED and self.retired_at is None:
+            raise ValueError("retired context note requires retired_at")
+        if self.retired_at is not None and (
+            self.retired_at.tzinfo is None or self.retired_at.utcoffset() is None
+        ):
+            raise ValueError("context note retirement timestamp must include a UTC offset")
+        return self
+
+    def is_active_at(self, moment: datetime) -> bool:
+        if moment.tzinfo is None or moment.utcoffset() is None:
+            raise ValueError("context note evaluation timestamp must include a UTC offset")
+        return (
+            self.status == UserContextNoteStatus.ACTIVE
+            and (self.valid_from is None or self.valid_from <= moment)
+            and (self.valid_until is None or moment < self.valid_until)
+        )
+
+
 def _normalize_knowledge_claim_term(
     value: str,
     *,

@@ -98,6 +98,10 @@ class AiTraceNotFound(FoodLogError):
     pass
 
 
+class UserContextNoteNotFound(FoodLogError):
+    pass
+
+
 class IdempotencyConflict(FoodLogError):
     pass
 

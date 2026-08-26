@@ -530,6 +530,17 @@ The observations feed is not a clarification inbox and does not contain generic 
 
 Users can teach or correct household knowledge outside a particular meal through a natural-language input. Stable statements may become versioned wiki knowledge. Temporary statements, such as a visitor bringing duck that may be cooked tomorrow, remain time-bounded context unless the user or later evidence supports promotion to a durable pattern. The raw wording is preserved, and the UI shows the resulting change and offers correction or retirement without requiring redundant approval of knowledge the user just deliberately supplied.
 
+The proactive-context API stores each submitted statement as an immutable,
+account-scoped note with its authenticated author, creation time, and optional
+offset-aware start/end window. Active reads exclude a note before its start, at or
+after its end, or after explicit retirement. Full-history reads retain every state
+for the user's data view and later provenance. Exact create retries return the
+original note; reusing an idempotency key for different wording or timing fails.
+Editing is represented as retiring the old note and creating a replacement, so the
+agent can never mistake overwritten text for the statement that informed an earlier
+inference. Retirement is idempotent and does not promote the note into permanent
+household knowledge.
+
 ## 10. Accounts, devices, and tenant isolation
 
 ### 10.1 Human authentication

@@ -40,6 +40,7 @@ from .errors import (
     QuestionSuperseded,
     RawMailNotFound,
     TrialQuotaExhausted,
+    UserContextNoteNotFound,
     WaitlistUnavailable,
 )
 from .grouping import (
@@ -105,6 +106,9 @@ from .models import (
     QuestionResponseRequest,
     QuestionResponseResult,
     QuestionStatus,
+    UserContextNote,
+    UserContextNoteCreate,
+    UserContextNoteStatus,
     VerifiedDeviceIdentity,
     WaitlistEntry,
     capture_grouping_job_id,
@@ -123,6 +127,8 @@ from .repository import (
     pattern_question_id,
     purchase_identity_aliases,
     revised_inference,
+    user_context_note_id,
+    user_context_note_request_hash,
     validate_capture_scope,
     validate_enqueueable_job,
     validate_focused_question_prompt,
@@ -148,6 +154,15 @@ def _model[ModelT: BaseModel](snapshot: DocumentSnapshot, model_type: type[Model
     if "updated_at" not in model_type.model_fields:
         data.pop("updated_at", None)
     return model_type.model_validate(data)
+
+
+def _user_context_note_from_snapshot(snapshot: DocumentSnapshot) -> UserContextNote:
+    data = snapshot.to_dict()
+    if data is None:
+        raise ValueError(f"Document {snapshot.reference.path} has no data")
+    for internal_field in ("schema_version", "request_hash", "updated_at"):
+        data.pop(internal_field, None)
+    return UserContextNote.model_validate(data)
 
 
 def _legacy_browser_camera_is_migratable(data: dict[str, Any] | None) -> bool:
@@ -2763,6 +2778,101 @@ class FirestoreRepository:
             return result
 
         return await record(transaction)
+
+    async def create_user_context_note(
+        self,
+        *,
+        owner_user_id: str,
+        request: UserContextNoteCreate,
+        idempotency_key: str,
+    ) -> UserContextNote:
+        account = await self.account_for_owner(owner_user_id)
+        note_id = user_context_note_id(account.id, idempotency_key)
+        request_hash = user_context_note_request_hash(request)
+        note = UserContextNote(
+            id=note_id,
+            account_id=account.id,
+            author_user_id=owner_user_id,
+            **request.model_dump(mode="python"),
+        )
+        note_ref = self._collection(account.id, "user_context_notes").document(note.id)
+        try:
+            await note_ref.create(
+                {
+                    **_document(note),
+                    "request_hash": request_hash,
+                    "updated_at": note.created_at,
+                }
+            )
+            return note
+        except AlreadyExists:
+            snapshot = await note_ref.get()
+            if not snapshot.exists or snapshot.get("request_hash") != request_hash:
+                raise IdempotencyConflict from None
+            existing = _user_context_note_from_snapshot(snapshot)
+            if existing.account_id != account.id or existing.author_user_id != owner_user_id:
+                raise IdempotencyConflict from None
+            return existing
+
+    async def list_user_context_notes(
+        self,
+        owner_user_id: str,
+        *,
+        include_inactive: bool = False,
+        active_at: datetime | None = None,
+    ) -> list[UserContextNote]:
+        account = await self.account_for_owner(owner_user_id)
+        evaluated_at = active_at or utc_now()
+        notes = [
+            _user_context_note_from_snapshot(snapshot)
+            async for snapshot in self._collection(account.id, "user_context_notes").stream()
+        ]
+        if any(note.account_id != account.id for note in notes):
+            raise CrossAccountAccess
+        visible = [note for note in notes if include_inactive or note.is_active_at(evaluated_at)]
+        return sorted(
+            visible,
+            key=lambda item: (item.created_at, item.id),
+            reverse=True,
+        )
+
+    async def retire_user_context_note(
+        self,
+        *,
+        owner_user_id: str,
+        note_id: str,
+    ) -> UserContextNote:
+        account = await self.account_for_owner(owner_user_id)
+        note_ref = self._collection(account.id, "user_context_notes").document(note_id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def retire(transaction):
+            snapshot = await note_ref.get(transaction=transaction)
+            if not snapshot.exists:
+                raise UserContextNoteNotFound
+            note = _user_context_note_from_snapshot(snapshot)
+            if note.account_id != account.id:
+                raise UserContextNoteNotFound
+            if note.status == UserContextNoteStatus.RETIRED:
+                return note
+            retired_at = utc_now()
+            transaction.update(
+                note_ref,
+                {
+                    "status": UserContextNoteStatus.RETIRED,
+                    "retired_at": retired_at,
+                    "updated_at": retired_at,
+                },
+            )
+            return note.model_copy(
+                update={
+                    "status": UserContextNoteStatus.RETIRED,
+                    "retired_at": retired_at,
+                }
+            )
+
+        return await retire(transaction)
 
     async def list_questions(
         self,

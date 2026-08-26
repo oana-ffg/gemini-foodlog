@@ -37,6 +37,7 @@ from .errors import (
     QuestionNotFound,
     QuestionSuperseded,
     TrialQuotaExhausted,
+    UserContextNoteNotFound,
     WaitlistUnavailable,
 )
 from .feedback_learning import FeedbackLearningService, MealFeedbackLearningResult
@@ -70,6 +71,8 @@ from .models import (
     QuestionResponseRequest,
     QuestionResponseResult,
     QuestionStatus,
+    UserContextNote,
+    UserContextNoteCreate,
     VerifiedDeviceIdentity,
     WaitlistEntry,
     WaitlistJoinRequest,
@@ -401,6 +404,7 @@ def create_app(
     app.add_exception_handler(CaptureNotFound, resource_missing_handler)
     app.add_exception_handler(MealNotFound, resource_missing_handler)
     app.add_exception_handler(QuestionNotFound, resource_missing_handler)
+    app.add_exception_handler(UserContextNoteNotFound, resource_missing_handler)
 
     @app.exception_handler(CrossAccountAccess)
     async def cross_account_handler(*_: object) -> Response:
@@ -686,6 +690,45 @@ def create_app(
         return await container.repository.list_questions(
             user_id,
             question_status=question_status,
+        )
+
+    @app.post(
+        "/v1/context-notes",
+        response_model=UserContextNote,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def create_user_context_note(
+        request: UserContextNoteCreate,
+        idempotency_key: str = Header(min_length=8, max_length=128),
+        user_id: str = Depends(request_user_id),
+    ) -> UserContextNote:
+        return await container.repository.create_user_context_note(
+            owner_user_id=user_id,
+            request=request,
+            idempotency_key=idempotency_key,
+        )
+
+    @app.get("/v1/context-notes", response_model=list[UserContextNote])
+    async def list_user_context_notes(
+        include_inactive: bool = False,
+        user_id: str = Depends(request_user_id),
+    ) -> list[UserContextNote]:
+        return await container.repository.list_user_context_notes(
+            user_id,
+            include_inactive=include_inactive,
+        )
+
+    @app.post(
+        "/v1/context-notes/{note_id}/retire",
+        response_model=UserContextNote,
+    )
+    async def retire_user_context_note(
+        note_id: str,
+        user_id: str = Depends(request_user_id),
+    ) -> UserContextNote:
+        return await container.repository.retire_user_context_note(
+            owner_user_id=user_id,
+            note_id=note_id,
         )
 
     @app.post(

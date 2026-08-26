@@ -20,6 +20,7 @@ from foodlog_backend.errors import (
     QuestionAlreadyAnswered,
     QuestionNotFound,
     QuestionSuperseded,
+    UserContextNoteNotFound,
 )
 from foodlog_backend.firestore_repository import FirestoreRepository
 from foodlog_backend.firestore_repository_smoke import (
@@ -60,10 +61,87 @@ from foodlog_backend.models import (
     QuestionResponseRequest,
     QuestionResponseResult,
     QuestionStatus,
+    UserContextNoteCreate,
+    UserContextNoteStatus,
     event_inference_job_id,
     utc_now,
 )
 from tests.inference_fixtures import base_payload
+
+
+@pytest.mark.skipif(
+    "FIRESTORE_EMULATOR_HOST" not in os.environ,
+    reason="requires the Firestore emulator",
+)
+def test_firestore_user_context_notes_preserve_history_and_tenant_scope() -> None:
+    async def scenario() -> None:
+        project_id = "gemini-foodlog-context-note-contract-test"
+        client = AsyncClient(project=project_id)
+        repository = FirestoreRepository(
+            project_id=project_id,
+            public_account_limit=25,
+            trial_image_limit=200,
+            client=client,
+        )
+        owner = await repository.provision_account("context-contract-owner")
+        await repository.provision_account("context-contract-foreign")
+        now = utc_now()
+        request = UserContextNoteCreate(
+            text="My MIL brought duck; we intend to cook it tomorrow.",
+            valid_from=now - timedelta(hours=1),
+            valid_until=now + timedelta(days=2),
+        )
+        note = await repository.create_user_context_note(
+            owner_user_id="context-contract-owner",
+            request=request,
+            idempotency_key="context-contract-create-0001",
+        )
+        assert (
+            await repository.create_user_context_note(
+                owner_user_id="context-contract-owner",
+                request=request,
+                idempotency_key="context-contract-create-0001",
+            )
+            == note
+        )
+        with pytest.raises(IdempotencyConflict):
+            await repository.create_user_context_note(
+                owner_user_id="context-contract-owner",
+                request=UserContextNoteCreate(text="Different statement"),
+                idempotency_key="context-contract-create-0001",
+            )
+        assert await repository.list_user_context_notes("context-contract-owner") == [note]
+        assert await repository.list_user_context_notes("context-contract-foreign") == []
+        with pytest.raises(UserContextNoteNotFound):
+            await repository.retire_user_context_note(
+                owner_user_id="context-contract-foreign",
+                note_id=note.id,
+            )
+        retired = await repository.retire_user_context_note(
+            owner_user_id="context-contract-owner",
+            note_id=note.id,
+        )
+        assert retired.status == UserContextNoteStatus.RETIRED
+        assert await repository.list_user_context_notes("context-contract-owner") == []
+        assert await repository.list_user_context_notes(
+            "context-contract-owner",
+            include_inactive=True,
+        ) == [retired]
+        snapshot = (
+            await client.collection("accounts")
+            .document(owner.id)
+            .collection("user_context_notes")
+            .document(note.id)
+            .get()
+        )
+        raw = snapshot.to_dict() or {}
+        assert raw["text"] == request.text
+        assert raw["author_user_id"] == "context-contract-owner"
+        assert "idempotency_key" not in raw
+        assert raw["request_hash"] == sha256(request.model_dump_json().encode()).hexdigest()
+        client.close()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.skipif(
