@@ -4,20 +4,28 @@ import argparse
 import asyncio
 import json
 import os
+from datetime import timedelta
 from typing import Any
 
 from google.api_core.exceptions import AlreadyExists
 from google.cloud.firestore_v1.async_client import AsyncClient
 
 from .firestore_repository import FirestoreRepository
+from .inference_schema import ActivityMealInferenceV1
 from .models import (
+    ActivityEvent,
+    CaptureRecord,
+    CaptureStatus,
     Confidence,
+    DurableJob,
+    JobKind,
     MealComponent,
     MealEntry,
     MealFeedbackKind,
     MealFeedbackRequest,
     QuestionAnswerRequest,
     QuestionStatus,
+    event_inference_job_id,
     utc_now,
 )
 from .repository import Repository
@@ -27,6 +35,11 @@ SMOKE_OWNER_ID = "repository-smoke-owner-v1"
 SMOKE_CAPTURE_ID = "repository-smoke-capture-v1"
 SMOKE_MEAL_ID = "repository-smoke-meal-v1"
 SMOKE_FIXTURE_VERSION = "firestore-repository-smoke-v1"
+SMOKE_EVENT_ID = "repository-smoke-event-publication-v1"
+SMOKE_EVENT_CAPTURE_ID = "repository-smoke-event-capture-v1"
+SMOKE_EVENT_CAMERA_ID = "repository-smoke-event-camera-v1"
+SMOKE_EVENT_LEASE_ID = "repository-smoke-event-lease-v1"
+SMOKE_EVENT_WORKER_ID = "repository-smoke-event-worker-v1"
 
 
 async def _ensure_document(reference, expected: dict[str, Any]) -> None:
@@ -39,7 +52,7 @@ async def _ensure_document(reference, expected: dict[str, Any]) -> None:
             snapshot = await reference.get()
     data = snapshot.to_dict() or {}
     for field, value in expected.items():
-        if field in {"created_at", "updated_at"}:
+        if field in {"available_at", "created_at", "updated_at"}:
             continue
         if data.get(field) != value:
             raise RuntimeError(f"Smoke fixture collision at {reference.path}: {field}")
@@ -97,9 +110,147 @@ async def ensure_smoke_fixture(client: AsyncClient) -> None:
             "updated_at": created_at,
         },
     )
+    event_ref = account_ref.collection("events").document(SMOKE_EVENT_ID)
+    event_snapshot = await event_ref.get()
+    if not event_snapshot.exists:
+        event = ActivityEvent(
+            id=SMOKE_EVENT_ID,
+            account_id=SMOKE_ACCOUNT_ID,
+            camera_ids=[SMOKE_EVENT_CAMERA_ID],
+            first_capture_at=created_at,
+            last_capture_at=created_at,
+            capture_count=1,
+            grouping_policy_version=SMOKE_FIXTURE_VERSION,
+            created_at=created_at,
+            updated_at=created_at,
+        )
+        capture = CaptureRecord(
+            id=SMOKE_EVENT_CAPTURE_ID,
+            account_id=SMOKE_ACCOUNT_ID,
+            camera_id=SMOKE_EVENT_CAMERA_ID,
+            idempotency_key="repository-smoke-event-idempotency-v1",
+            content_type="image/jpeg",
+            content_sha256="0" * 64,
+            object_key=(
+                f"accounts/{SMOKE_ACCOUNT_ID}/captures/{SMOKE_EVENT_CAPTURE_ID}.jpg"
+            ),
+            event_id=SMOKE_EVENT_ID,
+            status=CaptureStatus.STORED,
+            created_at=created_at,
+        )
+        job = DurableJob(
+            id=event_inference_job_id(SMOKE_EVENT_ID),
+            account_id=SMOKE_ACCOUNT_ID,
+            kind=JobKind.EVENT_INFERENCE,
+            subject_id=SMOKE_EVENT_ID,
+            subject_revision=event.current_revision,
+            created_at=created_at,
+        )
+        capture_data = capture.model_dump(mode="python", exclude={"idempotency_key"})
+        capture_data.update(
+            schema_version=1,
+            idempotency_hash="repository-smoke-event-idempotency-hash-v1",
+            smoke_fixture=SMOKE_FIXTURE_VERSION,
+        )
+        await _ensure_document(
+            account_ref.collection("captures").document(capture.id),
+            capture_data,
+        )
+        await _ensure_document(
+            account_ref.collection("jobs").document(job.id),
+            {
+                **job.model_dump(mode="python"),
+                "schema_version": 1,
+                "smoke_fixture": SMOKE_FIXTURE_VERSION,
+            },
+        )
+        await _ensure_document(
+            event_ref,
+            {
+                **event.model_dump(mode="python"),
+                "schema_version": 1,
+                "smoke_fixture": SMOKE_FIXTURE_VERSION,
+            },
+        )
+    elif event_snapshot.get("grouping_policy_version") != SMOKE_FIXTURE_VERSION:
+        raise RuntimeError("Event-publication smoke fixture identity collided")
+
+
+def _publication_hypothesis() -> ActivityMealInferenceV1:
+    return ActivityMealInferenceV1.model_validate(
+        {
+            "schema_version": "activity-meal-inference-v1",
+            "event_id": SMOKE_EVENT_ID,
+            "source_capture_ids": [SMOKE_EVENT_CAPTURE_ID],
+            "kind": "tentative_meal",
+            "best_guess": "Smoke-test meal candidate",
+            "confidence": "uncertain",
+            "components": [
+                {
+                    "id": "candidate",
+                    "name": "Smoke-test meal candidate",
+                    "ingredients": [],
+                    "preparation_methods": [],
+                    "confidence": "uncertain",
+                    "alternatives": [],
+                    "evidence_ids": ["obs_fixture"],
+                }
+            ],
+            "direct_observations": [
+                {
+                    "id": "obs_fixture",
+                    "description": "An isolated synthetic fixture exercises publication.",
+                    "image_evidence": [{"capture_id": SMOKE_EVENT_CAPTURE_ID}],
+                }
+            ],
+            "contextual_evidence": [],
+            "assumptions": [],
+            "deductions": [],
+            "alternatives": [],
+            "rationale": "This deterministic fixture validates persistence, not food recognition.",
+            "question": None,
+            "allowed_actions": [
+                "confirm_guess",
+                "correct",
+                "discard_not_cooking",
+            ],
+        }
+    )
+
+
+async def _publish_or_verify_hypothesis(repository: Repository) -> MealEntry:
+    event, _ = await repository.event_evidence_for_account(
+        account_id=SMOKE_ACCOUNT_ID,
+        event_id=SMOKE_EVENT_ID,
+    )
+    claimed = await repository.claim_job(
+        account_id=SMOKE_ACCOUNT_ID,
+        job_id=event_inference_job_id(event.id),
+        expected_subject_revision=event.current_revision,
+        lease_id=SMOKE_EVENT_LEASE_ID,
+        lease_owner=SMOKE_EVENT_WORKER_ID,
+        lease_expires_at=utc_now() + timedelta(minutes=5),
+    )
+    if claimed is not None:
+        published = await repository.publish_event_inference(
+            account_id=SMOKE_ACCOUNT_ID,
+            event_id=event.id,
+            expected_event_revision=event.current_revision,
+            lease_id=SMOKE_EVENT_LEASE_ID,
+            lease_owner=SMOKE_EVENT_WORKER_ID,
+            hypothesis=_publication_hypothesis(),
+        )
+        if published is None:
+            raise RuntimeError("Event-publication smoke lost its active lease")
+        return published
+    stored = await repository.meal_for_owner(SMOKE_OWNER_ID, SMOKE_EVENT_ID)
+    if stored.activity_hypothesis != _publication_hypothesis():
+        raise RuntimeError("Stored event-publication smoke hypothesis changed")
+    return stored
 
 
 async def run_smoke(repository: Repository) -> dict[str, Any]:
+    published_hypothesis = await _publish_or_verify_hypothesis(repository)
     initial_meal = MealEntry(
         id=SMOKE_MEAL_ID,
         account_id=SMOKE_ACCOUNT_ID,
@@ -167,6 +318,9 @@ async def run_smoke(repository: Repository) -> dict[str, Any]:
             confirmation.revision.number,
             answer.revision.number,
         ],
+        "published_event_id": published_hypothesis.event_id,
+        "published_classification": published_hypothesis.activity_hypothesis.kind,
+        "published_revision": published_hypothesis.revision_number,
         "model_calls": 0,
     }
 
