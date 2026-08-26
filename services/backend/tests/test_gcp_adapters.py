@@ -5,6 +5,7 @@ import pytest
 from google.api_core.exceptions import PreconditionFailed
 from pydantic import ValidationError
 
+from foodlog_backend.errors import CrossAccountAccess
 from foodlog_backend.firestore_repository import (
     FirestoreRepository,
     _camera_document_is_active,
@@ -13,7 +14,7 @@ from foodlog_backend.firestore_repository import (
 )
 from foodlog_backend.models import ActivityEvent, EntitlementMode, utc_now
 from foodlog_backend.settings import Settings
-from foodlog_backend.storage import GCSObjectStore
+from foodlog_backend.storage import GCSObjectStore, InMemoryObjectStore
 
 
 class FakeDocument:
@@ -226,13 +227,13 @@ def test_gcs_adapter_writes_once_and_round_trips_private_bytes() -> None:
     )
     key = "accounts/account-a/captures/capture-a.jpg"
 
-    created = asyncio.run(store.put(key, b"image-bytes", "image/jpeg"))
-    duplicate = asyncio.run(store.put(key, b"image-bytes", "image/jpeg"))
+    created = asyncio.run(store.put("account-a", key, b"image-bytes", "image/jpeg"))
+    duplicate = asyncio.run(store.put("account-a", key, b"image-bytes", "image/jpeg"))
 
     assert client.selected_bucket == "private-media"
     assert created is True
     assert duplicate is False
-    assert asyncio.run(store.get(key)) == b"image-bytes"
+    assert asyncio.run(store.get("account-a", key)) == b"image-bytes"
     assert client.bucket_instance.objects[key][1] == "image/jpeg"
 
 
@@ -244,12 +245,62 @@ def test_gcs_adapter_never_accepts_different_bytes_for_an_existing_key() -> None
         client=client,  # type: ignore[arg-type]
     )
     key = "accounts/account-a/captures/capture-a.jpg"
-    asyncio.run(store.put(key, b"original", "image/jpeg"))
+    asyncio.run(store.put("account-a", key, b"original", "image/jpeg"))
 
     with pytest.raises(ValueError, match="different content"):
-        asyncio.run(store.put(key, b"replacement", "image/jpeg"))
+        asyncio.run(store.put("account-a", key, b"replacement", "image/jpeg"))
 
-    assert asyncio.run(store.get(key)) == b"original"
+    assert asyncio.run(store.get("account-a", key)) == b"original"
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "accounts/account-b/captures/capture.jpg",
+        "accounts/account-a/../account-b/trace.json.gz",
+        "accounts/account-a//trace.json.gz",
+        "accounts/account-a\\account-b/traces/trace.json.gz",
+        "account-a/traces/trace.json.gz",
+    ],
+)
+def test_object_stores_reject_foreign_or_ambiguous_account_paths(key: str) -> None:
+    gcs_client = FakeStorageClient()
+    stores = [
+        InMemoryObjectStore(),
+        GCSObjectStore(
+            project_id="test-project",
+            bucket_name="private-objects",
+            client=gcs_client,  # type: ignore[arg-type]
+        ),
+    ]
+
+    for store in stores:
+        with pytest.raises(CrossAccountAccess):
+            asyncio.run(store.put("account-a", key, b"private", "application/octet-stream"))
+        with pytest.raises(CrossAccountAccess):
+            asyncio.run(store.get("account-a", key))
+
+    assert gcs_client.bucket_instance.objects == {}
+
+
+def test_gcs_adapter_supports_server_derived_private_object_families() -> None:
+    client = FakeStorageClient()
+    store = GCSObjectStore(
+        project_id="test-project",
+        bucket_name="private-objects",
+        client=client,  # type: ignore[arg-type]
+    )
+    objects = {
+        "accounts/account-a/raw-mail/mail-a.eml": (b"mime", "message/rfc822"),
+        "accounts/account-a/traces/trace-a.json.gz": (b"trace", "application/gzip"),
+        "accounts/account-a/exports/export-a.zip": (b"export", "application/zip"),
+    }
+
+    for key, (content, content_type) in objects.items():
+        assert asyncio.run(store.put("account-a", key, content, content_type)) is True
+        assert asyncio.run(store.get("account-a", key)) == content
+
+    assert client.bucket_instance.objects == objects
 
 
 def test_production_cannot_select_partial_or_volatile_storage() -> None:

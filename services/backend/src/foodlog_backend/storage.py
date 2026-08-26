@@ -4,11 +4,33 @@ from typing import Protocol
 from google.api_core.exceptions import PreconditionFailed
 from google.cloud import storage
 
+from .errors import CrossAccountAccess
+
+
+def validate_account_object_key(account_id: str, key: str) -> None:
+    """Reject object paths that do not belong exactly to the active account."""
+    if not account_id or "/" in account_id or "\\" in account_id:
+        raise CrossAccountAccess
+    segments = key.split("/")
+    if (
+        len(segments) < 4
+        or segments[0] != "accounts"
+        or segments[1] != account_id
+        or any(segment in {"", ".", ".."} or "\\" in segment for segment in segments)
+    ):
+        raise CrossAccountAccess
+
 
 class ObjectStore(Protocol):
-    async def put(self, key: str, content: bytes, content_type: str) -> bool: ...
+    async def put(
+        self,
+        account_id: str,
+        key: str,
+        content: bytes,
+        content_type: str,
+    ) -> bool: ...
 
-    async def get(self, key: str) -> bytes: ...
+    async def get(self, account_id: str, key: str) -> bytes: ...
 
 
 class InMemoryObjectStore:
@@ -18,7 +40,14 @@ class InMemoryObjectStore:
         self._objects: dict[str, tuple[bytes, str]] = {}
         self._lock = asyncio.Lock()
 
-    async def put(self, key: str, content: bytes, content_type: str) -> bool:
+    async def put(
+        self,
+        account_id: str,
+        key: str,
+        content: bytes,
+        content_type: str,
+    ) -> bool:
+        validate_account_object_key(account_id, key)
         async with self._lock:
             existing = self._objects.get(key)
             if existing is not None:
@@ -28,7 +57,8 @@ class InMemoryObjectStore:
             self._objects[key] = (content, content_type)
             return True
 
-    async def get(self, key: str) -> bytes:
+    async def get(self, account_id: str, key: str) -> bytes:
+        validate_account_object_key(account_id, key)
         async with self._lock:
             return self._objects[key][0]
 
@@ -46,7 +76,14 @@ class GCSObjectStore:
         self._client = client or storage.Client(project=project_id)
         self._bucket = self._client.bucket(bucket_name)
 
-    async def put(self, key: str, content: bytes, content_type: str) -> bool:
+    async def put(
+        self,
+        account_id: str,
+        key: str,
+        content: bytes,
+        content_type: str,
+    ) -> bool:
+        validate_account_object_key(account_id, key)
         blob = self._bucket.blob(key)
         try:
             await asyncio.to_thread(
@@ -63,5 +100,6 @@ class GCSObjectStore:
                 raise ValueError("Object key already contains different content") from None
             return False
 
-    async def get(self, key: str) -> bytes:
+    async def get(self, account_id: str, key: str) -> bytes:
+        validate_account_object_key(account_id, key)
         return await asyncio.to_thread(self._bucket.blob(key).download_as_bytes)

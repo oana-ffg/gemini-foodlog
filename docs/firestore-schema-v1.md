@@ -100,7 +100,12 @@ belong in private Cloud Storage rather than Firestore.
 ## Write invariants
 
 1. Object keys are derived from authenticated account, camera, capture, and content
-   identifiers; request bodies cannot choose them.
+   identifiers; request bodies cannot choose them. Every object-store call also
+   carries that authenticated account as a separate argument, and the adapter
+   rejects a key outside its exact `accounts/{account_id}/` prefix—or containing
+   empty, dot, dot-dot, or backslash segments—before any Cloud Storage operation.
+   Feature adapters may narrow this further; raw mail, for example, requires the
+   exact `accounts/{account_id}/raw-mail/{mail_id}.eml` path.
 2. A capture transaction reads the entitlement and idempotency record, then either
    returns the existing matching capture or reserves one quota unit and one capture.
 3. If object upload fails, reconciliation returns the reservation to a retryable

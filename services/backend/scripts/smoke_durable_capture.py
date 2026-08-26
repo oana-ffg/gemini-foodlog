@@ -4,7 +4,7 @@ from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
 
-from foodlog_backend.errors import CaptureNotFound
+from foodlog_backend.errors import CaptureNotFound, CrossAccountAccess
 from foodlog_backend.firestore_repository import FirestoreRepository
 from foodlog_backend.storage import GCSObjectStore
 
@@ -50,8 +50,25 @@ async def smoke(args: argparse.Namespace) -> None:
 
     capture = created_results[0][0] if created_results else first[0]
     if created_results:
-        await store.put(capture.object_key, image, capture.content_type)
-    assert sha256(await store.get(capture.object_key)).hexdigest() == content_sha256
+        await store.put(account.id, capture.object_key, image, capture.content_type)
+    assert sha256(await store.get(account.id, capture.object_key)).hexdigest() == content_sha256
+    try:
+        await store.get("foreign-account", capture.object_key)
+    except CrossAccountAccess:
+        pass
+    else:
+        raise AssertionError("foreign account object read reached storage")
+    try:
+        await store.put(
+            account.id,
+            f"accounts/foreign-account/captures/{capture.id}.png",
+            image,
+            capture.content_type,
+        )
+    except CrossAccountAccess:
+        pass
+    else:
+        raise AssertionError("foreign account object write reached storage")
     await repository.mark_processed(account_id=account.id, capture_id=capture.id)
 
     stored = await repository.capture_for_owner(args.owner_id, capture.id)
@@ -85,6 +102,7 @@ async def smoke(args: argparse.Namespace) -> None:
     print("accepted_image_count=1")
     print("account_provisioning_idempotent=true")
     print("rollback_verified=true")
+    print("cross_account_storage_denied=true")
 
 
 def parse_args() -> argparse.Namespace:

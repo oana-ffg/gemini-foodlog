@@ -29,7 +29,14 @@ class MailRepository(Protocol):
 
 
 class RawMailStore(Protocol):
-    def put_if_absent(self, *, object_key: str, content: bytes) -> None: ...
+    def put_if_absent(
+        self,
+        *,
+        account_id: str,
+        mail_id: str,
+        object_key: str,
+        content: bytes,
+    ) -> None: ...
 
 
 class MailEventPublisher(Protocol):
@@ -103,7 +110,12 @@ class MailGatewayService:
 
         if record.status == "published":
             return record
-        self._object_store.put_if_absent(object_key=record.object_key, content=raw_message)
+        self._object_store.put_if_absent(
+            account_id=record.account_id,
+            mail_id=record.id,
+            object_key=record.object_key,
+            content=raw_message,
+        )
         if record.status == "reserved":
             record = self._repository.mark_stored(record)
         if record.status == "stored":

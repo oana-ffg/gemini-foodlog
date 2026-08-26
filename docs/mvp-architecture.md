@@ -246,6 +246,10 @@ Required controls:
 
 - uniform private bucket access with no public objects;
 - account-scoped object paths using server-derived identifiers;
+- an account-bound object-store interface: every read and write carries the
+  authenticated account separately from the object key, and the shared storage
+  boundary rejects foreign, traversal-like, or ambiguous paths before contacting
+  Cloud Storage;
 - authenticated API-proxied access for the web UI, with authorization and account scope checked on every request;
 - encryption in transit and Google Cloud encryption at rest;
 - immutable linkage from each image to its camera and activity event;
@@ -253,6 +257,14 @@ Required controls:
 - tests proving that one account cannot request another account's image.
 
 The MVP does not return signed image URLs or grant the browser direct Storage access. The API streams authorized objects from Cloud Storage and sets restrictive cache and content-disposition headers. This adds API bandwidth and compute, but prevents a copied URL from acting as a temporary bearer credential and keeps all private-data authorization in one backend path.
+
+Images, original MIME messages, agent traces, and exports use distinct private
+buckets and server-derived object families below `accounts/{account_id}/`. The
+feature service derives the exact key; the common adapter independently enforces
+the active account prefix. Raw-mail storage additionally verifies the exact mail
+identity in `accounts/{account_id}/raw-mail/{mail_id}.eml`. Firestore retains the
+immutable object key, byte size, content type, and SHA-256 linkage required to
+reconcile the object with its owning record.
 
 ### 5.1 Current retention decision
 

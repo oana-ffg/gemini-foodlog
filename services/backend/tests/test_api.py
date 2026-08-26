@@ -560,7 +560,7 @@ def test_shared_ingestion_retains_an_uploaded_object_for_finalize_retry(
     assert len(captures) == 1
     reserved = captures[0]
     assert reserved.status == "accepted"
-    assert asyncio.run(object_store.get(reserved.object_key)) == image
+    assert asyncio.run(object_store.get(reserved.account_id, reserved.object_key)) == image
     assert repository._accounts[account["id"]].accepted_image_count == 1
 
     recovered = asyncio.run(service.accept_capture(**request))
@@ -569,7 +569,7 @@ def test_shared_ingestion_retains_an_uploaded_object_for_finalize_retry(
     assert recovered.duplicate is True
     assert recovered.accepted_image_count == 1
     assert repository._captures[reserved.id].status == "stored"
-    assert asyncio.run(object_store.get(reserved.object_key)) == image
+    assert asyncio.run(object_store.get(reserved.account_id, reserved.object_key)) == image
 
 
 def test_shared_device_ingestion_uses_credential_scope_and_honors_revocation() -> None:

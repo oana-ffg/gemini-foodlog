@@ -55,6 +55,7 @@ class CaptureService:
         object_created = False
         try:
             object_created = await self._object_store.put(
+                capture.account_id,
                 capture.object_key,
                 image,
                 content_type,

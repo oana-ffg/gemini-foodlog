@@ -146,7 +146,7 @@ class EventEvidenceToolService:
                 expected_prefix
             ):
                 raise ValueError("Activity event image escaped its account scope")
-            content = await self._object_store.get(capture.object_key)
+            content = await self._object_store.get(account_id, capture.object_key)
             if sha256(content).hexdigest() != capture.content_sha256:
                 raise ValueError("Activity event image failed its integrity check")
             artifact_name = _artifact_name(position, capture)

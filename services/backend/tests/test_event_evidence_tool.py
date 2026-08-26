@@ -71,7 +71,7 @@ async def _store_and_group(
         ),
     )
     assert created is True
-    assert await object_store.put(object_key, content, "image/jpeg") is True
+    assert await object_store.put(account.id, object_key, content, "image/jpeg") is True
     await repository.mark_stored(account_id=account.id, capture_id=capture.id)
     lease_id = f"lease-{capture.id}"
     claimed = await repository.claim_job(

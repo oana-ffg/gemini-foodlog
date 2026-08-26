@@ -12,6 +12,7 @@ from .domain import (
     RawMailStoredEventV1,
     UnknownRecipient,
     utc_now,
+    validate_raw_mail_object_key,
 )
 
 
@@ -149,7 +150,19 @@ class GCSRawMailStore:
     def __init__(self, *, project_id: str, bucket_name: str) -> None:
         self._bucket = storage.Client(project=project_id).bucket(bucket_name)
 
-    def put_if_absent(self, *, object_key: str, content: bytes) -> None:
+    def put_if_absent(
+        self,
+        *,
+        account_id: str,
+        mail_id: str,
+        object_key: str,
+        content: bytes,
+    ) -> None:
+        validate_raw_mail_object_key(
+            account_id=account_id,
+            mail_id=mail_id,
+            object_key=object_key,
+        )
         try:
             self._bucket.blob(object_key).upload_from_string(
                 content,

@@ -16,10 +16,12 @@ from google.cloud import firestore
 from mail_gateway import domain
 from mail_gateway.adapters import FirestoreMailRepository
 from mail_gateway.domain import (
+    InvalidRawMailObjectKey,
     MailIdentityCollision,
     RawMailRecord,
     UnknownRecipient,
     UnsafeMail,
+    validate_raw_mail_object_key,
 )
 from mail_gateway.service import MailGatewayService
 from main import MAX_RAW_MESSAGE_BYTES, MailGatewayApplication
@@ -76,7 +78,19 @@ class FakeObjectStore:
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
 
-    def put_if_absent(self, *, object_key: str, content: bytes) -> None:
+    def put_if_absent(
+        self,
+        *,
+        account_id: str,
+        mail_id: str,
+        object_key: str,
+        content: bytes,
+    ) -> None:
+        validate_raw_mail_object_key(
+            account_id=account_id,
+            mail_id=mail_id,
+            object_key=object_key,
+        )
         existing = self.objects.setdefault(object_key, content)
         if existing != content:
             raise ValueError("object collision")
@@ -108,6 +122,44 @@ def gateway():
         event_publisher=publisher,
     )
     return service, repository, object_store, publisher
+
+
+@pytest.mark.parametrize(
+    ("account_id", "mail_id", "object_key"),
+    [
+        (
+            ACCOUNT_ID,
+            "a" * 64,
+            f"accounts/account-b/raw-mail/{'a' * 64}.eml",
+        ),
+        (
+            ACCOUNT_ID,
+            "a" * 64,
+            f"accounts/{ACCOUNT_ID}/raw-mail/../{'a' * 64}.eml",
+        ),
+        (
+            "account/a",
+            "a" * 64,
+            f"accounts/account/a/raw-mail/{'a' * 64}.eml",
+        ),
+        (
+            ACCOUNT_ID,
+            "not-a-mail-id",
+            f"accounts/{ACCOUNT_ID}/raw-mail/not-a-mail-id.eml",
+        ),
+    ],
+)
+def test_raw_mail_object_key_is_bound_to_account_and_mail_identity(
+    account_id: str,
+    mail_id: str,
+    object_key: str,
+) -> None:
+    with pytest.raises(InvalidRawMailObjectKey):
+        validate_raw_mail_object_key(
+            account_id=account_id,
+            mail_id=mail_id,
+            object_key=object_key,
+        )
 
 
 def test_receipt_is_private_durable_idempotent_and_publishes_only_references(

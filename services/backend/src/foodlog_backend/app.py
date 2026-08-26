@@ -728,7 +728,7 @@ def create_app(
         user_id: str = Depends(request_user_id),
     ) -> Response:
         capture = await container.repository.capture_for_owner(user_id, capture_id)
-        content = await container.object_store.get(capture.object_key)
+        content = await container.object_store.get(capture.account_id, capture.object_key)
         return Response(
             content=content,
             media_type=capture.content_type,

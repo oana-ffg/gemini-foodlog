@@ -11,6 +11,7 @@ from hashlib import sha256
 from typing import Literal
 
 LOCAL_PART_PATTERN = re.compile(r"^f-[0-9a-f]{48}$")
+RAW_MAIL_ID_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 DOMAIN_PATTERN = re.compile(
     r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
 )
@@ -54,6 +55,10 @@ class MailIdentityCollision(ValueError):
     pass
 
 
+class InvalidRawMailObjectKey(ValueError):
+    pass
+
+
 class UnsafeMail(ValueError):
     """An external message that exceeds the deliberately accepted MIME surface."""
 
@@ -64,6 +69,17 @@ class UnsafeMail(ValueError):
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def validate_raw_mail_object_key(*, account_id: str, mail_id: str, object_key: str) -> None:
+    if (
+        not account_id
+        or "/" in account_id
+        or "\\" in account_id
+        or RAW_MAIL_ID_PATTERN.fullmatch(mail_id) is None
+        or object_key != f"accounts/{account_id}/raw-mail/{mail_id}.eml"
+    ):
+        raise InvalidRawMailObjectKey
 
 
 def normalize_domain(value: str) -> str:
