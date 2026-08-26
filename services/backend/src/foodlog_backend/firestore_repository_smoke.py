@@ -12,6 +12,12 @@ from google.cloud.firestore_v1.async_client import AsyncClient
 
 from .firestore_repository import FirestoreRepository
 from .inference_schema import ActivityMealInferenceV1
+from .knowledge_updates import (
+    ConfirmedClaimSource,
+    HouseholdKnowledgeUpdater,
+    KnowledgeUpdateIntent,
+    KnowledgeUpdateProposal,
+)
 from .models import (
     ActivityEvent,
     CaptureRecord,
@@ -20,6 +26,7 @@ from .models import (
     DurableJob,
     JobKind,
     KnowledgeBeliefStrength,
+    KnowledgeClaim,
     KnowledgeEvidenceKind,
     KnowledgeEvidenceReference,
     KnowledgeEvidenceRole,
@@ -401,6 +408,73 @@ async def run_smoke(repository: Repository) -> dict[str, Any]:
         or knowledge_revisions[1].previous_revision_id != knowledge_revisions[0].id
     ):
         raise RuntimeError("Versioned household knowledge did not persist revisions 1 and 2")
+    updater = HouseholdKnowledgeUpdater(repository)
+    proposed_claim = KnowledgeClaim(
+        dimension="package cue",
+        value="dark green beef label indicates steak",
+        conditions=("air fryer basket by sink",),
+    )
+    proposed_inference = await updater.apply(
+        account_id=SMOKE_ACCOUNT_ID,
+        proposal=KnowledgeUpdateProposal(
+            topic_key="Repository smoke proposed household knowledge",
+            title="Repository smoke package cue",
+            statement="A dark green beef label may indicate steak in this household.",
+            claim=proposed_claim,
+            intent=KnowledgeUpdateIntent.INFER,
+            source=KnowledgeRevisionSource.AGENT_INFERENCE,
+            evidence=(
+                KnowledgeEvidenceReference(
+                    kind=KnowledgeEvidenceKind.MEAL_REVISION,
+                    id=targeted.revision.id,
+                    role=KnowledgeEvidenceRole.SUPPORTS,
+                ),
+            ),
+            reason="The corrected smoke meal weakly supports a reusable package cue.",
+        ),
+        expected_revision_number=None,
+        idempotency_key="repository-smoke-proposed-knowledge-inferred-v1",
+    )
+    feedback_support = KnowledgeEvidenceReference(
+        kind=KnowledgeEvidenceKind.FEEDBACK,
+        id=answer.feedback.id,
+        role=KnowledgeEvidenceRole.SUPPORTS,
+    )
+    proposed_confirmation = await updater.apply(
+        account_id=SMOKE_ACCOUNT_ID,
+        proposal=KnowledgeUpdateProposal(
+            topic_key=proposed_inference.page.topic_key,
+            title="Repository smoke package cue",
+            statement="A dark green beef label indicates steak in this household.",
+            claim=proposed_claim,
+            intent=KnowledgeUpdateIntent.CONFIRM,
+            source=KnowledgeRevisionSource.USER_FEEDBACK,
+            evidence=(
+                KnowledgeEvidenceReference(
+                    kind=KnowledgeEvidenceKind.KNOWLEDGE_REVISION,
+                    id=proposed_inference.revision.id,
+                    role=KnowledgeEvidenceRole.CONTEXT,
+                ),
+                feedback_support,
+            ),
+            confirmed_sources=(
+                ConfirmedClaimSource(claim=proposed_claim, evidence=feedback_support),
+            ),
+            reason="The exact user feedback confirms the bounded package cue.",
+        ),
+        expected_revision_number=1,
+        idempotency_key="repository-smoke-proposed-knowledge-confirmed-v1",
+    )
+    proposed_revisions = await repository.list_knowledge_revisions(
+        SMOKE_OWNER_ID,
+        proposed_inference.page.id,
+    )
+    if (
+        proposed_confirmation.page.lifecycle != KnowledgeLifecycle.CONFIRMED
+        or proposed_confirmation.page.claim != proposed_claim
+        or [revision.number for revision in proposed_revisions] != [1, 2]
+    ):
+        raise RuntimeError("Validated household knowledge proposal did not persist exactly once")
     return {
         "schema_version": SMOKE_FIXTURE_VERSION,
         "account_id": SMOKE_ACCOUNT_ID,
@@ -421,6 +495,11 @@ async def run_smoke(repository: Repository) -> dict[str, Any]:
         "knowledge_lifecycle": reinforced_knowledge.page.lifecycle,
         "knowledge_revision_numbers": [
             revision.number for revision in knowledge_revisions
+        ],
+        "proposed_knowledge_page_id": proposed_inference.page.id,
+        "proposed_knowledge_lifecycle": proposed_confirmation.page.lifecycle,
+        "proposed_knowledge_revision_numbers": [
+            revision.number for revision in proposed_revisions
         ],
         "model_calls": 0,
     }
