@@ -2,7 +2,7 @@ from google.adk.events import Event
 from google.genai import types
 
 from foodlog_agent.inference_schema import ActivityMealInferenceV1
-from foodlog_agent.prompt import PROMPT_VERSION
+from foodlog_agent.prompt import INSTRUCTION, PROMPT_VERSION
 from foodlog_agent.smoke import _structured_response, main, smoke_event_bundle
 from tests.inference_fixtures import base_payload
 
@@ -12,6 +12,11 @@ def test_smoke_bundle_records_prompt_and_exact_source_identities() -> None:
     assert bundle["prompt_version"] == PROMPT_VERSION
     assert bundle["event"]["event_id"] == "adk-smoke-event-v1"
     assert bundle["event"]["captures"][0]["capture_id"] == "adk-smoke-capture-v1"
+
+
+def test_prompt_explicitly_couples_questions_to_uncertain_confidence() -> None:
+    assert 'MUST be null when confidence is "likely" or "confident"' in INSTRUCTION
+    assert 'confidence is exactly "uncertain"' in INSTRUCTION
 
 
 def test_final_adk_json_is_revalidated_by_the_product_schema() -> None:
