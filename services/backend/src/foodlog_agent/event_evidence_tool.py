@@ -21,6 +21,7 @@ from foodlog_backend.storage import GCSObjectStore, ObjectStore
 
 ACCOUNT_ID_STATE_KEY = "account_id"
 EVENT_ID_STATE_KEY = "current_event_id"
+EVENT_REVISION_STATE_KEY = "current_event_revision"
 EVENT_EVIDENCE_SCHEMA_VERSION = "event-evidence-v1"
 
 
@@ -128,6 +129,15 @@ class EventEvidenceToolService:
             account_id=account_id,
             event_id=event_id,
         )
+        expected_revision = context.state.get(EVENT_REVISION_STATE_KEY)
+        if expected_revision is not None and (
+            not isinstance(expected_revision, int)
+            or isinstance(expected_revision, bool)
+            or expected_revision < 1
+        ):
+            raise ValueError("Agent session state has an invalid current_event_revision")
+        if expected_revision is not None and event.current_revision != expected_revision:
+            raise ValueError("Activity event revision changed before evidence loading")
 
         expected_prefix = f"accounts/{account_id}/captures/"
         ordered_images: list[OrderedImageEvidence] = []
