@@ -4,6 +4,7 @@ from google.genai import types
 
 from foodlog_agent.event_reasoning import (
     InvalidModelOutputError,
+    _tool_context_source_ids,
     _validated_response,
     application_visible_model_request,
     event_bundle,
@@ -39,7 +40,13 @@ def test_trace_request_includes_the_application_owned_prompt_tools_and_schema() 
     assert request["model"] == "gemini-3.6-flash"
     assert request["system_instruction"] == INSTRUCTION
     assert request["user_content"] == bundle
-    assert request["tools"] == ["get_current_event_evidence", "load_artifacts"]
+    assert request["tools"] == [
+        "get_current_event_evidence",
+        "get_recent_meals",
+        "get_active_user_context",
+        "get_unresolved_reviews",
+        "load_artifacts",
+    ]
     assert request["response_schema"]["title"] == "ActivityMealInferenceV1"
     assert request["run_config"] == {
         "max_llm_calls": 3,
@@ -52,7 +59,11 @@ def test_trace_request_includes_the_application_owned_prompt_tools_and_schema() 
 
 
 def test_prompt_explicitly_couples_questions_to_uncertain_confidence() -> None:
-    assert PROMPT_VERSION == "food-event-v5"
+    assert PROMPT_VERSION == "food-event-v6"
+    assert "call get_current_event_evidence" in INSTRUCTION
+    assert "get_recent_meals" in INSTRUCTION
+    assert "get_active_user_context" in INSTRUCTION
+    assert "get_unresolved_reviews" in INSTRUCTION
     assert "question field MUST" in INSTRUCTION
     assert 'null when confidence is "likely" or "confident"' in INSTRUCTION
     assert 'confidence is exactly "uncertain"' in INSTRUCTION
@@ -86,6 +97,53 @@ def test_smoke_rejects_context_and_knowledge_ids_absent_from_input() -> None:
         assert "invented household knowledge revision ID" in str(error)
     else:
         raise AssertionError("an invented household knowledge revision passed smoke validation")
+
+
+def test_validation_accepts_only_exact_context_ids_returned_by_agent_tools() -> None:
+    tool_event = Event(
+        invocation_id="invocation-context-tools",
+        author="food_event_reasoner",
+        content=types.Content(
+            role="user",
+            parts=[
+                types.Part.from_function_response(
+                    name="get_recent_meals",
+                    response={"meals": [{"event_id": "recent-event-001"}]},
+                ),
+                types.Part.from_function_response(
+                    name="get_active_user_context",
+                    response={"notes": [{"note_id": "note-001"}]},
+                ),
+            ],
+        ),
+    )
+    source_ids = _tool_context_source_ids(tool_event)
+    payload = base_payload()
+    payload["contextual_evidence"] = [
+        {
+            "id": "ctx_order",
+            "description": "A recent meal provides a household comparison.",
+            "source_kind": "recent_meal",
+            "source_id": "recent-event-001",
+        },
+        {
+            "id": "ctx_note",
+            "description": "A time-bounded note says duck may be cooked tonight.",
+            "source_kind": "user_note",
+            "source_id": "note-001",
+        },
+    ]
+    inference = ActivityMealInferenceV1.model_validate(payload)
+    _validate_source_identities(inference, event_bundle(
+        event_id="event-001", capture_ids=["capture-001"]
+    ), source_ids)
+
+    payload["contextual_evidence"][1]["source_id"] = "invented-note"
+    invented = ActivityMealInferenceV1.model_validate(payload)
+    with pytest.raises(RuntimeError, match="invented user_note source ID"):
+        _validate_source_identities(invented, event_bundle(
+            event_id="event-001", capture_ids=["capture-001"]
+        ), source_ids)
 
 
 def test_final_adk_json_is_revalidated_by_the_product_schema() -> None:

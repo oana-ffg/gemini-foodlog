@@ -803,6 +803,28 @@ class Repository(Protocol):
         note_id: str,
     ) -> UserContextNote: ...
 
+    async def recent_meals_for_account(
+        self,
+        *,
+        account_id: str,
+        limit: int = 20,
+    ) -> list[MealEntry]: ...
+
+    async def active_user_context_notes_for_account(
+        self,
+        *,
+        account_id: str,
+        active_at: datetime | None = None,
+        limit: int = 20,
+    ) -> list[UserContextNote]: ...
+
+    async def unresolved_reviews_for_account(
+        self,
+        *,
+        account_id: str,
+        limit: int = 20,
+    ) -> tuple[list[MealEntry], list[ClarificationQuestion]]: ...
+
     async def answer_question(
         self,
         *,
@@ -2579,6 +2601,96 @@ class InMemoryRepository:
                     reverse=True,
                 )
             ]
+
+    async def recent_meals_for_account(
+        self,
+        *,
+        account_id: str,
+        limit: int = 20,
+    ) -> list[MealEntry]:
+        if not 1 <= limit <= 100:
+            raise ValueError("recent meal limit must be between 1 and 100")
+        async with self._lock:
+            if account_id not in self._accounts:
+                raise AccountNotProvisioned
+            meals = [
+                meal
+                for meal in self._meals.values()
+                if meal.account_id == account_id
+                and meal.event_id is not None
+                and meal.status != MealStatus.NOT_COOKING
+            ]
+            return [
+                meal.model_copy(deep=True)
+                for meal in sorted(
+                    meals,
+                    key=lambda item: (item.occurred_at or item.created_at, item.id),
+                    reverse=True,
+                )[:limit]
+            ]
+
+    async def active_user_context_notes_for_account(
+        self,
+        *,
+        account_id: str,
+        active_at: datetime | None = None,
+        limit: int = 20,
+    ) -> list[UserContextNote]:
+        if not 1 <= limit <= 100:
+            raise ValueError("active context limit must be between 1 and 100")
+        evaluated_at = active_at or utc_now()
+        async with self._lock:
+            if account_id not in self._accounts:
+                raise AccountNotProvisioned
+            notes = [
+                note
+                for note in self._user_context_notes.values()
+                if note.account_id == account_id and note.is_active_at(evaluated_at)
+            ]
+            return [
+                note.model_copy(deep=True)
+                for note in sorted(
+                    notes,
+                    key=lambda item: (item.created_at, item.id),
+                    reverse=True,
+                )[:limit]
+            ]
+
+    async def unresolved_reviews_for_account(
+        self,
+        *,
+        account_id: str,
+        limit: int = 20,
+    ) -> tuple[list[MealEntry], list[ClarificationQuestion]]:
+        if not 1 <= limit <= 100:
+            raise ValueError("unresolved review limit must be between 1 and 100")
+        async with self._lock:
+            if account_id not in self._accounts:
+                raise AccountNotProvisioned
+            meals = sorted(
+                (
+                    meal
+                    for meal in self._meals.values()
+                    if meal.account_id == account_id
+                    and meal.status in {MealStatus.PROVISIONAL, MealStatus.CONTRADICTED}
+                ),
+                key=lambda item: (item.occurred_at or item.created_at, item.id),
+                reverse=True,
+            )[:limit]
+            questions = sorted(
+                (
+                    question
+                    for question in self._questions.values()
+                    if question.account_id == account_id
+                    and question.status == QuestionStatus.OPEN
+                ),
+                key=lambda item: (item.created_at, item.id),
+                reverse=True,
+            )[:limit]
+            return (
+                [meal.model_copy(deep=True) for meal in meals],
+                [question.model_copy(deep=True) for question in questions],
+            )
 
     async def answer_question(
         self,

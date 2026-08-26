@@ -6,6 +6,7 @@ from google.adk.models import Gemini
 from google.adk.tools import load_artifacts
 from google.genai import types
 
+from foodlog_agent.context_tools import context_tools
 from foodlog_agent.event_evidence_tool import event_evidence_tool
 from foodlog_agent.prompt import INSTRUCTION
 from foodlog_backend.inference_schema import ActivityMealInferenceModelOutputV1
@@ -21,7 +22,7 @@ root_agent = Agent(
         retry_options=types.HttpRetryOptions(attempts=MAX_PROVIDER_ATTEMPTS),
     ),
     instruction=INSTRUCTION,
-    tools=[event_evidence_tool, load_artifacts],
+    tools=[event_evidence_tool, *context_tools, load_artifacts],
     output_schema=ActivityMealInferenceModelOutputV1,
     generate_content_config=types.GenerateContentConfig(
         max_output_tokens=2_048,

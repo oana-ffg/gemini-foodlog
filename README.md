@@ -84,15 +84,15 @@ See [AGENTS.md](./AGENTS.md) for the complete project contract and the hackathon
 
 ## Status
 
-**Durable authenticated capture is live; real Gemini interpretation and the product journal are not built yet.**
+**Durable authenticated capture and event-level Gemini reasoning are live; the hosted product journal UI is still under construction.**
 
 The production API runs on bounded, scale-to-zero Cloud Run and accepts JPEG or PNG captures through one shared contract. Verified browser users authenticate with Firebase; physical and Python cameras use independently revocable `FoodLogCamera` credentials. Accepted images consume the account's 200-image trial entitlement, persist in private Cloud Storage plus Firestore, deduplicate exact retries, and can be read back only through the authenticated owner API. The test account has exercised both browser-user and device upload paths with exact byte/hash read-back.
 
 The React application is live at [gemini-foodlog-2026.web.app](https://gemini-foodlog-2026.web.app). Its separate `/camera` route provides the first manual phone-camera path; motion capture, wake lock, and the persistent browser delivery queue follow after the signed-in phone smoke. The locked [Python camera client](./clients/python/README.md) can already replay fixture sequences or capture a bounded webcam sequence through the production device-authenticated endpoint.
 
-Account admission, the 25-account ceiling, 200-image trials, launch-mail consent records, the waitlist API, and one Pushover notification per new account are implemented. The dedicated notification worker and API are live; image-processing and inbound-mail workers are not.
+Account admission, the 25-account ceiling, 200-image trials, launch-mail consent records, the waitlist API, and one Pushover notification per new account are implemented. The API, image-processing worker, and notification worker are live.
 
-**Production does not currently invoke Gemini or infer meals.** Google ADK is installed and import-tested, but the real model, agent tools, event grouping, structured inference, learning loop, corrections, pattern questions, purchase-email flow, and corresponding real-data UI remain backlog work. Existing local deterministic fixture behavior is test/preview scaffolding only and is not an accuracy claim.
+Production groups captures into revisioned activity events and runs Gemini 3.6 Flash through Google ADK on Vertex AI. The deployed workflow loads the current tenant's ordered private images, emits a strict evidence-linked activity/meal hypothesis, reserves and records model spend, and persists redacted application-visible traces. The backend also has immutable correction, question, and household-learning primitives. The purchase-email normalization flow, longitudinal evaluation, and corresponding real-data UI remain backlog work; the backlog evidence distinguishes deterministic tests from real Gemini runs.
 
 See the working [MVP architecture and decision record](./docs/mvp-architecture.md), [credit-expiry runbook](./docs/credit-expiry-runbook.md), [source-controlled MVP backlog](./docs/mvp-backlog.html), and [historical preview record](./infra/preview/README.md). The original proposal is preserved verbatim in [CORE_IDEA.md](./CORE_IDEA.md).
 

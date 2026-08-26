@@ -4,6 +4,7 @@ import asyncio
 import os
 from datetime import timedelta
 from hashlib import sha256
+from uuid import uuid4
 
 import pytest
 from google.cloud.firestore_v1.async_client import AsyncClient
@@ -75,7 +76,7 @@ from tests.inference_fixtures import base_payload
 )
 def test_firestore_user_context_notes_preserve_history_and_tenant_scope() -> None:
     async def scenario() -> None:
-        project_id = "gemini-foodlog-context-note-contract-test"
+        project_id = f"gemini-foodlog-context-note-contract-{uuid4().hex}"
         client = AsyncClient(project=project_id)
         repository = FirestoreRepository(
             project_id=project_id,
@@ -112,6 +113,10 @@ def test_firestore_user_context_notes_preserve_history_and_tenant_scope() -> Non
             )
         assert await repository.list_user_context_notes("context-contract-owner") == [note]
         assert await repository.list_user_context_notes("context-contract-foreign") == []
+        assert await repository.active_user_context_notes_for_account(
+            account_id=owner.id,
+            active_at=now,
+        ) == [note]
         with pytest.raises(UserContextNoteNotFound):
             await repository.retire_user_context_note(
                 owner_user_id="context-contract-foreign",
@@ -123,6 +128,10 @@ def test_firestore_user_context_notes_preserve_history_and_tenant_scope() -> Non
         )
         assert retired.status == UserContextNoteStatus.RETIRED
         assert await repository.list_user_context_notes("context-contract-owner") == []
+        assert await repository.active_user_context_notes_for_account(
+            account_id=owner.id,
+            active_at=now,
+        ) == []
         assert await repository.list_user_context_notes(
             "context-contract-owner",
             include_inactive=True,
@@ -891,7 +900,7 @@ def test_firestore_pattern_question_lifecycle_is_atomic_and_tenant_scoped() -> N
 )
 def test_firestore_event_publication_atomically_fences_lease_and_revision() -> None:
     async def scenario() -> None:
-        project_id = "gemini-foodlog-event-publication-test"
+        project_id = f"gemini-foodlog-event-publication-{uuid4().hex}"
         client = AsyncClient(project=project_id)
         repository = FirestoreRepository(
             project_id=project_id,
@@ -998,6 +1007,12 @@ def test_firestore_event_publication_atomically_fences_lease_and_revision() -> N
         assert questions[0].event_id == event.id
         assert questions[0].choices == ["Air-fried steak", "Air-fried lamb"]
         assert questions[0].source_revision_number == 1
+        assert await repository.recent_meals_for_account(account_id=account.id) == [meal]
+        unresolved_meals, unresolved_questions = (
+            await repository.unresolved_reviews_for_account(account_id=account.id)
+        )
+        assert unresolved_meals == [meal]
+        assert unresolved_questions == questions
         client.close()
 
     asyncio.run(scenario())

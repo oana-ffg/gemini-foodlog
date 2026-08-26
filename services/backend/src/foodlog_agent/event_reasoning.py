@@ -129,7 +129,13 @@ def application_visible_model_request(
         "system_instruction": INSTRUCTION,
         "user_content": bundle,
         "response_schema": ActivityMealInferenceV1.model_json_schema(mode="validation"),
-        "tools": ["get_current_event_evidence", "load_artifacts"],
+        "tools": [
+            "get_current_event_evidence",
+            "get_recent_meals",
+            "get_active_user_context",
+            "get_unresolved_reviews",
+            "load_artifacts",
+        ],
         "run_config": {
             "max_llm_calls": MAX_LLM_CALLS,
             "custom_metadata": {
@@ -168,11 +174,33 @@ def _context_source_ids(bundle: dict[str, Any]) -> dict[ContextSourceKind, set[s
     }
 
 
+def _tool_context_source_ids(event: Event) -> dict[ContextSourceKind, set[str]]:
+    source_ids = {source_kind: set() for source_kind in ContextSourceKind}
+    if event.content is None:
+        return source_ids
+    for part in event.content.parts or []:
+        response = part.function_response
+        if response is None or not isinstance(response.response, dict):
+            continue
+        if response.name == "get_recent_meals":
+            for meal in response.response.get("meals", []):
+                if isinstance(meal, dict) and isinstance(meal.get("event_id"), str):
+                    source_ids[ContextSourceKind.RECENT_MEAL].add(meal["event_id"])
+        elif response.name == "get_active_user_context":
+            for note in response.response.get("notes", []):
+                if isinstance(note, dict) and isinstance(note.get("note_id"), str):
+                    source_ids[ContextSourceKind.USER_NOTE].add(note["note_id"])
+    return source_ids
+
+
 def _validate_source_identities(
     inference: ActivityMealInferenceV1,
     bundle: dict[str, Any],
+    tool_source_ids: dict[ContextSourceKind, set[str]] | None = None,
 ) -> None:
     source_ids = _context_source_ids(bundle)
+    for source_kind, identifiers in (tool_source_ids or {}).items():
+        source_ids[source_kind].update(identifiers)
     for evidence in inference.contextual_evidence:
         if evidence.source_id not in source_ids[evidence.source_kind]:
             raise RuntimeError(
@@ -194,6 +222,7 @@ def _validated_response(
     event_id: str,
     capture_ids: list[str],
     bundle: dict[str, Any],
+    tool_source_ids: dict[ContextSourceKind, set[str]] | None = None,
 ) -> ActivityMealInferenceV1:
     try:
         if final_event is None:
@@ -203,7 +232,7 @@ def _validated_response(
             raise RuntimeError("ADK response did not preserve the supplied event identity")
         if inference.source_capture_ids != capture_ids:
             raise RuntimeError("ADK response did not preserve the supplied capture identity")
-        _validate_source_identities(inference, bundle)
+        _validate_source_identities(inference, bundle, tool_source_ids)
         return inference
     except Exception as error:
         report = f"{type(error).__name__}: {str(error)[:1_000]}"
@@ -271,6 +300,7 @@ async def run_accounted_event_inference(
         response_tokens = 0
         thinking_tokens = 0
         total_tokens = 0
+        tool_source_ids = {source_kind: set() for source_kind in ContextSourceKind}
         try:
             identity_hash = sha256(
                 f"{event.account_id}\0{event.id}\0{invocation_key}".encode()
@@ -300,6 +330,10 @@ async def run_accounted_event_inference(
                     ),
                 ):
                     trace_capture.record_event(adk_event)
+                    for source_kind, identifiers in _tool_context_source_ids(
+                        adk_event
+                    ).items():
+                        tool_source_ids[source_kind].update(identifiers)
                     if adk_event.invocation_id or adk_event.model_version:
                         latest_identified_event = adk_event
                     if adk_event.usage_metadata is not None:
@@ -323,6 +357,7 @@ async def run_accounted_event_inference(
                 event_id=event.id,
                 capture_ids=capture_ids,
                 bundle=bundle,
+                tool_source_ids=tool_source_ids,
             )
             if min(prompt_tokens, response_tokens, total_tokens) <= 0:
                 raise RuntimeError("ADK run reported incomplete aggregate token usage")

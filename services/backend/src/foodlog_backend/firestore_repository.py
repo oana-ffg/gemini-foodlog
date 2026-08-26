@@ -2874,6 +2874,97 @@ class FirestoreRepository:
 
         return await retire(transaction)
 
+    async def recent_meals_for_account(
+        self,
+        *,
+        account_id: str,
+        limit: int = 20,
+    ) -> list[MealEntry]:
+        if not 1 <= limit <= 100:
+            raise ValueError("recent meal limit must be between 1 and 100")
+        account = await self._account(account_id).get()
+        if not account.exists or account.get("status") != "active":
+            raise AccountNotProvisioned
+        meals = [
+            _model(snapshot, MealEntry)
+            async for snapshot in self._collection(account_id, "meals").stream()
+        ]
+        if any(meal.account_id != account_id for meal in meals):
+            raise CrossAccountAccess
+        return sorted(
+            (
+                meal
+                for meal in meals
+                if meal.event_id is not None and meal.status != MealStatus.NOT_COOKING
+            ),
+            key=lambda item: (item.occurred_at or item.created_at, item.id),
+            reverse=True,
+        )[:limit]
+
+    async def active_user_context_notes_for_account(
+        self,
+        *,
+        account_id: str,
+        active_at: datetime | None = None,
+        limit: int = 20,
+    ) -> list[UserContextNote]:
+        if not 1 <= limit <= 100:
+            raise ValueError("active context limit must be between 1 and 100")
+        account = await self._account(account_id).get()
+        if not account.exists or account.get("status") != "active":
+            raise AccountNotProvisioned
+        evaluated_at = active_at or utc_now()
+        notes = [
+            _user_context_note_from_snapshot(snapshot)
+            async for snapshot in self._collection(account_id, "user_context_notes").stream()
+        ]
+        if any(note.account_id != account_id for note in notes):
+            raise CrossAccountAccess
+        return sorted(
+            (note for note in notes if note.is_active_at(evaluated_at)),
+            key=lambda item: (item.created_at, item.id),
+            reverse=True,
+        )[:limit]
+
+    async def unresolved_reviews_for_account(
+        self,
+        *,
+        account_id: str,
+        limit: int = 20,
+    ) -> tuple[list[MealEntry], list[ClarificationQuestion]]:
+        if not 1 <= limit <= 100:
+            raise ValueError("unresolved review limit must be between 1 and 100")
+        account = await self._account(account_id).get()
+        if not account.exists or account.get("status") != "active":
+            raise AccountNotProvisioned
+        meals = [
+            _model(snapshot, MealEntry)
+            async for snapshot in self._collection(account_id, "meals").stream()
+        ]
+        questions = [
+            _model(snapshot, ClarificationQuestion)
+            async for snapshot in self._collection(account_id, "questions").stream()
+        ]
+        if any(meal.account_id != account_id for meal in meals) or any(
+            question.account_id != account_id for question in questions
+        ):
+            raise CrossAccountAccess
+        unresolved_meals = sorted(
+            (
+                meal
+                for meal in meals
+                if meal.status in {MealStatus.PROVISIONAL, MealStatus.CONTRADICTED}
+            ),
+            key=lambda item: (item.occurred_at or item.created_at, item.id),
+            reverse=True,
+        )[:limit]
+        open_questions = sorted(
+            (question for question in questions if question.status == QuestionStatus.OPEN),
+            key=lambda item: (item.created_at, item.id),
+            reverse=True,
+        )[:limit]
+        return unresolved_meals, open_questions
+
     async def list_questions(
         self,
         owner_user_id: str,

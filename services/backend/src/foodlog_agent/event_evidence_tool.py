@@ -19,6 +19,8 @@ from foodlog_backend.models import (
 from foodlog_backend.repository import Repository
 from foodlog_backend.storage import GCSObjectStore, ObjectStore
 
+from .session_state import required_state_identifier
+
 ACCOUNT_ID_STATE_KEY = "account_id"
 EVENT_ID_STATE_KEY = "current_event_id"
 EVENT_REVISION_STATE_KEY = "current_event_revision"
@@ -81,18 +83,6 @@ class EventEvidenceToolResult(BaseModel):
     ordered_images: list[OrderedImageEvidence] = Field(min_length=1)
 
 
-def _required_state_identifier(context: ArtifactContext, key: str) -> str:
-    value = context.state.get(key)
-    if (
-        not isinstance(value, str)
-        or not value
-        or value != value.strip()
-        or len(value) > 160
-    ):
-        raise ValueError(f"Agent session state is missing a valid {key}")
-    return value
-
-
 def _event_summary(event: ActivityEvent) -> EventEvidenceSummary:
     return EventEvidenceSummary(
         event_id=event.id,
@@ -123,8 +113,8 @@ class EventEvidenceToolService:
         *,
         context: ArtifactContext,
     ) -> EventEvidenceToolResult:
-        account_id = _required_state_identifier(context, ACCOUNT_ID_STATE_KEY)
-        event_id = _required_state_identifier(context, EVENT_ID_STATE_KEY)
+        account_id = required_state_identifier(context, ACCOUNT_ID_STATE_KEY)
+        event_id = required_state_identifier(context, EVENT_ID_STATE_KEY)
         event, captures = await self._repository.event_evidence_for_account(
             account_id=account_id,
             event_id=event_id,

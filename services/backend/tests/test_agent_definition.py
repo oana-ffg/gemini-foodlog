@@ -10,11 +10,14 @@ def test_adk_agent_definition_is_importable_without_calling_a_model() -> None:
     assert root_agent.model.model == "gemini-3.6-flash"
     assert root_agent.output_schema is ActivityMealInferenceModelOutputV1
     assert root_agent.instruction == INSTRUCTION
-    assert PROMPT_VERSION == "food-event-v5"
+    assert PROMPT_VERSION == "food-event-v6"
     assert root_agent.generate_content_config.max_output_tokens == 2_048
     assert MAX_PROVIDER_ATTEMPTS == 1
     assert root_agent.model.retry_options.attempts == 1
     assert [tool.name for tool in root_agent.tools] == [
         "get_current_event_evidence",
+        "get_recent_meals",
+        "get_active_user_context",
+        "get_unresolved_reviews",
         "load_artifacts",
     ]
