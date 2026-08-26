@@ -41,6 +41,7 @@ locals {
   }
 
   required_services = toset([
+    "aiplatform.googleapis.com",
     "artifactregistry.googleapis.com",
     "appengine.googleapis.com",
     "apikeys.googleapis.com",

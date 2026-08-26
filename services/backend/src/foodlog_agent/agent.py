@@ -5,7 +5,9 @@ from google.adk.apps import App
 from google.adk.models import Gemini
 from google.genai import types
 
-MODEL = os.environ.get("FOODLOG_MODEL", "gemini-3.6-flash")
+from foodlog_backend.model_probe import DEFAULT_MODEL
+
+MODEL = os.environ.get("FOODLOG_MODEL", DEFAULT_MODEL)
 
 INSTRUCTION = """
 You are the Gemini FoodLog kitchen-event reasoning agent.

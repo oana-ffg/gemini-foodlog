@@ -174,9 +174,9 @@ The application account is the tenant boundary. Every camera, image, email, purc
 
 ### 3.1 Deployment locality
 
-The MVP keeps application data and model processing in Europe. Cloud Run, Cloud Storage, and Gemini processing use Belgium (`europe-west1`). App Engine uses its corresponding `europe-west` location. The default Cloud Firestore database uses the EU multi-region (`eur3`), whose read-write regions are Belgium and the Netherlands and whose witness region is Finland. Gemini calls use a regional EU Vertex AI endpoint rather than the global endpoint. The exact Gemini 3.6 Flash regional model identifier and availability must be verified during provisioning before infrastructure is locked, because model availability is location-specific.
+The MVP keeps application data and model processing in Europe. Cloud Run and regional Cloud Storage control-plane resources use Belgium (`europe-west1`), while private user-data buckets use the `EU` multi-region. App Engine uses its corresponding `europe-west` location. The default Cloud Firestore database uses the EU multi-region (`eur3`), whose read-write regions are Belgium and the Netherlands and whose witness region is Finland. Gemini calls use the `eu` Vertex AI multi-region rather than the global endpoint.
 
-This is a privacy decision, even though it means using Gemini 3.6 Flash instead of the newer Gemini 3.7 Flash while 3.7 is only available through a global endpoint. App Engine and the default Firestore database share an immutable location dependency, so Terraform must provision them in a deliberate order and verify both locations before deploying the mail gateway.
+This is a privacy decision. The selected Gemini model must remain generally available through Standard PayGo in the `eu` multi-region; a newer global-only model is not an automatic upgrade. App Engine and the default Firestore database share an immutable location dependency, so Terraform must provision them in a deliberate order and verify both locations before deploying the mail gateway.
 
 ## 4. Camera capture and upload
 
@@ -316,7 +316,7 @@ not used as a security control.
 
 ## 7. Agent reasoning workflow
 
-The MVP accesses Gemini 3.6 Flash through a regional EU Vertex AI endpoint using Google ADK in the Python worker. Production uses the Cloud Run service identity; local development uses Application Default Credentials. The backend does not implement an AI Studio API-key path, a multi-model routing pre-pass, or a separate blind-vision pass. The model ID and Vertex location remain configuration so evaluation can compare eligible regional stable versions without a code change.
+The MVP accesses Gemini 3.6 Flash through the `eu` Vertex AI multi-region using Google ADK in the Python worker. Production uses the Cloud Run service identity; local development uses Application Default Credentials. The backend does not implement an AI Studio API-key path, a multi-model routing pre-pass, or a separate blind-vision pass. The model ID (`FOODLOG_MODEL`) and Vertex location (`GOOGLE_CLOUD_LOCATION`) remain configuration so evaluation can compare eligible regional stable versions without a code change.
 
 Visual and contextual reasoning occur in one agent workflow. This intentionally differs from the original blind-then-context proposal to reduce cost and avoid a second description artifact for every event. The tradeoff is that household context can bias claimed observations. Structured output, image-level evidence links, and context-conflict evaluation fixtures must measure and expose that risk rather than describing the visual observations as blind.
 
