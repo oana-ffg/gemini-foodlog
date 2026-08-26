@@ -31,6 +31,8 @@ steps:
         import foodlog_backend.model_spend_smoke
         import foodlog_backend.notification_app
         import foodlog_agent.agent
+        import foodlog_agent.context_tools
+        import foodlog_agent.context_tools_smoke
         import foodlog_agent.event_evidence_smoke
         import foodlog_agent.event_evidence_tool
         import foodlog_backend.inference_schema

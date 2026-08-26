@@ -1,0 +1,73 @@
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+from typing import Any
+
+from foodlog_agent.context_tools import (
+    ContextToolsService,
+    production_context_tools_service,
+)
+from foodlog_agent.event_evidence_tool import ACCOUNT_ID_STATE_KEY
+
+
+class SmokeContext:
+    def __init__(self, *, account_id: str) -> None:
+        self.state = {ACCOUNT_ID_STATE_KEY: account_id}
+
+
+async def run_smoke(
+    *,
+    account_id: str,
+    service: ContextToolsService | None = None,
+) -> dict[str, Any]:
+    context = SmokeContext(account_id=account_id)
+    active_service = service or production_context_tools_service()
+    recent = await active_service.get_recent_meals(context=context)
+    active_context = await active_service.get_active_user_context(context=context)
+    unresolved = await active_service.get_unresolved_reviews(context=context)
+    return {
+        "schema_version": recent.schema_version,
+        "recent_meal_count": len(recent.meals),
+        "recent_meal_ids": [meal.meal_id for meal in recent.meals],
+        "recent_event_ids": [meal.event_id for meal in recent.meals],
+        "active_note_count": len(active_context.notes),
+        "active_note_ids": [note.note_id for note in active_context.notes],
+        "unresolved_meal_count": len(unresolved.meals),
+        "unresolved_meal_ids": [meal.meal_id for meal in unresolved.meals],
+        "open_question_count": len(unresolved.questions),
+        "open_question_ids": [question.question_id for question in unresolved.questions],
+        "model_calls": 0,
+    }
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Read one account through the no-model agent context tools."
+    )
+    parser.add_argument("--account-id", required=True)
+    parser.add_argument(
+        "--confirm-private-read",
+        action="store_true",
+        help="Confirm this execution may read the selected account's private context.",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    if not args.confirm_private_read:
+        _parser().error("--confirm-private-read is required")
+    print(
+        json.dumps(
+            asyncio.run(run_smoke(account_id=args.account_id)),
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

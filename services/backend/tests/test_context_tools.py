@@ -7,8 +7,10 @@ import pytest
 from foodlog_agent.context_tools import (
     CONTEXT_TOOL_RESULT_LIMIT,
     CONTEXT_TOOL_SCHEMA_VERSION,
+    ContextToolsService,
     build_context_tools,
 )
+from foodlog_agent.context_tools_smoke import run_smoke
 from foodlog_agent.event_evidence_tool import ACCOUNT_ID_STATE_KEY
 from foodlog_backend.models import (
     CaptureEnvelopeV1,
@@ -203,6 +205,16 @@ def test_context_tools_are_bounded_active_provenanced_and_account_scoped() -> No
         assert "author_user_id" not in serialized
         assert "object_key" not in serialized
         assert len(recent["meals"]) == CONTEXT_TOOL_RESULT_LIMIT
+
+        smoke = await run_smoke(
+            account_id=account.id,
+            service=ContextToolsService(repository=repository),
+        )
+        assert smoke["recent_meal_count"] == CONTEXT_TOOL_RESULT_LIMIT
+        assert smoke["active_note_ids"] == [active.id]
+        assert smoke["unresolved_meal_ids"] == [provisional.id]
+        assert smoke["open_question_ids"] == [question.id]
+        assert smoke["model_calls"] == 0
 
         foreign_context = StateContext({ACCOUNT_ID_STATE_KEY: foreign.id})
         for tool in tools.values():

@@ -353,6 +353,55 @@ resource "google_cloud_run_v2_job" "event_evidence_smoke" {
   ]
 }
 
+# Reusable, no-model smoke for tenant-scoped recent meals, active notes, and
+# unresolved review state. It has no default target and requires an explicit
+# private-read confirmation for every execution.
+resource "google_cloud_run_v2_job" "context_tools_smoke" {
+  project  = var.project_id
+  name     = "foodlog-context-tools-smoke"
+  location = var.region
+
+  deletion_protection = true
+
+  labels = merge(local.common_labels, {
+    component = "context-tools-smoke"
+  })
+
+  template {
+    parallelism = 1
+    task_count  = 1
+
+    template {
+      service_account = google_service_account.runtime["worker"].email
+      timeout         = "120s"
+      max_retries     = 0
+
+      containers {
+        name    = "context-tools-smoke"
+        image   = var.api_container_image
+        command = ["python"]
+        args    = ["-m", "foodlog_agent.context_tools_smoke"]
+
+        env {
+          name  = "GOOGLE_CLOUD_PROJECT"
+          value = var.project_id
+        }
+
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "512Mi"
+          }
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 # Isolated, no-model proof that the Firestore transaction rejects a reservation
 # above a deliberately tiny ceiling before any provider invocation can occur.
 resource "google_cloud_run_v2_job" "model_spend_smoke" {
