@@ -9,6 +9,7 @@ from foodlog_agent.event_reasoning import (
     AccountedEventInference,
     run_accounted_event_inference,
 )
+from foodlog_backend.model_accounting import ModelInvocationExecutionError
 from foodlog_backend.models import (
     ActivityEvent,
     CaptureRecord,
@@ -34,7 +35,33 @@ class EventReasoner(Protocol):
     ) -> AccountedEventInference: ...
 
 
+class EventInferenceInvoker(Protocol):
+    async def __call__(
+        self,
+        *,
+        repository: Repository,
+        event: ActivityEvent,
+        captures: list[CaptureRecord],
+        invocation_key: str,
+        purpose: str,
+        retry_attempt: int,
+        evaluation: bool,
+        repair_feedback: str | None = None,
+    ) -> AccountedEventInference: ...
+
+
 class AdkEventReasoner:
+    def __init__(
+        self,
+        *,
+        max_repair_attempts: int = 1,
+        invoker: EventInferenceInvoker = run_accounted_event_inference,
+    ) -> None:
+        if not 0 <= max_repair_attempts <= 3:
+            raise ValueError("max_repair_attempts must be between zero and three")
+        self._max_repair_attempts = max_repair_attempts
+        self._invoker = invoker
+
     async def infer(
         self,
         *,
@@ -46,15 +73,33 @@ class AdkEventReasoner:
         retry_attempt: int,
         evaluation: bool,
     ) -> AccountedEventInference:
-        return await run_accounted_event_inference(
-            repository=repository,
-            event=event,
-            captures=captures,
-            invocation_key=invocation_key,
-            purpose=purpose,
-            retry_attempt=retry_attempt,
-            evaluation=evaluation,
-        )
+        repair_feedback: str | None = None
+        for repair_attempt in range(self._max_repair_attempts + 1):
+            active_key = (
+                invocation_key
+                if repair_attempt == 0
+                else f"{invocation_key}:repair:{repair_attempt}"
+            )
+            try:
+                return await self._invoker(
+                    repository=repository,
+                    event=event,
+                    captures=captures,
+                    invocation_key=active_key,
+                    purpose=purpose,
+                    retry_attempt=retry_attempt + repair_attempt,
+                    evaluation=evaluation,
+                    repair_feedback=repair_feedback,
+                )
+            except ModelInvocationExecutionError as error:
+                if (
+                    error.error_code != "InvalidModelOutputError"
+                    or repair_attempt >= self._max_repair_attempts
+                ):
+                    raise
+                cause = error.__cause__
+                repair_feedback = str(cause or error)[:1_200]
+        raise AssertionError("bounded repair loop did not return or raise")
 
 
 @dataclass(frozen=True)
@@ -147,6 +192,12 @@ class EventInferenceProcessor:
                 evaluation=self._evaluation,
             )
         except Exception as error:
+            error_code = (
+                error.error_code
+                if isinstance(error, ModelInvocationExecutionError)
+                else type(error).__name__
+            )
+            error_detail = str(error.__cause__ or error)
             await self._repository.release_job(
                 account_id=account_id,
                 job_id=job_id,
@@ -154,8 +205,8 @@ class EventInferenceProcessor:
                 lease_id=lease_id,
                 lease_owner=worker_id,
                 available_at=utc_now() + self._retry_delay,
-                error_code=type(error).__name__[:120],
-                error_message=str(error)[:2_000] or type(error).__name__,
+                error_code=error_code[:120],
+                error_message=error_detail[:2_000] or error_code,
             )
             raise
 

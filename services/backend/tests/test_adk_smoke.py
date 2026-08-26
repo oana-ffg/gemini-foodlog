@@ -1,6 +1,12 @@
+import pytest
 from google.adk.events import Event
 from google.genai import types
 
+from foodlog_agent.event_reasoning import (
+    InvalidModelOutputError,
+    _validated_response,
+    event_bundle,
+)
 from foodlog_agent.inference_schema import ActivityMealInferenceV1
 from foodlog_agent.prompt import INSTRUCTION, PROMPT_VERSION
 from foodlog_agent.smoke import (
@@ -66,6 +72,26 @@ def test_final_adk_json_is_revalidated_by_the_product_schema() -> None:
     parsed = _structured_response(event)
     assert parsed.schema_version == "activity-meal-inference-v1"
     assert parsed.best_guess == "Air-fried steak"
+
+
+def test_malformed_model_json_is_classified_as_repairable_invalid_output() -> None:
+    malformed = Event(
+        invocation_id="invocation-malformed",
+        author="food_event_reasoner",
+        content=types.Content(
+            role="model",
+            parts=[types.Part.from_text(text='{"schema_version":"wrong"}')],
+        ),
+    )
+    bundle = event_bundle(event_id="event-001", capture_ids=["capture-001"])
+
+    with pytest.raises(InvalidModelOutputError, match="ValidationError"):
+        _validated_response(
+            final_event=malformed,
+            event_id="event-001",
+            capture_ids=["capture-001"],
+            bundle=bundle,
+        )
 
 
 def test_cli_refuses_an_accidental_billable_invocation() -> None:

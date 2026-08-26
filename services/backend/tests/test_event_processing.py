@@ -7,9 +7,13 @@ from typing import cast
 
 import pytest
 
-from foodlog_agent.event_processing import EventInferenceProcessor
-from foodlog_agent.event_reasoning import AccountedEventInference
+from foodlog_agent.event_processing import AdkEventReasoner, EventInferenceProcessor
+from foodlog_agent.event_reasoning import (
+    AccountedEventInference,
+    InvalidModelOutputError,
+)
 from foodlog_backend.grouping import GroupingPolicy
+from foodlog_backend.model_accounting import ModelInvocationExecutionError
 from foodlog_backend.models import (
     CaptureEnvelopeV1,
     JobStatus,
@@ -30,6 +34,27 @@ class RecordingReasoner:
         self.calls.append(kwargs)
         if self.error is not None:
             raise self.error
+        return self.result
+
+
+class SequencedInvoker:
+    def __init__(self, outcomes: list[str]) -> None:
+        self.outcomes = outcomes
+        self.calls: list[dict[str, object]] = []
+        self.result = cast(AccountedEventInference, object())
+
+    async def __call__(self, **kwargs) -> AccountedEventInference:
+        self.calls.append(kwargs)
+        outcome = self.outcomes.pop(0)
+        if outcome == "invalid":
+            try:
+                raise InvalidModelOutputError("missing required best_guess")
+            except InvalidModelOutputError as cause:
+                raise ModelInvocationExecutionError(
+                    error_code="InvalidModelOutputError"
+                ) from cause
+        if outcome != "success":
+            raise ModelInvocationExecutionError(error_code=outcome)
         return self.result
 
 
@@ -231,5 +256,95 @@ def test_stale_revision_never_invokes_and_evaluation_can_release_success() -> No
         assert job is not None
         assert job.status == JobStatus.PENDING
         assert job.last_error_code == "EvaluationComplete"
+
+    asyncio.run(scenario())
+
+
+def test_invalid_output_gets_one_separately_identified_repair_attempt() -> None:
+    async def scenario() -> None:
+        repository, _, event = await _prepared_event()
+        _, captures = await repository.event_evidence_for_account(
+            account_id=event.account_id,
+            event_id=event.id,
+        )
+        invoker = SequencedInvoker(["invalid", "success"])
+        reasoner = AdkEventReasoner(invoker=invoker)
+
+        result = await reasoner.infer(
+            repository=repository,
+            event=event,
+            captures=captures,
+            invocation_key="bounded-repair",
+            purpose="event_inference",
+            retry_attempt=0,
+            evaluation=False,
+        )
+
+        assert result is invoker.result
+        assert len(invoker.calls) == 2
+        assert invoker.calls[0]["invocation_key"] == "bounded-repair"
+        assert invoker.calls[0]["retry_attempt"] == 0
+        assert invoker.calls[0]["repair_feedback"] is None
+        assert invoker.calls[1]["invocation_key"] == "bounded-repair:repair:1"
+        assert invoker.calls[1]["retry_attempt"] == 1
+        assert "missing required best_guess" in invoker.calls[1]["repair_feedback"]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("outcome", ["TimeoutError", "RESOURCE_EXHAUSTED"])
+def test_transport_and_quota_failures_do_not_trigger_immediate_repair(outcome: str) -> None:
+    async def scenario() -> None:
+        repository, _, event = await _prepared_event()
+        _, captures = await repository.event_evidence_for_account(
+            account_id=event.account_id,
+            event_id=event.id,
+        )
+        invoker = SequencedInvoker([outcome])
+        reasoner = AdkEventReasoner(invoker=invoker)
+
+        with pytest.raises(ModelInvocationExecutionError) as raised:
+            await reasoner.infer(
+                repository=repository,
+                event=event,
+                captures=captures,
+                invocation_key="no-immediate-repair",
+                purpose="event_inference",
+                retry_attempt=0,
+                evaluation=False,
+            )
+        assert raised.value.error_code == outcome
+        assert len(invoker.calls) == 1
+
+    asyncio.run(scenario())
+
+
+def test_exhausted_output_repair_remains_a_visible_failure() -> None:
+    async def scenario() -> None:
+        repository, account, event = await _prepared_event()
+        invoker = SequencedInvoker(["invalid", "invalid"])
+        processor = EventInferenceProcessor(
+            repository=repository,
+            reasoner=AdkEventReasoner(invoker=invoker),
+            retry_delay=timedelta(0),
+        )
+
+        with pytest.raises(ModelInvocationExecutionError) as raised:
+            await processor.process(
+                account_id=account.id,
+                event_id=event.id,
+                expected_revision=event.current_revision,
+                worker_id="event-worker-invalid-output",
+            )
+        assert raised.value.error_code == "InvalidModelOutputError"
+        assert len(invoker.calls) == 2
+        job = await repository.job_for_account(
+            account.id,
+            event_inference_job_id(event.id),
+        )
+        assert job is not None
+        assert job.status == JobStatus.PENDING
+        assert job.last_error_code == "InvalidModelOutputError"
+        assert "missing required best_guess" in (job.last_error_message or "")
 
     asyncio.run(scenario())
