@@ -224,6 +224,13 @@ def test_firestore_reservation_and_usage_reconcile_atomically() -> None:
                 spec=spec,
                 invoke=invoke,
             )
+        assert calls == 1
+
+        second = await execute_accounted_model_invocation(
+            repository=repository,
+            spec=replace(spec, invocation_key="accounted-call-0002"),
+            invoke=invoke,
+        )
 
         ledger = await client.collection("system").document("model_accounting_test").get()
         usage = await (
@@ -233,10 +240,11 @@ def test_firestore_reservation_and_usage_reconcile_atomically() -> None:
             .document(accounted.reservation.id)
             .get()
         )
-        assert calls == 1
-        assert ledger.get("reserved_dkk_micros") == 9_900
-        assert ledger.get("actual_dkk_micros") == 1_155
-        assert ledger.get("reconciled_reservation_count") == 1
+        assert second.usage.outcome == "succeeded"
+        assert calls == 2
+        assert ledger.get("reserved_dkk_micros") == 19_800
+        assert ledger.get("actual_dkk_micros") == 2_310
+        assert ledger.get("reconciled_reservation_count") == 2
         assert usage.get("outcome") == "succeeded"
         assert usage.get("evaluation") is True
         assert usage.get("retry_attempt") == 0

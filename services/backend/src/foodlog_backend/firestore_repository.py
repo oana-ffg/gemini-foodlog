@@ -1869,17 +1869,25 @@ class FirestoreRepository:
             if proposed_total > effective_limit:
                 raise ModelSpendLimitExceeded
             transaction.create(reservation_ref, _document(reservation))
-            transaction.set(
-                ledger_ref,
-                {
-                    "schema_version": 1,
-                    "currency": "DKK",
-                    "limit_dkk_micros": effective_limit,
-                    "reserved_dkk_micros": proposed_total,
-                    "created_at": created_at,
-                    "updated_at": reservation.created_at,
-                },
-            )
+            ledger_update = {
+                "limit_dkk_micros": effective_limit,
+                "reserved_dkk_micros": proposed_total,
+                "updated_at": reservation.created_at,
+            }
+            if ledger_snapshot.exists:
+                transaction.update(ledger_ref, ledger_update)
+            else:
+                transaction.create(
+                    ledger_ref,
+                    {
+                        "schema_version": 1,
+                        "currency": "DKK",
+                        **ledger_update,
+                        "actual_dkk_micros": 0,
+                        "reconciled_reservation_count": 0,
+                        "created_at": created_at,
+                    },
+                )
             return reservation
 
         return await reserve(transaction)
