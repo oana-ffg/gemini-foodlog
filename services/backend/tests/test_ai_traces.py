@@ -10,6 +10,7 @@ from foodlog_backend.ai_traces import (
     AiTraceCapture,
     AiTraceIntegrityError,
     AiTraceService,
+    audit_application_visible_trace,
 )
 from foodlog_backend.errors import AiTraceNotFound
 from foodlog_backend.model_accounting import ModelInvocationSpec, reservation_id_for_invocation
@@ -73,8 +74,15 @@ def test_trace_round_trip_is_hashed_redacted_and_account_scoped() -> None:
         capture = AiTraceCapture(
             spec=spec,
             request={
-                "event_id": spec.event_id,
-                "context": {"user_notes": [{"note": "Duck may be cooked tomorrow."}]},
+                "model": spec.model,
+                "system_instruction": "Classify the event.",
+                "user_content": {
+                    "event_id": spec.event_id,
+                    "context": {"user_notes": [{"note": "Duck may be cooked tomorrow."}]},
+                },
+                "response_schema": {"type": "object"},
+                "tools": [{"name": "get_current_event_evidence"}],
+                "run_config": {"max_llm_calls": 3},
                 "authorization": "Bearer request-secret",
                 "api_key": "AIzaABCDEFGHIJKLMNOPQRSTUVWXY1234",
             },
@@ -139,8 +147,16 @@ def test_trace_round_trip_is_hashed_redacted_and_account_scoped() -> None:
         assert record.object_key == f"accounts/{account.id}/traces/{record.id}.json.gz"
 
         payload = await service.read(account_id=account.id, trace_id=record.id)
+        audit_result = audit_application_visible_trace(payload)
+        assert audit_result == {
+            "event_count": 2,
+            "tool_call_count": 1,
+            "tool_response_count": 1,
+            "binary_reference_count": 1,
+            "redaction_verified": True,
+        }
         serialized = json.dumps(payload, sort_keys=True)
-        assert payload["request"]["context"]["user_notes"][0]["note"] == (
+        assert payload["request"]["user_content"]["context"]["user_notes"][0]["note"] == (
             "Duck may be cooked tomorrow."
         )
         assert payload["events"][0]["content"]["parts"][1] == {"hidden_reasoning_omitted": True}
@@ -164,6 +180,40 @@ def test_trace_round_trip_is_hashed_redacted_and_account_scoped() -> None:
             await service.read(account_id=foreign.id, trace_id=record.id)
 
     asyncio.run(scenario())
+
+
+def test_trace_audit_rejects_hidden_reasoning_and_credentials() -> None:
+    base = {
+        "schema_version": "application-visible-ai-trace-v1",
+        "trace_id": "trace-test",
+        "account_id": "account-test",
+        "event_id": "event-test",
+        "lineage": {},
+        "versions": {},
+        "request": {
+            "model": "gemini-test",
+            "system_instruction": "Classify the event.",
+            "user_content": {},
+            "response_schema": {},
+            "tools": [],
+            "run_config": {},
+        },
+        "events": [
+            {"function_call": {}},
+            {"function_response": {}},
+        ],
+        "response": {},
+        "validation_failures": [],
+        "error": None,
+        "usage": {},
+        "timing": {},
+    }
+    with pytest.raises(AiTraceIntegrityError, match="hidden reasoning"):
+        audit_application_visible_trace({**base, "reasoning": "private"})
+    with pytest.raises(AiTraceIntegrityError, match="credential field"):
+        audit_application_visible_trace({**base, "access_token": "private"})
+    with pytest.raises(AiTraceIntegrityError, match="credential-shaped string"):
+        audit_application_visible_trace({**base, "response": {"text": "Bearer super-secret-token"}})
 
 
 def test_trace_integrity_and_repair_lineage_fail_closed() -> None:

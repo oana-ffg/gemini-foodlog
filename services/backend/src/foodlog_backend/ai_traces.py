@@ -120,6 +120,96 @@ def redact_application_visible(value: Any) -> Any:
     return _redact_string(str(value))
 
 
+def audit_application_visible_trace(payload: Mapping[str, Any]) -> dict[str, int | bool]:
+    """Fail closed if a persisted trace violates its redaction/shape contract."""
+    required = {
+        "schema_version",
+        "trace_id",
+        "account_id",
+        "event_id",
+        "lineage",
+        "versions",
+        "request",
+        "events",
+        "response",
+        "validation_failures",
+        "error",
+        "usage",
+        "timing",
+    }
+    if not required <= payload.keys():
+        raise AiTraceIntegrityError("AI trace is missing required application-visible fields")
+    request = payload.get("request")
+    if (
+        not isinstance(request, Mapping)
+        or not {
+            "model",
+            "system_instruction",
+            "user_content",
+            "response_schema",
+            "tools",
+            "run_config",
+        }
+        <= request.keys()
+    ):
+        raise AiTraceIntegrityError("AI trace request is not the complete application input")
+
+    tool_calls = 0
+    tool_responses = 0
+    binary_references = 0
+
+    def inspect(value: Any) -> None:
+        nonlocal tool_calls, tool_responses, binary_references
+        if isinstance(value, Mapping):
+            if value.get("hidden_reasoning_omitted") is True:
+                pass
+            if value.get("binary_omitted") is True:
+                binary_references += 1
+                if not isinstance(value.get("size"), int) or not re.fullmatch(
+                    r"[0-9a-f]{64}", str(value.get("sha256", ""))
+                ):
+                    raise AiTraceIntegrityError("AI trace binary reference is invalid")
+            for raw_key, item in value.items():
+                normalized_key = _normalized_key(raw_key)
+                if normalized_key in _HIDDEN_REASONING_KEYS:
+                    raise AiTraceIntegrityError("AI trace retained hidden reasoning")
+                if (
+                    normalized_key in _SENSITIVE_KEYS
+                    or (normalized_key.endswith("token") and isinstance(item, str))
+                ) and item != _REDACTED:
+                    raise AiTraceIntegrityError("AI trace retained a credential field")
+                if normalized_key == "functioncall":
+                    tool_calls += 1
+                elif normalized_key == "functionresponse":
+                    tool_responses += 1
+                inspect(item)
+            return
+        if isinstance(value, list):
+            for item in value:
+                inspect(item)
+            return
+        if isinstance(value, str) and (
+            _BEARER_PATTERN.search(value)
+            or _JWT_PATTERN.search(value)
+            or _GOOGLE_API_KEY_PATTERN.search(value)
+        ):
+            raise AiTraceIntegrityError("AI trace retained a credential-shaped string")
+
+    inspect(payload)
+    events = payload.get("events")
+    if not isinstance(events, list) or not events:
+        raise AiTraceIntegrityError("AI trace contains no ADK events")
+    if tool_calls < 1 or tool_responses < 1:
+        raise AiTraceIntegrityError("AI trace omitted its tool call or returned context")
+    return {
+        "event_count": len(events),
+        "tool_call_count": tool_calls,
+        "tool_response_count": tool_responses,
+        "binary_reference_count": binary_references,
+        "redaction_verified": True,
+    }
+
+
 def trace_id_for_invocation(
     *,
     account_id: str,
