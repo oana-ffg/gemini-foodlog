@@ -567,7 +567,7 @@ def test_deployed_repository_smoke_is_rerunnable_without_duplicate_revisions() -
         second = await run_smoke(repository)
 
         assert first == second
-        assert first["revision_numbers"] == [1, 2, 3]
+        assert first["revision_numbers"] == [1, 2, 3, 4]
         assert first["model_calls"] == 0
         feedback = [
             snapshot
@@ -576,7 +576,7 @@ def test_deployed_repository_smoke_is_rerunnable_without_duplicate_revisions() -
             .collection("feedback")
             .stream()
         ]
-        assert len(feedback) == 2
+        assert len(feedback) == 3
         client.close()
 
     asyncio.run(scenario())

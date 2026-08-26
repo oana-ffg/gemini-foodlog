@@ -292,6 +292,27 @@ async def run_smoke(repository: Repository) -> dict[str, Any]:
         ),
         idempotency_key="repository-smoke-answer-v1",
     )
+    targeted = await repository.record_meal_feedback(
+        owner_user_id=SMOKE_OWNER_ID,
+        meal_id=meal.id,
+        request=MealFeedbackRequest.model_validate(
+            {
+                "kind": "correct",
+                "base_revision_number": 3,
+                "correction": {
+                    "scope": "component",
+                    "component_index": 0,
+                    "replacement": {
+                        "name": "Ribeye steak",
+                        "ingredients": ["beef ribeye"],
+                        "preparation_methods": ["air frying"],
+                    },
+                },
+                "explanation": "The isolated smoke fixture identifies the cut as ribeye.",
+            }
+        ),
+        idempotency_key="repository-smoke-targeted-component-v1",
+    )
     current = await repository.meal_for_owner(SMOKE_OWNER_ID, meal.id)
     revisions = await repository.list_meal_revisions(SMOKE_OWNER_ID, meal.id)
     questions = await repository.list_questions(
@@ -300,9 +321,18 @@ async def run_smoke(repository: Repository) -> dict[str, Any]:
     )
     if confirmation.revision.number != 2:
         raise RuntimeError("Confirmation did not persist immutable revision 2")
-    if answer.revision.number != 3 or current.revision_number != 3:
+    if answer.revision.number != 3:
         raise RuntimeError("Question answer did not atomically persist revision 3")
-    if [revision.number for revision in revisions] != [1, 2, 3]:
+    if (
+        targeted.revision.number != 4
+        or targeted.revision.base_revision_number != 3
+        or targeted.revision.correction is None
+        or targeted.revision.correction.scope != "component"
+        or current.revision_number != 4
+        or current.components[0].name != "Ribeye steak"
+    ):
+        raise RuntimeError("Targeted correction did not atomically persist revision 4")
+    if [revision.number for revision in revisions] != [1, 2, 3, 4]:
         raise RuntimeError("Repository smoke revision history is incomplete")
     if len(questions) != 1 or questions[0].id != question.id:
         raise RuntimeError("Repository smoke question did not close exactly once")
@@ -317,6 +347,7 @@ async def run_smoke(repository: Repository) -> dict[str, Any]:
         "feedback_revision_numbers": [
             confirmation.revision.number,
             answer.revision.number,
+            targeted.revision.number,
         ],
         "published_event_id": published_hypothesis.event_id,
         "published_classification": published_hypothesis.activity_hypothesis.kind,
