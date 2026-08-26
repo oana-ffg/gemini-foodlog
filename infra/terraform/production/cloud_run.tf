@@ -281,6 +281,64 @@ resource "google_cloud_run_v2_job" "adk_agent_smoke" {
   ]
 }
 
+# Reusable, no-model smoke for the production Firestore/GCS event-evidence path.
+# It has no default account target and fails safely unless an operator supplies
+# an exact account/event pair plus the explicit private-read confirmation flag.
+resource "google_cloud_run_v2_job" "event_evidence_smoke" {
+  project  = var.project_id
+  name     = "foodlog-event-evidence-smoke"
+  location = var.region
+
+  deletion_protection = true
+
+  labels = merge(local.common_labels, {
+    component = "event-evidence-smoke"
+  })
+
+  template {
+    parallelism = 1
+    task_count  = 1
+
+    template {
+      service_account = google_service_account.runtime["worker"].email
+      timeout         = "120s"
+      max_retries     = 0
+
+      containers {
+        name    = "event-evidence-smoke"
+        image   = var.api_container_image
+        command = ["python"]
+        args    = ["-m", "foodlog_agent.event_evidence_smoke"]
+
+        env {
+          name  = "FOODLOG_MEDIA_BUCKET"
+          value = google_storage_bucket.retained["media"].name
+        }
+
+        env {
+          name  = "GOOGLE_CLOUD_PROJECT"
+          value = var.project_id
+        }
+
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "512Mi"
+          }
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [
+    google_storage_bucket_iam_policy.retained["media"],
+  ]
+}
+
 resource "google_cloud_run_v2_service" "image" {
   project  = var.project_id
   name     = "foodlog-image"

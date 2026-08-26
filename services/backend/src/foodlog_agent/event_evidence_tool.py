@@ -208,7 +208,7 @@ def build_event_evidence_tool(
 
 
 @lru_cache(maxsize=1)
-def _production_service() -> EventEvidenceToolService:
+def production_event_evidence_service() -> EventEvidenceToolService:
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
     bucket_name = os.environ.get("FOODLOG_MEDIA_BUCKET")
     if not project_id or not bucket_name:
@@ -231,7 +231,9 @@ async def get_current_event_evidence(tool_context: ToolContext) -> dict[str, Any
     ordered camera/timing metadata and session-scoped artifact names; call load_artifacts
     with those names to inspect the image bytes.
     """
-    result = await _production_service().get_current_event_evidence(context=tool_context)
+    result = await production_event_evidence_service().get_current_event_evidence(
+        context=tool_context
+    )
     return result.model_dump(mode="json")
 
 

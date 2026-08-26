@@ -6,10 +6,12 @@ from typing import Any
 import pytest
 from google.genai import types
 
+from foodlog_agent.event_evidence_smoke import run_smoke
 from foodlog_agent.event_evidence_tool import (
     ACCOUNT_ID_STATE_KEY,
     EVENT_EVIDENCE_SCHEMA_VERSION,
     EVENT_ID_STATE_KEY,
+    EventEvidenceToolService,
     build_event_evidence_tool,
 )
 from foodlog_backend.errors import ActivityEventNotFound
@@ -156,6 +158,21 @@ def test_event_tool_uses_trusted_scope_and_returns_ordered_private_artifacts() -
             b"later-image",
         ]
         assert [saved[2]["capture_id"] for saved in context.saved if saved[2]] == [
+            "event-tool-capture-earlier",
+            "event-tool-capture-later",
+        ]
+
+        live_smoke = await run_smoke(
+            account_id=account.id,
+            event_id=later.event.id,
+            service=EventEvidenceToolService(
+                repository=repository,
+                object_store=object_store,
+            ),
+        )
+        assert live_smoke["artifact_count"] == 2
+        assert live_smoke["artifact_bytes"] == len(b"earlier-imagelater-image")
+        assert live_smoke["ordered_capture_ids"] == [
             "event-tool-capture-earlier",
             "event-tool-capture-later",
         ]
