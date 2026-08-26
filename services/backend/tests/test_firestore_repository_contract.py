@@ -717,6 +717,8 @@ def test_deployed_repository_smoke_is_rerunnable_without_duplicate_revisions() -
 
         assert first == second
         assert first["revision_numbers"] == [1, 2, 3, 4]
+        assert first["knowledge_revision_numbers"] == [1, 2]
+        assert first["knowledge_lifecycle"] == "reinforced"
         assert first["model_calls"] == 0
         feedback = [
             snapshot

@@ -19,6 +19,13 @@ from .models import (
     Confidence,
     DurableJob,
     JobKind,
+    KnowledgeBeliefStrength,
+    KnowledgeEvidenceKind,
+    KnowledgeEvidenceReference,
+    KnowledgeEvidenceRole,
+    KnowledgeLifecycle,
+    KnowledgeRevisionDraft,
+    KnowledgeRevisionSource,
     MealComponent,
     MealEntry,
     MealFeedbackKind,
@@ -336,6 +343,64 @@ async def run_smoke(repository: Repository) -> dict[str, Any]:
         raise RuntimeError("Repository smoke revision history is incomplete")
     if len(questions) != 1 or questions[0].id != question.id:
         raise RuntimeError("Repository smoke question did not close exactly once")
+    initial_knowledge = await repository.record_knowledge_revision(
+        account_id=SMOKE_ACCOUNT_ID,
+        topic_key="Repository smoke household pattern",
+        expected_revision_number=None,
+        draft=KnowledgeRevisionDraft(
+            title="Repository smoke household pattern",
+            statement="The isolated smoke meal may represent a household pattern.",
+            lifecycle=KnowledgeLifecycle.INFERRED,
+            belief_strength=KnowledgeBeliefStrength.WEAK,
+            source=KnowledgeRevisionSource.AGENT_INFERENCE,
+            evidence=[
+                KnowledgeEvidenceReference(
+                    kind=KnowledgeEvidenceKind.MEAL_REVISION,
+                    id=targeted.revision.id,
+                    role=KnowledgeEvidenceRole.SUPPORTS,
+                )
+            ],
+            reason="The deterministic smoke meal supplies bounded source provenance.",
+        ),
+        idempotency_key="repository-smoke-knowledge-inferred-v1",
+    )
+    reinforced_knowledge = await repository.record_knowledge_revision(
+        account_id=SMOKE_ACCOUNT_ID,
+        topic_key=initial_knowledge.page.topic_key,
+        expected_revision_number=1,
+        draft=KnowledgeRevisionDraft(
+            title="Repository smoke household pattern",
+            statement="The isolated smoke meal represents a reinforced household pattern.",
+            lifecycle=KnowledgeLifecycle.REINFORCED,
+            belief_strength=KnowledgeBeliefStrength.MODERATE,
+            source=KnowledgeRevisionSource.USER_FEEDBACK,
+            evidence=[
+                KnowledgeEvidenceReference(
+                    kind=KnowledgeEvidenceKind.KNOWLEDGE_REVISION,
+                    id=initial_knowledge.revision.id,
+                    role=KnowledgeEvidenceRole.CONTEXT,
+                ),
+                KnowledgeEvidenceReference(
+                    kind=KnowledgeEvidenceKind.FEEDBACK,
+                    id=answer.feedback.id,
+                    role=KnowledgeEvidenceRole.SUPPORTS,
+                ),
+            ],
+            reason="The deterministic user feedback reinforces the isolated belief.",
+        ),
+        idempotency_key="repository-smoke-knowledge-reinforced-v1",
+    )
+    knowledge_revisions = await repository.list_knowledge_revisions(
+        SMOKE_OWNER_ID,
+        initial_knowledge.page.id,
+    )
+    if (
+        reinforced_knowledge.page.current_revision_number != 2
+        or reinforced_knowledge.page.lifecycle != KnowledgeLifecycle.REINFORCED
+        or [revision.number for revision in knowledge_revisions] != [1, 2]
+        or knowledge_revisions[1].previous_revision_id != knowledge_revisions[0].id
+    ):
+        raise RuntimeError("Versioned household knowledge did not persist revisions 1 and 2")
     return {
         "schema_version": SMOKE_FIXTURE_VERSION,
         "account_id": SMOKE_ACCOUNT_ID,
@@ -352,6 +417,11 @@ async def run_smoke(repository: Repository) -> dict[str, Any]:
         "published_event_id": published_hypothesis.event_id,
         "published_classification": published_hypothesis.activity_hypothesis.kind,
         "published_revision": published_hypothesis.revision_number,
+        "knowledge_page_id": initial_knowledge.page.id,
+        "knowledge_lifecycle": reinforced_knowledge.page.lifecycle,
+        "knowledge_revision_numbers": [
+            revision.number for revision in knowledge_revisions
+        ],
         "model_calls": 0,
     }
 
