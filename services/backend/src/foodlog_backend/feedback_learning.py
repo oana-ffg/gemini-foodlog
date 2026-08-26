@@ -32,6 +32,7 @@ from .repository import Repository
 
 class FeedbackLearningOutcome(StrEnum):
     CONFIRMATION_ONLY = "confirmation_only"
+    NOT_COOKING = "not_cooking"
     WRONG_ONLY = "wrong_only"
     MEAL_ONLY = "meal_only"
     INSUFFICIENT_INFORMATION = "insufficient_information"
@@ -130,6 +131,8 @@ class FeedbackLearningService:
     ) -> FeedbackLearningOutcome | None:
         if request.kind == MealFeedbackKind.CONFIRM:
             return FeedbackLearningOutcome.CONFIRMATION_ONLY
+        if request.kind == MealFeedbackKind.NOT_COOKING:
+            return FeedbackLearningOutcome.NOT_COOKING
         has_replacement = request.actual_meal is not None or request.correction is not None
         if request.learning_disposition == (
             MealFeedbackLearningDisposition.INSUFFICIENT_INFORMATION

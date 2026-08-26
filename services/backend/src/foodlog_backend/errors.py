@@ -110,6 +110,10 @@ class InvalidMealCorrectionTarget(FoodLogError):
     pass
 
 
+class InvalidMealFeedbackTransition(FoodLogError):
+    pass
+
+
 class KnowledgePageNotFound(FoodLogError):
     pass
 

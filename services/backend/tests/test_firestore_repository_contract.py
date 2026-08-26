@@ -10,8 +10,10 @@ from google.cloud.firestore_v1.async_client import AsyncClient
 
 from foodlog_backend.errors import (
     IdempotencyConflict,
+    InvalidMealFeedbackTransition,
     KnowledgePageNotFound,
     KnowledgeRevisionConflict,
+    MealNotFound,
     MealRevisionConflict,
     QuestionAlreadyAnswered,
     QuestionNotFound,
@@ -293,6 +295,141 @@ def test_firestore_meal_question_feedback_and_revisions_are_atomic() -> None:
                 request=targeted_request,
                 idempotency_key="firestore-contract-stale-targeted",
             )
+        client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.skipif(
+    "FIRESTORE_EMULATOR_HOST" not in os.environ,
+    reason="requires the Firestore emulator",
+)
+def test_firestore_not_cooking_is_hidden_auditable_and_reclassifiable() -> None:
+    async def scenario() -> None:
+        project_id = "gemini-foodlog-not-cooking-contract-test"
+        client = AsyncClient(project=project_id)
+        repository = FirestoreRepository(
+            project_id=project_id,
+            public_account_limit=25,
+            trial_image_limit=200,
+            client=client,
+        )
+        owner_user_id = "firestore-not-cooking-owner"
+        account = await repository.provision_account(owner_user_id)
+        await repository.provision_account("firestore-not-cooking-foreign")
+        capture_id = "firestore-not-cooking-capture"
+        await (
+            client.collection("accounts")
+            .document(account.id)
+            .collection("captures")
+            .document(capture_id)
+            .set(
+                {
+                    "schema_version": 1,
+                    "id": capture_id,
+                    "account_id": account.id,
+                    "status": "stored",
+                }
+            )
+        )
+        meal = await repository.save_meal(
+            account_id=account.id,
+            meal=MealEntry(
+                id="firestore-not-cooking-meal",
+                account_id=account.id,
+                capture_id=capture_id,
+                title="Cat on the counter",
+                confidence=Confidence.UNCERTAIN,
+                components=[],
+                observations=["A cat is standing by the sink."],
+                alternatives=["Food preparation"],
+                rationale="No food is visible.",
+                clarification_question="Was this only the cat, rather than cooking?",
+                clarification_reason="Only cooking belongs in the food journal.",
+            ),
+        )
+        question = await repository.open_question(
+            account_id=account.id,
+            meal=meal,
+            prompt="Was this the cat or food preparation?",
+            reason="Only food preparation belongs in the journal.",
+        )
+        confirmation = await repository.record_meal_feedback(
+            owner_user_id=owner_user_id,
+            meal_id=meal.id,
+            request=MealFeedbackRequest(kind=MealFeedbackKind.CONFIRM),
+            idempotency_key="firestore-not-cooking-confirm-before-discard",
+        )
+        assert confirmation.revision.number == 2
+        request = MealFeedbackRequest(
+            kind=MealFeedbackKind.NOT_COOKING,
+            explanation="The cat jumped onto the counter; nobody was preparing food.",
+        )
+
+        discarded = await repository.record_meal_feedback(
+            owner_user_id=owner_user_id,
+            meal_id=meal.id,
+            request=request,
+            idempotency_key="firestore-not-cooking-discard",
+        )
+        retry = await repository.record_meal_feedback(
+            owner_user_id=owner_user_id,
+            meal_id=meal.id,
+            request=request,
+            idempotency_key="firestore-not-cooking-discard",
+        )
+
+        assert retry == discarded
+        assert discarded.revision.status == MealStatus.NOT_COOKING
+        assert await repository.list_meals(owner_user_id) == []
+        retained = await repository.meal_for_owner(owner_user_id, meal.id)
+        assert retained.status == MealStatus.NOT_COOKING
+        revisions = await repository.list_meal_revisions(owner_user_id, meal.id)
+        assert [revision.status for revision in revisions] == [
+            MealStatus.PROVISIONAL,
+            MealStatus.CONFIRMED,
+            MealStatus.NOT_COOKING,
+        ]
+        superseded = await repository.list_questions(
+            owner_user_id,
+            question_status=QuestionStatus.SUPERSEDED,
+        )
+        assert [item.id for item in superseded] == [question.id]
+        with pytest.raises(InvalidMealFeedbackTransition):
+            await repository.record_meal_feedback(
+                owner_user_id=owner_user_id,
+                meal_id=meal.id,
+                request=MealFeedbackRequest(kind=MealFeedbackKind.NOT_COOKING),
+                idempotency_key="firestore-not-cooking-discard-again",
+            )
+        with pytest.raises(MealNotFound):
+            await repository.record_meal_feedback(
+                owner_user_id="firestore-not-cooking-foreign",
+                meal_id=meal.id,
+                request=MealFeedbackRequest(kind=MealFeedbackKind.NOT_COOKING),
+                idempotency_key="firestore-not-cooking-foreign-discard",
+            )
+
+        restored = await repository.record_meal_feedback(
+            owner_user_id=owner_user_id,
+            meal_id=meal.id,
+            request=MealFeedbackRequest(
+                kind=MealFeedbackKind.CORRECT,
+                actual_meal="Steak",
+                explanation="I discarded the wrong event; this was cooking.",
+            ),
+            idempotency_key="firestore-not-cooking-restore",
+        )
+        assert restored.revision.status == MealStatus.CORRECTED
+        assert restored.revision.number == 4
+        assert [item.id for item in await repository.list_meals(owner_user_id)] == [meal.id]
+        final_revisions = await repository.list_meal_revisions(owner_user_id, meal.id)
+        assert [revision.status for revision in final_revisions] == [
+            MealStatus.PROVISIONAL,
+            MealStatus.CONFIRMED,
+            MealStatus.NOT_COOKING,
+            MealStatus.CORRECTED,
+        ]
         client.close()
 
     asyncio.run(scenario())
@@ -739,12 +876,14 @@ def test_deployed_repository_smoke_is_rerunnable_without_duplicate_revisions() -
         second = await run_smoke(repository)
 
         assert first == second
-        assert first["revision_numbers"] == [1, 2, 3, 4, 5]
+        assert first["revision_numbers"] == [1, 2, 3, 4, 5, 6, 7]
         assert first["knowledge_revision_numbers"] == [1, 2]
         assert first["knowledge_lifecycle"] == "reinforced"
         assert first["proposed_knowledge_revision_numbers"] == [1, 2]
         assert first["proposed_knowledge_lifecycle"] == "confirmed"
         assert first["feedback_knowledge_revision"] == 1
+        assert first["not_cooking_revision"] == 6
+        assert first["reclassified_revision"] == 7
         assert first["model_calls"] == 0
         feedback = [
             snapshot
@@ -753,7 +892,7 @@ def test_deployed_repository_smoke_is_rerunnable_without_duplicate_revisions() -
             .collection("feedback")
             .stream()
         ]
-        assert len(feedback) == 4
+        assert len(feedback) == 6
         client.close()
 
     asyncio.run(scenario())

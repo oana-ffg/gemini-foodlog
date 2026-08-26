@@ -340,6 +340,34 @@ async def run_smoke(repository: Repository) -> dict[str, Any]:
         ),
         idempotency_key="repository-smoke-reusable-feedback-v1",
     )
+    not_cooking = await FeedbackLearningService(repository).record(
+        owner_user_id=SMOKE_OWNER_ID,
+        meal_id=meal.id,
+        request=MealFeedbackRequest(
+            kind=MealFeedbackKind.NOT_COOKING,
+            explanation="The isolated smoke disposition verifies journal exclusion.",
+        ),
+        idempotency_key="repository-smoke-not-cooking-v1",
+    )
+    after_disposition = await repository.meal_for_owner(SMOKE_OWNER_ID, meal.id)
+    journal_after_disposition = await repository.list_meals(SMOKE_OWNER_ID)
+    journal_contains_meal = any(item.id == meal.id for item in journal_after_disposition)
+    if after_disposition.revision_number == 6 and journal_contains_meal:
+        raise RuntimeError("Not-cooking meal remained in the journal projection")
+    if after_disposition.revision_number == 7 and not journal_contains_meal:
+        raise RuntimeError("Historical disposition retry rolled back the current journal")
+    if after_disposition.revision_number not in {6, 7}:
+        raise RuntimeError("Not-cooking smoke found an unexpected materialized revision")
+    reclassified = await FeedbackLearningService(repository).record(
+        owner_user_id=SMOKE_OWNER_ID,
+        meal_id=meal.id,
+        request=MealFeedbackRequest(
+            kind=MealFeedbackKind.CORRECT,
+            actual_meal="Ribeye steak",
+            explanation="The smoke explicitly restores the discarded event as cooking.",
+        ),
+        idempotency_key="repository-smoke-reclassify-v1",
+    )
     current = await repository.meal_for_owner(SMOKE_OWNER_ID, meal.id)
     revisions = await repository.list_meal_revisions(SMOKE_OWNER_ID, meal.id)
     questions = await repository.list_questions(
@@ -355,11 +383,11 @@ async def run_smoke(repository: Repository) -> dict[str, Any]:
         or targeted.revision.base_revision_number != 3
         or targeted.revision.correction is None
         or targeted.revision.correction.scope != "component"
-        or current.revision_number != 5
+        or current.revision_number != 7
         or current.components[0].name != "Ribeye steak"
     ):
         raise RuntimeError("Targeted correction did not atomically persist revision 4")
-    if [revision.number for revision in revisions] != [1, 2, 3, 4, 5]:
+    if [revision.number for revision in revisions] != [1, 2, 3, 4, 5, 6, 7]:
         raise RuntimeError("Repository smoke revision history is incomplete")
     if (
         learning.revision.number != 5
@@ -367,6 +395,15 @@ async def run_smoke(repository: Repository) -> dict[str, Any]:
         or learning.knowledge.revision.lifecycle != KnowledgeLifecycle.CONFIRMED
     ):
         raise RuntimeError("Reusable feedback did not apply one knowledge revision")
+    if (
+        not_cooking.revision.number != 6
+        or not_cooking.revision.status != "not_cooking"
+        or reclassified.revision.number != 7
+        or reclassified.revision.status != "corrected"
+        or current.title != "Ribeye steak"
+        or not any(item.id == meal.id for item in await repository.list_meals(SMOKE_OWNER_ID))
+    ):
+        raise RuntimeError("Not-cooking disposition or explicit reclassification failed")
     if len(questions) != 1 or questions[0].id != question.id:
         raise RuntimeError("Repository smoke question did not close exactly once")
     initial_knowledge = await repository.record_knowledge_revision(
@@ -507,7 +544,11 @@ async def run_smoke(repository: Repository) -> dict[str, Any]:
             answer.revision.number,
             targeted.revision.number,
             learning.revision.number,
+            not_cooking.revision.number,
+            reclassified.revision.number,
         ],
+        "not_cooking_revision": not_cooking.revision.number,
+        "reclassified_revision": reclassified.revision.number,
         "published_event_id": published_hypothesis.event_id,
         "published_classification": published_hypothesis.activity_hypothesis.kind,
         "published_revision": published_hypothesis.revision_number,

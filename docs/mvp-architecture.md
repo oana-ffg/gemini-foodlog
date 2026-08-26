@@ -487,7 +487,23 @@ An agent-generated generalization cannot receive broader user-confirmed scope th
 
 Feedback may target the whole meal or an individual component, ingredient, or preparation method. Correcting the steak identification must not discard a separately correct potato component or force the user to rewrite the entire meal.
 
-### 9.3 Agent questions and pattern hypotheses
+### 9.3 Not-cooking disposition
+
+“Discard as not cooking” is an immutable user-feedback action, not deletion. It
+appends a `not_cooking` revision that retains the prior inference, structured
+hypothesis, evidence, and optional exact user reason while removing the current meal
+projection from the chronological food journal. An exact retry returns the original
+feedback and revision; a different request cannot silently append a second discard.
+Any open focused question on that meal is superseded because it no longer needs an
+answer. The audit detail and complete revision history remain owner-readable.
+
+Restoring a discarded event requires an explicit correction with a replacement meal
+or targeted correction. That action appends another immutable revision and returns
+the corrected projection to the journal; it never erases the not-cooking decision or
+the inference that preceded it. Confirming a discarded event or correcting it without
+a replacement is invalid.
+
+### 9.4 Agent questions and pattern hypotheses
 
 The system may ask many useful questions initially. Its success criterion is not zero questions; it is a decreasing need to repeat questions about stable household distinctions while continuing to notice meaningful exceptions and new purchases.
 
@@ -498,7 +514,7 @@ There are two valid agent-initiated interactions:
 
 The observations feed is not a clarification inbox and does not contain generic event-labeling forms. A question such as "What meal or ingredient was being prepared?" appearing there is an explicit product failure. Uncertainty alone does not require a question; harmless uncertainty remains visible in the event rationale.
 
-### 9.4 Proactive knowledge updates
+### 9.5 Proactive knowledge updates
 
 Users can teach or correct household knowledge outside a particular meal through a natural-language input. Stable statements may become versioned wiki knowledge. Temporary statements, such as a visitor bringing duck that may be cooked tomorrow, remain time-bounded context unless the user or later evidence supports promotion to a durable pattern. The raw wording is preserved, and the UI shows the resulting change and offers correction or retirement without requiring redundant approval of knowledge the user just deliberately supplied.
 

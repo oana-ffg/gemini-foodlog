@@ -1171,6 +1171,80 @@ def test_targeted_correction_rejects_stale_revision_and_invalid_path() -> None:
         assert current["revision_number"] == 2
 
 
+def test_not_cooking_disappears_from_journal_and_can_be_reclassified() -> None:
+    with build_client() as client:
+        _, camera = provision(client)
+        image = (FIXTURES / "synthetic-steak-airfryer.png").read_bytes()
+        post_fixture_capture(
+            client,
+            camera=camera,
+            image=image,
+            idempotency_key="not-cooking-api-capture-0001",
+        )
+        meal = client.get("/v1/journal", headers=USER_HEADER).json()[0]
+        discard_request = {
+            "headers": {
+                **USER_HEADER,
+                "Idempotency-Key": "not-cooking-api-feedback-0001",
+            },
+            "json": {
+                "kind": "not_cooking",
+                "explanation": "This was the cat on the counter, not food preparation.",
+            },
+        }
+
+        discarded = client.post(f"/v1/meals/{meal['id']}/feedback", **discard_request)
+        retry = client.post(f"/v1/meals/{meal['id']}/feedback", **discard_request)
+        hidden_journal = client.get("/v1/journal", headers=USER_HEADER)
+        revisions = client.get(
+            f"/v1/meals/{meal['id']}/revisions",
+            headers=USER_HEADER,
+        )
+        duplicate_disposition = client.post(
+            f"/v1/meals/{meal['id']}/feedback",
+            headers={**USER_HEADER, "Idempotency-Key": "not-cooking-api-feedback-0002"},
+            json={"kind": "not_cooking"},
+        )
+        invalid_confirm = client.post(
+            f"/v1/meals/{meal['id']}/feedback",
+            headers={**USER_HEADER, "Idempotency-Key": "not-cooking-api-confirm-0001"},
+            json={"kind": "confirm"},
+        )
+
+        assert discarded.status_code == retry.status_code == 200
+        assert retry.json() == discarded.json()
+        assert discarded.json()["learning_outcome"] == "not_cooking"
+        assert discarded.json()["revision"]["status"] == "not_cooking"
+        assert hidden_journal.status_code == 200
+        assert hidden_journal.json() == []
+        assert revisions.status_code == 200
+        assert [item["status"] for item in revisions.json()] == [
+            "provisional",
+            "not_cooking",
+        ]
+        assert duplicate_disposition.status_code == 422
+        assert duplicate_disposition.json() == {
+            "detail": "invalid_meal_feedback_transition"
+        }
+        assert invalid_confirm.status_code == 422
+
+        reclassified = client.post(
+            f"/v1/meals/{meal['id']}/feedback",
+            headers={**USER_HEADER, "Idempotency-Key": "not-cooking-api-restore-0001"},
+            json={
+                "kind": "correct",
+                "actual_meal": "Steak",
+                "explanation": "I discarded the wrong event; this was cooking.",
+            },
+        )
+        restored_journal = client.get("/v1/journal", headers=USER_HEADER)
+
+        assert reclassified.status_code == 200
+        assert reclassified.json()["revision"]["status"] == "corrected"
+        assert reclassified.json()["revision"]["inference"]["title"] == "Steak"
+        assert [item["id"] for item in restored_journal.json()] == [meal["id"]]
+
+
 def test_component_correction_preserves_a_separate_correct_component() -> None:
     meal = MealEntry(
         id="meal-two-components",

@@ -24,6 +24,7 @@ from .errors import (
     InboundAddressCollision,
     InboundAddressStateConflict,
     InvalidDeviceCredential,
+    InvalidMealFeedbackTransition,
     JobIdentityConflict,
     KnowledgePageNotFound,
     MealNotFound,
@@ -82,6 +83,7 @@ from .models import (
     MealFeedbackResult,
     MealRevision,
     MealRevisionSource,
+    MealStatus,
     ModelSpendReservation,
     ModelUsageRecord,
     NotificationOutboxStatus,
@@ -2352,7 +2354,8 @@ class FirestoreRepository:
         query = self._collection(account.id, "meals").order_by(
             "created_at", direction=firestore.Query.DESCENDING
         )
-        return [_model(snapshot, MealEntry) async for snapshot in query.stream()]
+        meals = [_model(snapshot, MealEntry) async for snapshot in query.stream()]
+        return [meal for meal in meals if meal.status != MealStatus.NOT_COOKING]
 
     async def meal_for_owner(self, owner_user_id: str, meal_id: str) -> MealEntry:
         account = await self.account_for_owner(owner_user_id)
@@ -2685,6 +2688,18 @@ class FirestoreRepository:
                     revision_number=revision.number,
                     created_at=meal.created_at,
                 )
+                questions_to_supersede: list[Any] = []
+                if request.kind == MealFeedbackKind.NOT_COOKING:
+                    question_query = self._collection(account_id, "questions").where(
+                        filter=FieldFilter("meal_id", "==", meal.id)
+                    )
+                    question_snapshots = await question_query.get(transaction=transaction)
+                    for question_snapshot in question_snapshots:
+                        question = _model(question_snapshot, ClarificationQuestion)
+                        if question.account_id != account_id or question.meal_id != meal.id:
+                            raise InvalidMealFeedbackTransition
+                        if question.status == QuestionStatus.OPEN:
+                            questions_to_supersede.append(question_snapshot.reference)
                 feedback_data = _document(feedback, exclude={"idempotency_key"})
                 feedback_data["idempotency_hash"] = feedback_id
                 transaction.create(feedback_ref, feedback_data)
@@ -2692,6 +2707,16 @@ class FirestoreRepository:
                     meal_ref.collection("revisions").document(revision.id), _document(revision)
                 )
                 transaction.set(meal_ref, _document(updated))
+                for question_ref in questions_to_supersede:
+                    transaction.update(
+                        question_ref,
+                        {
+                            "status": QuestionStatus.SUPERSEDED,
+                            "superseded_by_question_id": None,
+                            "superseded_at": feedback.created_at,
+                            "updated_at": feedback.created_at,
+                        },
+                    )
                 result = MealFeedbackResult(feedback=feedback, revision=revision)
             return result
 

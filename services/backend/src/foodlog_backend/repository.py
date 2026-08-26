@@ -23,6 +23,7 @@ from .errors import (
     InvalidKnowledgeProvenance,
     InvalidKnowledgeTransition,
     InvalidMealCorrectionTarget,
+    InvalidMealFeedbackTransition,
     JobIdentityConflict,
     KnowledgePageNotFound,
     KnowledgeRevisionConflict,
@@ -2245,6 +2246,7 @@ class InMemoryRepository:
         async with self._lock:
             meals: Iterable[MealEntry] = (
                 meal for meal in self._meals.values() if meal.account_id == account.id
+                and meal.status != MealStatus.NOT_COOKING
             )
             return [
                 meal.model_copy(deep=True)
@@ -2649,6 +2651,12 @@ class InMemoryRepository:
         self._revision_by_feedback[feedback.id] = revision
         self._meal_revisions[meal.id].append(revision)
         self._meals[meal.id] = updated_meal
+        if request.kind == MealFeedbackKind.NOT_COOKING:
+            question_id = self._question_by_meal.get(meal.id)
+            question = self._questions.get(question_id) if question_id is not None else None
+            if question is not None and question.status == QuestionStatus.OPEN:
+                question.status = QuestionStatus.SUPERSEDED
+                question.superseded_at = feedback.created_at
         return MealFeedbackResult(
             feedback=feedback.model_copy(deep=True),
             revision=revision.model_copy(deep=True),
@@ -2675,6 +2683,17 @@ def revised_inference(
     meal: MealEntry,
     request: MealFeedbackRequest,
 ) -> tuple[MealInference, MealStatus]:
+    if request.kind == MealFeedbackKind.NOT_COOKING:
+        if meal.status == MealStatus.NOT_COOKING:
+            raise InvalidMealFeedbackTransition
+        return inference_from_meal(meal), MealStatus.NOT_COOKING
+
+    if meal.status == MealStatus.NOT_COOKING and (
+        request.kind != MealFeedbackKind.CORRECT
+        or (request.actual_meal is None and request.correction is None)
+    ):
+        raise InvalidMealFeedbackTransition
+
     if request.kind == MealFeedbackKind.CONFIRM:
         return inference_from_meal(meal), MealStatus.CONFIRMED
 

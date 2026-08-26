@@ -39,11 +39,13 @@ class MealStatus(StrEnum):
     CONFIRMED = "confirmed"
     CORRECTED = "corrected"
     CONTRADICTED = "contradicted"
+    NOT_COOKING = "not_cooking"
 
 
 class MealFeedbackKind(StrEnum):
     CONFIRM = "confirm"
     CORRECT = "correct"
+    NOT_COOKING = "not_cooking"
 
 
 class MealFeedbackLearningDisposition(StrEnum):
@@ -804,6 +806,15 @@ class MealFeedbackRequest(BaseModel):
 
     @model_validator(mode="after")
     def correction_payload_is_consistent(self) -> "MealFeedbackRequest":
+        if self.kind == MealFeedbackKind.NOT_COOKING:
+            if (
+                self.actual_meal is not None
+                or self.correction is not None
+                or self.base_revision_number is not None
+                or self.learning_disposition is not None
+            ):
+                raise ValueError("not-cooking feedback cannot include correction fields")
+            return self
         if self.kind == MealFeedbackKind.CONFIRM and (
             self.actual_meal is not None
             or self.explanation is not None

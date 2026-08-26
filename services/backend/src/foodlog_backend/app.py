@@ -30,6 +30,7 @@ from .errors import (
     InboundAddressGenerationFailed,
     InvalidDeviceCredential,
     InvalidMealCorrectionTarget,
+    InvalidMealFeedbackTransition,
     MealNotFound,
     MealRevisionConflict,
     QuestionAlreadyAnswered,
@@ -426,6 +427,14 @@ def create_app(
         return Response(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content='{"detail":"invalid_meal_correction_target"}',
+            media_type="application/json",
+        )
+
+    @app.exception_handler(InvalidMealFeedbackTransition)
+    async def invalid_meal_feedback_transition_handler(*_: object) -> Response:
+        return Response(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content='{"detail":"invalid_meal_feedback_transition"}',
             media_type="application/json",
         )
 

@@ -1,8 +1,13 @@
 import { auth } from "./firebase";
 
 export type Confidence = "confident" | "likely" | "uncertain";
-export type MealStatus = "provisional" | "confirmed" | "corrected" | "contradicted";
-export type MealFeedbackKind = "confirm" | "correct";
+export type MealStatus =
+  | "provisional"
+  | "confirmed"
+  | "corrected"
+  | "contradicted"
+  | "not_cooking";
+export type MealFeedbackKind = "confirm" | "correct" | "not_cooking";
 export type MealRevisionSource = "inference" | "user_feedback";
 
 export interface Account {
@@ -76,6 +81,7 @@ export interface MealFeedbackResult {
   revision: MealRevision;
   learning_outcome:
     | "confirmation_only"
+    | "not_cooking"
     | "wrong_only"
     | "meal_only"
     | "insufficient_information"

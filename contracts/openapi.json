@@ -807,6 +807,7 @@
       "FeedbackLearningOutcome": {
         "enum": [
           "confirmation_only",
+          "not_cooking",
           "wrong_only",
           "meal_only",
           "insufficient_information",
@@ -1779,7 +1780,8 @@
       "MealFeedbackKind": {
         "enum": [
           "confirm",
-          "correct"
+          "correct",
+          "not_cooking"
         ],
         "title": "MealFeedbackKind",
         "type": "string"
@@ -2109,7 +2111,8 @@
           "provisional",
           "confirmed",
           "corrected",
-          "contradicted"
+          "contradicted",
+          "not_cooking"
         ],
         "title": "MealStatus",
         "type": "string"
