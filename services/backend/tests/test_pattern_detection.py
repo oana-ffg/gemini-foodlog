@@ -11,6 +11,7 @@ from google.cloud.firestore_v1.async_client import AsyncClient
 from foodlog_backend.firestore_repository import FirestoreRepository
 from foodlog_backend.models import (
     CaptureEnvelopeV1,
+    CaptureRecord,
     Confidence,
     KnowledgeClaim,
     MealEntry,
@@ -100,6 +101,32 @@ def local_time(day: int, *, hour: int = 18) -> datetime:
         hour,
         tzinfo=timezone(timedelta(hours=2)),
     )
+
+
+def test_capture_record_preserves_offset_after_firestore_normalizes_timestamp() -> None:
+    local_at = local_time(6, hour=0)
+    capture = CaptureRecord(
+        id="normalized-firestore-capture",
+        account_id="pattern-account",
+        camera_id="pattern-camera",
+        idempotency_key="normalized-firestore-idempotency",
+        content_type="image/png",
+        content_sha256="a" * 64,
+        object_key="accounts/pattern-account/captures/normalized-firestore-capture.png",
+        metadata=CaptureEnvelopeV1(
+            camera_id="pattern-camera",
+            captured_at=local_at.astimezone(UTC),
+            client_kind="browser",
+            client_version="pattern-test-v1",
+            sequence_id="normalized-firestore-sequence",
+            sequence_number=1,
+            width=640,
+            height=480,
+        ),
+        captured_utc_offset_minutes=120,
+    )
+    assert capture.metadata.captured_at.weekday() == 2
+    assert capture.captured_utc_offset_minutes == 120
 
 
 def test_detector_proposes_thursday_pattern_with_counterexample_and_deduplicates() -> None:

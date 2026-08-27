@@ -799,17 +799,6 @@ class CaptureRecord(BaseModel):
     status: CaptureStatus = CaptureStatus.ACCEPTED
     created_at: datetime = Field(default_factory=utc_now)
 
-    @model_validator(mode="after")
-    def persisted_offset_matches_capture_timestamp(self) -> "CaptureRecord":
-        if self.metadata is None or self.captured_utc_offset_minutes is None:
-            return self
-        offset = self.metadata.captured_at.utcoffset()
-        assert offset is not None
-        expected = int(offset.total_seconds() // 60)
-        if self.captured_utc_offset_minutes != expected:
-            raise ValueError("persisted capture offset does not match captured_at")
-        return self
-
 
 def capture_grouping_job_id(capture_id: str) -> str:
     return f"capture-grouping-{capture_id}"
