@@ -815,6 +815,24 @@ Trace reads are an operator capability and must be audited and access-controlled
 
 Full trace payloads are stored as compressed JSON objects under account-scoped paths in private Cloud Storage. Firestore stores searchable trace metadata, lifecycle state, and the GCS object reference. This avoids Firestore's per-document size limit, uses infrastructure the MVP already operates, and adds no fixed-cost database service. Trace content is not duplicated into ordinary Cloud Logging; operational logs contain trace IDs, timing, token and cost metrics, status, and redacted errors.
 
+Every API and worker request emits one `foodlog_operational_event_v1` JSON record
+to Cloud Logging. The record contains a generated request ID, validated Cloud trace
+ID when present, service and environment, HTTP method, matched route template,
+status, and duration. It never copies a raw URL, query, header, authorization value,
+request body, response body, prompt, image, MIME content, or recipient address.
+Worker outcome records add only allowlisted account, event, capture, mail,
+notification, message, job, and revision identifiers. Errors record the exception
+class, not its message or traceback. Any non-identifier string supplied to an
+allowlisted field is replaced with a SHA-256 correlation value, while unknown
+fields fail tests rather than silently expanding the schema. The App Engine MIME
+gateway implements the same schema inside its separately deployed runtime boundary.
+
+The request ID is returned as `X-Request-ID`. Operational records can be fetched
+without downloading private trace bodies by filtering Cloud Logging on
+`jsonPayload.schema="foodlog_operational_event_v1"`, then narrowing by request,
+trace, event, or worker evidence ID. Full application-visible traces remain in the
+private trace bucket and are not duplicated into these logs.
+
 Compression is deterministic, object creation is immutable, and the Firestore index
 stores the compressed object SHA-256. Reads verify the hash, gzip/JSON structure,
 schema version, account, and trace identity before returning any content. The common
