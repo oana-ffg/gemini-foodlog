@@ -21,3 +21,17 @@ export function browserCameraInstanceId(
   if (!volatileInstanceId) volatileInstanceId = `browser-${randomUuid()}`;
   return volatileInstanceId;
 }
+
+export function replaceBrowserCameraInstanceId(
+  storage: Pick<Storage, "setItem"> = window.localStorage,
+  randomUuid: () => string = () => crypto.randomUUID(),
+): string {
+  const generated = `browser-${randomUuid()}`;
+  volatileInstanceId = generated;
+  try {
+    storage.setItem(STORAGE_KEY, generated);
+  } catch {
+    // The volatile value keeps this tab stable when persistent storage is denied.
+  }
+  return generated;
+}

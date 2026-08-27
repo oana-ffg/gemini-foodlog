@@ -145,6 +145,7 @@ button {
 }
 button:disabled { cursor: not-allowed; opacity: 0.46; }
 .button--quiet { color: inherit; background: transparent; box-shadow: inset 0 0 0 1px currentColor; }
+.button--danger { color: #fff; background: #9b3827; }
 .fine-print { margin-top: 24px; font-size: 0.82rem; }
 
 .camera-frame {
@@ -175,16 +176,32 @@ button:disabled { cursor: not-allowed; opacity: 0.46; }
 .camera-page__header p:not(.eyebrow) { max-width: 680px; color: #555d57; line-height: 1.6; }
 .camera-page__account { display: grid; flex: 0 0 auto; justify-items: end; gap: 14px; }
 .camera-page__account > a { color: #315c44; font-weight: 700; }
-.camera-registration {
-  display: flex;
-  align-items: end;
-  gap: 14px;
-  margin-bottom: 24px;
-  padding: 22px;
-  border-radius: 18px;
+.camera-sources {
+  margin-bottom: 28px;
+  padding: 28px;
+  border-radius: 24px;
   background: #fffdf8;
+  box-shadow: 0 12px 36px rgba(31, 37, 33, 0.08);
 }
-.camera-registration label { display: grid; flex: 1; gap: 8px; font-weight: 700; }
+.camera-sources .section-heading { margin-bottom: 24px; }
+.camera-sources .section-heading h2 { margin: 0; font-size: clamp(2rem, 4vw, 3rem); }
+.camera-sources .section-heading > span { color: #555d57; font-weight: 700; }
+.camera-source-forms { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.camera-source-forms form { display: grid; align-content: start; gap: 14px; padding: 20px; border: 1px solid #dfdbd0; border-radius: 16px; }
+.camera-source-forms h3 { margin: 0; }
+.camera-source-forms label { display: grid; gap: 8px; font-size: 0.88rem; font-weight: 700; }
+.device-credential { display: grid; gap: 14px; margin-top: 20px; padding: 20px; border-radius: 16px; color: #f7f5ee; background: #24352c; }
+.device-credential textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; }
+.device-credential .button-row { margin-top: 0; }
+.camera-source-list { display: grid; gap: 12px; margin-top: 20px; }
+.camera-source-card { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 18px 20px; border: 1px solid #dfdbd0; border-radius: 16px; }
+.camera-source-card h3 { margin: 10px 0 6px; }
+.camera-source-card p { margin: 0; color: #555d57; }
+.camera-source-card .fine-print { margin-top: 6px; }
+.camera-source-card__kind { margin-left: 8px; color: #686d69; font-size: 0.8rem; font-weight: 700; }
+.camera-source-status { padding: 5px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; text-transform: capitalize; }
+.camera-source-status--active { color: #1f5f3f; background: #dcecdf; }
+.camera-source-status--revoked { color: #7b392c; background: #f2d9d2; }
 .camera-page__identity {
   display: flex;
   justify-content: space-between;
@@ -275,7 +292,8 @@ summary { cursor: pointer; font-weight: 700; }
   .camera-page__header { display: grid; }
   .camera-page__account { justify-items: start; }
   .camera-page__account .session-controls { justify-items: start; }
-  .camera-registration { align-items: stretch; flex-direction: column; }
+  .camera-source-forms { grid-template-columns: 1fr; }
+  .camera-source-card { align-items: start; flex-direction: column; }
   .camera-page__identity { align-items: start; flex-direction: column; }
   .manual-camera { padding: 18px; }
 }

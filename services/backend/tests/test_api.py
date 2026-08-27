@@ -438,6 +438,7 @@ def test_shared_browser_ingestion_stores_metadata_and_bytes_without_inference() 
         )
         accepted = client.post("/v1/captures", **request)
         retry = client.post("/v1/captures", **request)
+        inventory = client.get("/v1/cameras", headers=USER_HEADER)
         changed_metadata = {**metadata, "sequence_number": 2}
         conflict = client.post(
             "/v1/captures",
@@ -462,6 +463,9 @@ def test_shared_browser_ingestion_stores_metadata_and_bytes_without_inference() 
     assert accepted.json()["duplicate"] is False
     assert retry.json()["duplicate"] is True
     assert retry.json()["accepted_image_count"] == 1
+    source = next(item for item in inventory.json() if item["id"] == camera["id"])
+    assert source["accepted_capture_count"] == 1
+    assert source["last_capture_at"] is not None
     assert conflict.status_code == 409
     assert journal.json() == []
     assert stored_image.content == image

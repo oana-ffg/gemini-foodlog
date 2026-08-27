@@ -40,6 +40,10 @@ ones, with `GET /v1/cameras`. `POST /v1/cameras/{camera_id}/revoke` revokes eith
 kind without affecting the owner's other cameras. Browser uploads use only active
 browser camera IDs; physical credentials cannot be used through the browser path.
 
+Every inventory item includes its accepted-capture count and nullable last-capture
+time. Those activity fields update only after the image is durably stored and remain
+unchanged for an exact idempotent retry.
+
 ## Request
 
 The request is `multipart/form-data` with:

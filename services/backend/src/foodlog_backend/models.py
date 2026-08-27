@@ -668,7 +668,12 @@ class BrowserCameraCreate(BaseModel):
     client_instance_id: str = Field(min_length=16, max_length=128)
 
 
-class BrowserCamera(BaseModel):
+class CameraActivity(BaseModel):
+    accepted_capture_count: int = Field(default=0, ge=0)
+    last_capture_at: datetime | None = None
+
+
+class BrowserCamera(CameraActivity):
     id: str
     account_id: str
     name: str
@@ -683,7 +688,7 @@ class DeviceCameraCreate(BaseModel):
     name: CameraName
 
 
-class DeviceCamera(BaseModel):
+class DeviceCamera(CameraActivity):
     id: str
     account_id: str
     name: str

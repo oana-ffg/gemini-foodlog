@@ -1845,8 +1845,23 @@ class FirestoreRepository:
                 raise CaptureNotFound
             if snapshot.get("status") != CaptureStatus.ACCEPTED.value:
                 return
+            camera_ref = self._collection(account_id, "cameras").document(
+                snapshot.get("camera_id")
+            )
+            camera_snapshot = await camera_ref.get(transaction=transaction)
+            if not camera_snapshot.exists or camera_snapshot.get("account_id") != account_id:
+                raise CameraNotFound
+            capture_count = camera_snapshot.get("accepted_capture_count") or 0
+            if (
+                not isinstance(capture_count, int)
+                or isinstance(capture_count, bool)
+                or capture_count < 0
+            ):
+                raise ValueError("Accepted camera capture count is invalid")
             key_hash = snapshot.get("idempotency_hash")
             now = utc_now()
+            captured_at = snapshot.get("created_at") or now
+            previous_capture_at = camera_snapshot.get("last_capture_at")
             job = DurableJob(
                 id=capture_grouping_job_id(capture_id),
                 account_id=account_id,
@@ -1859,6 +1874,16 @@ class FirestoreRepository:
             transaction.update(
                 capture_ref,
                 {"status": CaptureStatus.STORED.value, "updated_at": now},
+            )
+            transaction.update(
+                camera_ref,
+                {
+                    "accepted_capture_count": capture_count + 1,
+                    "last_capture_at": max(
+                        filter(None, (previous_capture_at, captured_at))
+                    ),
+                    "updated_at": now,
+                },
             )
             transaction.update(
                 self._collection(account_id, "capture_idempotency").document(key_hash),

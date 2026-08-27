@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { browserCameraInstanceId } from "./browserCameraIdentity";
+import {
+  browserCameraInstanceId,
+  replaceBrowserCameraInstanceId,
+} from "./browserCameraIdentity";
 
 class MemoryStorage {
   readonly values = new Map<string, string>();
@@ -55,5 +58,20 @@ describe("browserCameraInstanceId", () => {
       () => "55555555-5555-4555-8555-555555555555",
     );
     expect(second).toBe(first);
+  });
+
+  it("rotates the persistent identity after this browser source is revoked", () => {
+    const storage = new MemoryStorage();
+    const original = browserCameraInstanceId(
+      storage,
+      () => "66666666-6666-4666-8666-666666666666",
+    );
+    const replacement = replaceBrowserCameraInstanceId(
+      storage,
+      () => "77777777-7777-4777-8777-777777777777",
+    );
+
+    expect(replacement).not.toBe(original);
+    expect(browserCameraInstanceId(storage)).toBe(replacement);
   });
 });

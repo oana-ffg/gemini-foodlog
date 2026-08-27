@@ -10,10 +10,13 @@ vi.mock("./firebase", () => firebase);
 
 import {
   AuthenticationRequiredError,
+  createDeviceCamera,
   getConsentPreferences,
   joinWaitlist,
+  listCameras,
   provisionAccount,
   recordLaunchMailConsent,
+  revokeCamera,
   uploadCapture,
   withdrawLaunchMailConsent,
   withdrawWaitlist,
@@ -140,6 +143,59 @@ describe("authenticated API client", () => {
     expect(recordInit.body).toBe(JSON.stringify({ granted: true }));
     expect(joinInit.method).toBe("POST");
     expect(joinInit.body).toBe(JSON.stringify({ join: true }));
+  });
+
+  it("uses the owner-scoped camera inventory, issue, and revocation routes", async () => {
+    firebase.auth.currentUser = {
+      getIdToken: vi.fn().mockResolvedValue("firebase-id-token"),
+    };
+    const browserCamera = {
+      id: "browser-camera-1",
+      account_id: "account-1",
+      name: "Phone by sink",
+      kind: "browser" as const,
+      status: "active" as const,
+      accepted_capture_count: 3,
+      last_capture_at: "2026-08-27T12:00:00Z",
+      created_at: "2026-08-27T10:00:00Z",
+      revoked_at: null,
+    };
+    const deviceCamera = {
+      ...browserCamera,
+      id: "device-camera-1",
+      name: "ESP kitchen camera",
+      kind: "device" as const,
+      accepted_capture_count: 0,
+      last_capture_at: null,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([browserCamera]))
+      .mockResolvedValueOnce(jsonResponse({
+        camera: deviceCamera,
+        credential: "flc_v1_single-display-secret",
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        ...browserCamera,
+        status: "revoked",
+        revoked_at: "2026-08-27T13:00:00Z",
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(listCameras()).resolves.toEqual([browserCamera]);
+    await expect(createDeviceCamera("ESP kitchen camera")).resolves.toEqual({
+      camera: deviceCamera,
+      credential: "flc_v1_single-display-secret",
+    });
+    await revokeCamera("browser camera/1");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://127.0.0.1:8080/v1/cameras",
+      "http://127.0.0.1:8080/v1/device-cameras",
+      "http://127.0.0.1:8080/v1/cameras/browser%20camera%2F1/revoke",
+    ]);
+    expect((fetchMock.mock.calls[1][1] as RequestInit).body).toBe(
+      JSON.stringify({ name: "ESP kitchen camera" }),
+    );
   });
 
   it("uploads browser snapshots through the shared capture envelope", async () => {

@@ -69,7 +69,7 @@ belong in private Cloud Storage rather than Firestore.
 
 | Collection path below `accounts/{account_id}` | Purpose | Required fields and bounds |
 | --- | --- | --- |
-| `cameras/{camera_id}` | Browser, simulator, or physical source | `name` <= 80 chars, `kind`, `status`, nullable hashed browser-instance identity, `client_version` <= 80 chars, `last_seen_at`, nullable revocation time; no secret or raw device credential. |
+| `cameras/{camera_id}` | Browser or physical source | `name` <= 80 chars, `kind`, `status`, creation time, accepted-capture count, nullable last-capture time, nullable revocation time, and a hashed browser-instance identity for browser sources; no secret or raw device credential. Capture activity advances only after immutable image storage succeeds, and an exact idempotent retry does not increment it twice. |
 | `inbound_mail_addresses/current` | Stable private purchase-forwarding address | normalized `f-` plus 192-bit random token at the App Engine inbound-mail domain, `status` (`active`), and creation time; generated server-side, contains no user/account identifier, and is returned only to the authenticated owner with `no-store`. |
 | `capture_idempotency/{sha256_key}` | Exactly-once quota reservation | `capture_id`, `camera_id`, `content_sha256`, `content_type`, `state`; immutable after reconciliation except `state`. |
 | `captures/{capture_id}` | One accepted image/frame | `camera_id`, nullable `segment_id`/`event_id`, `media_id`, `idempotency_hash`, `received_at`, `content_sha256`, `content_type`, bounded versioned `metadata` containing capture time, client, decoded dimensions, sequence/burst, and motion fields, plus `status` (`accepted`, `stored`, or `processed`). |

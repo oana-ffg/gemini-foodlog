@@ -1997,7 +1997,16 @@ class InMemoryRepository:
             if not capture or capture.account_id != account_id:
                 raise CaptureNotFound
             if capture.status == CaptureStatus.ACCEPTED:
+                camera = self._cameras.get(capture.camera_id) or self._device_cameras.get(
+                    capture.camera_id
+                )
+                if camera is None or camera.account_id != account_id:
+                    raise CameraNotFound
                 capture.status = CaptureStatus.STORED
+                camera.accepted_capture_count += 1
+                camera.last_capture_at = max(
+                    filter(None, (camera.last_capture_at, capture.created_at))
+                )
                 self._enqueue_job_locked(
                     DurableJob(
                         id=capture_grouping_job_id(capture.id),

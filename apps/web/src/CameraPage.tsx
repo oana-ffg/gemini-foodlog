@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   createBrowserCamera,
@@ -8,8 +8,12 @@ import {
   type BrowserCamera,
 } from "./api";
 import { SessionControls, useAuth } from "./auth";
-import { browserCameraInstanceId } from "./browserCameraIdentity";
+import {
+  browserCameraInstanceId,
+  replaceBrowserCameraInstanceId,
+} from "./browserCameraIdentity";
 import { captureFrame } from "./cameraFrames";
+import CameraSources from "./CameraSources";
 import { useCaptureWakeLock } from "./useCaptureWakeLock";
 import { MAX_MEMORY_QUEUE_DEPTH, useMotionCapture } from "./useMotionCapture";
 import type { CaptureWakeLockStatus } from "./wakeLock";
@@ -39,7 +43,6 @@ export default function CameraPage() {
   const sequenceNumberRef = useRef(0);
   const [account, setAccount] = useState<Account>();
   const [camera, setCamera] = useState<BrowserCamera>();
-  const [cameraName, setCameraName] = useState("");
   const [running, setRunning] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(
@@ -80,26 +83,26 @@ export default function CameraPage() {
     && !motion.blockedReason
     && !entitlementExhausted;
 
-  useEffect(() => () => stopStream(streamRef.current), []);
+  useEffect(() => {
+    void provisionAccount()
+      .then(setAccount)
+      .catch((error: unknown) => {
+        setMessage(error instanceof Error ? error.message : "Could not load image entitlement.");
+      });
+    return () => stopStream(streamRef.current);
+  }, [user?.uid]);
 
-  const registerCamera = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const name = cameraName.trim();
-    if (!name) return;
-
-    setBusy(true);
-    setMessage("Registering this camera…");
-    try {
-      const currentAccount = await provisionAccount();
-      const nextCamera = await createBrowserCamera(name, cameraInstanceIdRef.current);
-      setAccount(currentAccount);
-      setCamera(nextCamera);
-      setMessage("Camera registered. Start it when it points at the cooking area.");
-    } catch (error: unknown) {
-      setMessage(error instanceof Error ? error.message : "Camera registration failed.");
-    } finally {
-      setBusy(false);
+  const registerBrowserCamera = async (name: string): Promise<BrowserCamera> => {
+    const currentAccount = await provisionAccount();
+    let nextCamera = await createBrowserCamera(name, cameraInstanceIdRef.current);
+    if (nextCamera.status === "revoked") {
+      cameraInstanceIdRef.current = replaceBrowserCameraInstanceId();
+      nextCamera = await createBrowserCamera(name, cameraInstanceIdRef.current);
     }
+    setAccount(currentAccount);
+    setCamera(nextCamera);
+    setMessage("Camera registered. Start it when it points at the cooking area.");
+    return nextCamera;
   };
 
   const startCamera = async () => {
@@ -171,6 +174,13 @@ export default function CameraPage() {
     );
   };
 
+  const handleCurrentBrowserRevoked = () => {
+    pauseCamera();
+    setCamera(undefined);
+    cameraInstanceIdRef.current = replaceBrowserCameraInstanceId();
+    setMessage("This browser source was revoked. Register it again to create a new credential.");
+  };
+
   const sendSnapshot = async () => {
     if (!camera || !videoRef.current) return;
 
@@ -222,23 +232,14 @@ export default function CameraPage() {
         </div>
       </header>
 
-      {!camera ? (
-        <form className="camera-registration" onSubmit={registerCamera}>
-          <label>
-            Name this camera
-            <input
-              value={cameraName}
-              onChange={(event) => setCameraName(event.target.value)}
-              maxLength={80}
-              required
-              autoComplete="off"
-            />
-          </label>
-          <button type="submit" disabled={busy || cameraName.trim().length === 0}>
-            {busy ? "Registering…" : "Register camera"}
-          </button>
-        </form>
-      ) : (
+      <CameraSources
+        account={account}
+        currentBrowserCameraId={camera?.id}
+        onRegisterBrowser={registerBrowserCamera}
+        onCurrentBrowserRevoked={handleCurrentBrowserRevoked}
+      />
+
+      {camera ? (
         <p className="camera-page__identity">
           Sending as <strong>{camera.name}</strong>
           {account ? (
@@ -249,7 +250,7 @@ export default function CameraPage() {
             </span>
           ) : null}
         </p>
-      )}
+      ) : null}
 
       <section className="manual-camera" aria-labelledby="manual-camera-title">
         <div className={`camera-frame ${running ? "camera-frame--active" : ""}`}>

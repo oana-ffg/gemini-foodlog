@@ -51,7 +51,29 @@ export interface BrowserCamera {
   name: string;
   kind: "browser";
   status: "active" | "revoked";
+  accepted_capture_count: number;
+  last_capture_at: string | null;
+  created_at: string;
   revoked_at: string | null;
+}
+
+export interface DeviceCamera {
+  id: string;
+  account_id: string;
+  name: string;
+  kind: "device";
+  status: "active" | "revoked";
+  accepted_capture_count: number;
+  last_capture_at: string | null;
+  created_at: string;
+  revoked_at: string | null;
+}
+
+export type Camera = BrowserCamera | DeviceCamera;
+
+export interface DeviceCameraCredentialIssue {
+  camera: DeviceCamera;
+  credential: string;
 }
 
 export interface MealComponent {
@@ -161,7 +183,7 @@ export interface BrowserCaptureMetadata {
   };
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? (
+export const API_BASE_URL = import.meta.env.VITE_API_BASE ?? (
   import.meta.env.PROD
     ? "https://foodlog-api-sptvo5nsga-ew.a.run.app"
     : "http://127.0.0.1:8080"
@@ -196,7 +218,7 @@ async function authenticatedFetch(path: string, init?: RequestInit): Promise<Res
 
   const send = async (forceRefresh: boolean) => {
     const token = await user.getIdToken(forceRefresh);
-    return fetch(`${API_BASE}${path}`, {
+    return fetch(`${API_BASE_URL}${path}`, {
       ...init,
       headers: requestHeaders(token, init?.headers),
     });
@@ -278,6 +300,25 @@ export function createBrowserCamera(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, client_instance_id: clientInstanceId }),
+  });
+}
+
+export function listCameras(): Promise<Camera[]> {
+  return apiRequest<Camera[]>("/v1/cameras");
+}
+
+export function revokeCamera(cameraId: string): Promise<Camera> {
+  return apiRequest<Camera>(
+    `/v1/cameras/${encodeURIComponent(cameraId)}/revoke`,
+    { method: "POST" },
+  );
+}
+
+export function createDeviceCamera(name: string): Promise<DeviceCameraCredentialIssue> {
+  return apiRequest<DeviceCameraCredentialIssue>("/v1/device-cameras", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
   });
 }
 

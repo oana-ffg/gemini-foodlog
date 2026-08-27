@@ -239,6 +239,12 @@
       },
       "BrowserCamera": {
         "properties": {
+          "accepted_capture_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Accepted Capture Count",
+            "type": "integer"
+          },
           "account_id": {
             "title": "Account Id",
             "type": "string"
@@ -269,6 +275,18 @@
             "default": "browser",
             "title": "Kind",
             "type": "string"
+          },
+          "last_capture_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Capture At"
           },
           "name": {
             "title": "Name",
@@ -738,6 +756,12 @@
       },
       "DeviceCamera": {
         "properties": {
+          "accepted_capture_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Accepted Capture Count",
+            "type": "integer"
+          },
           "account_id": {
             "title": "Account Id",
             "type": "string"
@@ -756,6 +780,18 @@
             "default": "device",
             "title": "Kind",
             "type": "string"
+          },
+          "last_capture_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Capture At"
           },
           "name": {
             "title": "Name",
