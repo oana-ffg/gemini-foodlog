@@ -125,6 +125,21 @@ def test_rich_pattern_responses_create_scoped_knowledge_and_gate_resurfacing() -
         assert confirmed_knowledge["revision"]["lifecycle"] == "confirmed"
         assert confirmed_knowledge["revision"]["belief_strength"] == "strong"
         assert confirmed_knowledge["revision"]["source"] == "question_response"
+        feedback_inventory = client.get("/v1/feedback", headers=OWNER_HEADERS)
+        assert feedback_inventory.status_code == 200
+        assert feedback_inventory.headers["cache-control"] == "private, no-store"
+        assert feedback_inventory.json()["question_responses"] == [
+            {
+                "id": confirmed.json()["response"]["id"],
+                "account_id": owner["id"],
+                "question_id": steak.id,
+                "kind": "confirm",
+                "correction": None,
+                "explanation": "Thursday is our steak night.",
+                "feedback_id": None,
+                "created_at": confirmed.json()["response"]["created_at"],
+            }
+        ]
 
         breakfast_claim = KnowledgeClaim(
             dimension="weekday breakfast",

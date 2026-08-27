@@ -472,6 +472,209 @@
         "title": "CaptureAccepted",
         "type": "object"
       },
+      "CaptureEnvelopeV1": {
+        "additionalProperties": false,
+        "properties": {
+          "burst_frame_index": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Burst Frame Index"
+          },
+          "burst_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 8,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Burst Id"
+          },
+          "camera_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Camera Id",
+            "type": "string"
+          },
+          "captured_at": {
+            "format": "date-time",
+            "title": "Captured At",
+            "type": "string"
+          },
+          "client_kind": {
+            "enum": [
+              "browser",
+              "simulator",
+              "physical"
+            ],
+            "title": "Client Kind",
+            "type": "string"
+          },
+          "client_version": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Client Version",
+            "type": "string"
+          },
+          "height": {
+            "maximum": 4096.0,
+            "minimum": 1.0,
+            "title": "Height",
+            "type": "integer"
+          },
+          "motion": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MotionMetadataV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "sequence_id": {
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Sequence Id",
+            "type": "string"
+          },
+          "sequence_number": {
+            "maximum": 2147483647.0,
+            "minimum": 0.0,
+            "title": "Sequence Number",
+            "type": "integer"
+          },
+          "width": {
+            "maximum": 4096.0,
+            "minimum": 1.0,
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "camera_id",
+          "captured_at",
+          "client_kind",
+          "client_version",
+          "sequence_id",
+          "sequence_number",
+          "width",
+          "height"
+        ],
+        "title": "CaptureEnvelopeV1",
+        "type": "object"
+      },
+      "CaptureInventoryView": {
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "camera_id": {
+            "title": "Camera Id",
+            "type": "string"
+          },
+          "captured_utc_offset_minutes": {
+            "anyOf": [
+              {
+                "maximum": 840.0,
+                "minimum": -840.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Captured Utc Offset Minutes"
+          },
+          "content_sha256": {
+            "title": "Content Sha256",
+            "type": "string"
+          },
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CaptureEnvelopeV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "segment_id": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Segment Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CaptureStatus"
+          }
+        },
+        "required": [
+          "id",
+          "account_id",
+          "camera_id",
+          "content_type",
+          "content_sha256",
+          "status",
+          "created_at"
+        ],
+        "title": "CaptureInventoryView",
+        "type": "object"
+      },
       "CaptureProcessingView": {
         "properties": {
           "attempt_count": {
@@ -540,6 +743,15 @@
         ],
         "title": "CaptureProcessingView",
         "type": "object"
+      },
+      "CaptureStatus": {
+        "enum": [
+          "accepted",
+          "stored",
+          "processed"
+        ],
+        "title": "CaptureStatus",
+        "type": "string"
       },
       "ClarificationQuestion": {
         "properties": {
@@ -1180,6 +1392,30 @@
         ],
         "title": "EntitlementMode",
         "type": "string"
+      },
+      "FeedbackInventoryView": {
+        "properties": {
+          "meal_feedback": {
+            "items": {
+              "$ref": "#/components/schemas/MealFeedbackView"
+            },
+            "title": "Meal Feedback",
+            "type": "array"
+          },
+          "question_responses": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionResponseView"
+            },
+            "title": "Question Responses",
+            "type": "array"
+          }
+        },
+        "required": [
+          "meal_feedback",
+          "question_responses"
+        ],
+        "title": "FeedbackInventoryView",
+        "type": "object"
       },
       "FeedbackLearningOutcome": {
         "enum": [
@@ -2328,6 +2564,129 @@
         "title": "MealFeedbackRequest",
         "type": "object"
       },
+      "MealFeedbackView": {
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "actual_meal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual Meal"
+          },
+          "base_revision_number": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Revision Number"
+          },
+          "correction": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "component": "#/components/schemas/ComponentCorrection",
+                    "ingredient": "#/components/schemas/IngredientCorrection",
+                    "meal": "#/components/schemas/WholeMealCorrection",
+                    "preparation_method": "#/components/schemas/PreparationMethodCorrection"
+                  },
+                  "propertyName": "scope"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/WholeMealCorrection"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ComponentCorrection"
+                  },
+                  {
+                    "$ref": "#/components/schemas/IngredientCorrection"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PreparationMethodCorrection"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "explanation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Explanation"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MealFeedbackKind"
+          },
+          "learning_disposition": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MealFeedbackLearningDisposition"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "meal_id": {
+            "title": "Meal Id",
+            "type": "string"
+          },
+          "question_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question Id"
+          }
+        },
+        "required": [
+          "id",
+          "account_id",
+          "meal_id",
+          "kind",
+          "actual_meal",
+          "explanation",
+          "created_at"
+        ],
+        "title": "MealFeedbackView",
+        "type": "object"
+      },
       "MealInference": {
         "properties": {
           "alternatives": {
@@ -2526,6 +2885,66 @@
         ],
         "title": "MealStatus",
         "type": "string"
+      },
+      "MotionMetadataV1": {
+        "additionalProperties": false,
+        "properties": {
+          "algorithm": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Algorithm",
+            "type": "string"
+          },
+          "changed_pixel_ratio": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changed Pixel Ratio"
+          },
+          "detected": {
+            "title": "Detected",
+            "type": "boolean"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          }
+        },
+        "required": [
+          "detected",
+          "algorithm"
+        ],
+        "title": "MotionMetadataV1",
+        "type": "object"
       },
       "PatternEvidenceExample": {
         "additionalProperties": false,
@@ -3394,6 +3813,74 @@
         "title": "QuestionResponseResult",
         "type": "object"
       },
+      "QuestionResponseView": {
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "correction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "explanation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Explanation"
+          },
+          "feedback_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feedback Id"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/QuestionResponseKind"
+          },
+          "question_id": {
+            "title": "Question Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "account_id",
+          "question_id",
+          "kind",
+          "correction",
+          "explanation",
+          "created_at"
+        ],
+        "title": "QuestionResponseView",
+        "type": "object"
+      },
       "QuestionStatus": {
         "enum": [
           "open",
@@ -4219,6 +4706,66 @@
       }
     },
     "/v1/captures": {
+      "get": {
+        "operationId": "list_capture_inventory_v1_captures_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CaptureInventoryView"
+                  },
+                  "title": "Response List Capture Inventory V1 Captures Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Capture Inventory"
+      },
       "post": {
         "operationId": "upload_capture_v1_captures_post",
         "parameters": [
@@ -4821,6 +5368,64 @@
           }
         },
         "summary": "Device Status"
+      }
+    },
+    "/v1/feedback": {
+      "get": {
+        "operationId": "list_feedback_inventory_v1_feedback_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackInventoryView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Feedback Inventory"
       }
     },
     "/v1/inbound-mail-address": {

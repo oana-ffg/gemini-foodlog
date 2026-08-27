@@ -98,6 +98,7 @@ from .models import (
     MealFeedbackKind,
     MealFeedbackRequest,
     MealFeedbackResult,
+    MealFeedbackView,
     MealRevision,
     MealRevisionSource,
     MealStatus,
@@ -127,6 +128,7 @@ from .models import (
     QuestionResponseKind,
     QuestionResponseRequest,
     QuestionResponseResult,
+    QuestionResponseView,
     QuestionStatus,
     UserContextNote,
     UserContextNoteCreate,
@@ -3497,6 +3499,31 @@ class FirestoreRepository:
             idempotency_key=idempotency_key,
         )
 
+    async def list_meal_feedback_for_owner(
+        self,
+        owner_user_id: str,
+        *,
+        limit: int = 200,
+    ) -> list[MealFeedbackView]:
+        if not 1 <= limit <= 200:
+            raise ValueError("feedback list limit must be between 1 and 200")
+        account = await self.account_for_owner(owner_user_id)
+        query = (
+            self._collection(account.id, "feedback")
+            .order_by("created_at", direction=firestore.Query.DESCENDING)
+            .limit(limit)
+        )
+        feedback: list[MealFeedbackView] = []
+        async for snapshot in query.stream():
+            data = snapshot.to_dict() or {}
+            data.pop("schema_version", None)
+            data.pop("idempotency_hash", None)
+            item = MealFeedbackView.model_validate(data)
+            if item.account_id != account.id:
+                raise CrossAccountAccess
+            feedback.append(item)
+        return feedback
+
     async def _record_feedback(
         self,
         *,
@@ -4178,6 +4205,31 @@ class FirestoreRepository:
                 await asyncio.sleep((0.01 * (2**fresh_attempt)) + retry_jitter)
         raise AssertionError("unreachable transaction retry state")
 
+    async def list_question_responses_for_owner(
+        self,
+        owner_user_id: str,
+        *,
+        limit: int = 200,
+    ) -> list[QuestionResponseView]:
+        if not 1 <= limit <= 200:
+            raise ValueError("question response list limit must be between 1 and 200")
+        account = await self.account_for_owner(owner_user_id)
+        query = (
+            self._collection(account.id, "question_responses")
+            .order_by("created_at", direction=firestore.Query.DESCENDING)
+            .limit(limit)
+        )
+        responses: list[QuestionResponseView] = []
+        async for snapshot in query.stream():
+            data = snapshot.to_dict() or {}
+            data.pop("schema_version", None)
+            data.pop("idempotency_hash", None)
+            item = QuestionResponseView.model_validate(data)
+            if item.account_id != account.id:
+                raise CrossAccountAccess
+            responses.append(item)
+        return responses
+
     async def capture_for_owner(self, owner_user_id: str, capture_id: str) -> CaptureRecord:
         account = await self.account_for_owner(owner_user_id)
         snapshot = await self._collection(account.id, "captures").document(capture_id).get()
@@ -4194,8 +4246,8 @@ class FirestoreRepository:
         *,
         limit: int = 20,
     ) -> list[CaptureRecord]:
-        if not 1 <= limit <= 50:
-            raise ValueError("capture list limit must be between 1 and 50")
+        if not 1 <= limit <= 200:
+            raise ValueError("capture list limit must be between 1 and 200")
         account = await self.account_for_owner(owner_user_id)
         query = (
             self._collection(account.id, "captures")

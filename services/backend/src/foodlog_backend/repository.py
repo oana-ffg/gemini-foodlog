@@ -103,6 +103,7 @@ from .models import (
     MealFeedbackKind,
     MealFeedbackRequest,
     MealFeedbackResult,
+    MealFeedbackView,
     MealInference,
     MealRevision,
     MealRevisionSource,
@@ -134,6 +135,7 @@ from .models import (
     QuestionResponseKind,
     QuestionResponseRequest,
     QuestionResponseResult,
+    QuestionResponseView,
     QuestionStatus,
     UserContextNote,
     UserContextNoteCreate,
@@ -941,6 +943,13 @@ class Repository(Protocol):
         idempotency_key: str,
     ) -> MealFeedbackResult: ...
 
+    async def list_meal_feedback_for_owner(
+        self,
+        owner_user_id: str,
+        *,
+        limit: int = 200,
+    ) -> list[MealFeedbackView]: ...
+
     async def list_questions(
         self,
         owner_user_id: str,
@@ -1017,6 +1026,13 @@ class Repository(Protocol):
         request: QuestionResponseRequest,
         idempotency_key: str,
     ) -> QuestionResponseResult: ...
+
+    async def list_question_responses_for_owner(
+        self,
+        owner_user_id: str,
+        *,
+        limit: int = 200,
+    ) -> list[QuestionResponseView]: ...
 
     async def capture_for_owner(self, owner_user_id: str, capture_id: str) -> CaptureRecord: ...
 
@@ -3219,6 +3235,32 @@ class InMemoryRepository:
                 idempotency_key=idempotency_key,
             )
 
+    async def list_meal_feedback_for_owner(
+        self,
+        owner_user_id: str,
+        *,
+        limit: int = 200,
+    ) -> list[MealFeedbackView]:
+        if not 1 <= limit <= 200:
+            raise ValueError("feedback list limit must be between 1 and 200")
+        account = await self.account_for_owner(owner_user_id)
+        async with self._lock:
+            feedback = sorted(
+                (
+                    item
+                    for item in self._feedback.values()
+                    if item.account_id == account.id
+                ),
+                key=lambda item: (item.created_at, item.id),
+                reverse=True,
+            )
+            return [
+                MealFeedbackView.model_validate(
+                    item.model_dump(exclude={"idempotency_key"})
+                )
+                for item in feedback[:limit]
+            ]
+
     async def create_user_context_note(
         self,
         *,
@@ -3566,6 +3608,32 @@ class InMemoryRepository:
                 revision=(feedback_result.revision if feedback_result else None),
             )
 
+    async def list_question_responses_for_owner(
+        self,
+        owner_user_id: str,
+        *,
+        limit: int = 200,
+    ) -> list[QuestionResponseView]:
+        if not 1 <= limit <= 200:
+            raise ValueError("question response list limit must be between 1 and 200")
+        account = await self.account_for_owner(owner_user_id)
+        async with self._lock:
+            responses = sorted(
+                (
+                    item
+                    for item in self._question_responses.values()
+                    if item.account_id == account.id
+                ),
+                key=lambda item: (item.created_at, item.id),
+                reverse=True,
+            )
+            return [
+                QuestionResponseView.model_validate(
+                    item.model_dump(exclude={"idempotency_key"})
+                )
+                for item in responses[:limit]
+            ]
+
     async def capture_for_owner(self, owner_user_id: str, capture_id: str) -> CaptureRecord:
         account = await self.account_for_owner(owner_user_id)
         async with self._lock:
@@ -3582,8 +3650,8 @@ class InMemoryRepository:
         *,
         limit: int = 20,
     ) -> list[CaptureRecord]:
-        if not 1 <= limit <= 50:
-            raise ValueError("capture list limit must be between 1 and 50")
+        if not 1 <= limit <= 200:
+            raise ValueError("capture list limit must be between 1 and 200")
         account = await self.account_for_owner(owner_user_id)
         async with self._lock:
             captures = sorted(

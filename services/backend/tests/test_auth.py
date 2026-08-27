@@ -101,6 +101,8 @@ def test_verified_bearer_token_is_the_only_source_of_user_identity() -> None:
         ("POST", "/v1/captures"),
         ("GET", "/v1/journal"),
         ("GET", "/v1/activities"),
+        ("GET", "/v1/captures"),
+        ("GET", "/v1/feedback"),
         ("GET", "/v1/audit-events"),
         ("GET", "/v1/processing"),
         ("GET", "/v1/purchases"),

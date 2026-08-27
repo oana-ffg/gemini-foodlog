@@ -447,6 +447,71 @@ def test_audit_events_are_idempotent_private_and_cover_user_visible_operations()
     assert foreign.status_code == 404
 
 
+def test_owner_can_inventory_safe_capture_metadata_and_raw_meal_feedback() -> None:
+    image = (FIXTURES / "synthetic-steak-airfryer.png").read_bytes()
+    with build_client() as client:
+        _, camera = provision(client)
+        capture = post_fixture_capture(
+            client,
+            camera=camera,
+            image=image,
+            idempotency_key="account-data-capture-001",
+        )
+        meal = client.get("/v1/journal", headers=USER_HEADER).json()[0]
+        recorded = client.post(
+            f"/v1/meals/{meal['id']}/feedback",
+            headers={**USER_HEADER, "Idempotency-Key": "account-data-feedback-001"},
+            json={
+                "kind": "correct",
+                "actual_meal": "Air-fried lamb",
+                "explanation": "The darker cut was lamb, not steak.",
+            },
+        )
+        captures = client.get("/v1/captures?limit=200", headers=USER_HEADER)
+        feedback = client.get("/v1/feedback?limit=200", headers=USER_HEADER)
+        consent = client.get("/v1/consents", headers=USER_HEADER)
+        cameras = client.get("/v1/cameras", headers=USER_HEADER)
+        context = client.get("/v1/context-notes?include_inactive=true", headers=USER_HEADER)
+        invalid_capture_limit = client.get("/v1/captures?limit=201", headers=USER_HEADER)
+        invalid_feedback_limit = client.get("/v1/feedback?limit=201", headers=USER_HEADER)
+        client.post(
+            "/v1/accounts",
+            headers={"X-FoodLog-Local-User": "account-data-foreign"},
+        )
+        foreign_captures = client.get(
+            "/v1/captures",
+            headers={"X-FoodLog-Local-User": "account-data-foreign"},
+        )
+        foreign_feedback = client.get(
+            "/v1/feedback",
+            headers={"X-FoodLog-Local-User": "account-data-foreign"},
+        )
+
+    assert capture.status_code == 202
+    assert recorded.status_code == 200
+    assert captures.status_code == feedback.status_code == 200
+    assert captures.headers["cache-control"] == "private, no-store"
+    assert feedback.headers["cache-control"] == "private, no-store"
+    assert consent.headers["cache-control"] == "private, no-store"
+    assert cameras.headers["cache-control"] == "private, no-store"
+    assert context.headers["cache-control"] == "private, no-store"
+    assert len(captures.json()) == 1
+    assert captures.json()[0]["content_sha256"] == sha256(image).hexdigest()
+    assert "idempotency_key" not in captures.json()[0]
+    assert "object_key" not in captures.json()[0]
+    assert feedback.json()["meal_feedback"][0]["explanation"] == (
+        "The darker cut was lamb, not steak."
+    )
+    assert "idempotency_key" not in feedback.json()["meal_feedback"][0]
+    assert feedback.json()["question_responses"] == []
+    assert invalid_capture_limit.status_code == invalid_feedback_limit.status_code == 422
+    assert foreign_captures.json() == []
+    assert foreign_feedback.json() == {
+        "meal_feedback": [],
+        "question_responses": [],
+    }
+
+
 def post_fixture_capture(
     client: TestClient,
     *,

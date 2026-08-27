@@ -13,16 +13,21 @@ import {
   correctKnowledge,
   createContextNote,
   createDeviceCamera,
+  getPurchase,
   getKnowledgePage,
   getConsentPreferences,
   joinWaitlist,
   listActivities,
+  listAuditEvents,
   listCameras,
+  listCaptureInventory,
   listContextNotes,
+  listFeedbackInventory,
   listKnowledge,
   listOpenPatternQuestions,
   listProcessing,
   listPurchases,
+  listQuestions,
   provisionAccount,
   recordLaunchMailConsent,
   retireKnowledge,
@@ -132,6 +137,28 @@ describe("authenticated API client", () => {
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "http://127.0.0.1:8080/v1/processing?limit=12",
       "http://127.0.0.1:8080/v1/purchases?limit=1",
+    ]);
+  });
+
+  it("loads every owner-readable account-data collection from bounded routes", async () => {
+    firebase.auth.currentUser = {
+      getIdToken: vi.fn().mockResolvedValue("firebase-id-token"),
+    };
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse([])));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listCaptureInventory(200);
+    await listFeedbackInventory(200);
+    await listAuditEvents(200);
+    await listQuestions("answered");
+    await getPurchase("purchase/one");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://127.0.0.1:8080/v1/captures?limit=200",
+      "http://127.0.0.1:8080/v1/feedback?limit=200",
+      "http://127.0.0.1:8080/v1/audit-events?limit=200",
+      "http://127.0.0.1:8080/v1/questions?question_status=answered",
+      "http://127.0.0.1:8080/v1/purchases/purchase%2Fone",
     ]);
   });
 

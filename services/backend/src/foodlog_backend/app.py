@@ -1,3 +1,4 @@
+import asyncio
 import warnings
 from dataclasses import dataclass
 from datetime import timedelta
@@ -67,12 +68,14 @@ from .models import (
     Camera,
     CaptureAccepted,
     CaptureEnvelopeV1,
+    CaptureInventoryView,
     ClarificationQuestion,
     ConsentPreferences,
     DeviceCamera,
     DeviceCameraCreate,
     DeviceCameraCredentialIssue,
     DeviceSession,
+    FeedbackInventoryView,
     InboundMailAddress,
     KnowledgePage,
     KnowledgePageHistory,
@@ -554,8 +557,10 @@ def create_app(
 
     @app.get("/v1/consents", response_model=ConsentPreferences)
     async def get_consent_preferences(
+        response: Response,
         identity: Annotated[VerifiedIdentity, Depends(request_identity)],
     ) -> ConsentPreferences:
+        response.headers["Cache-Control"] = "private, no-store"
         return await container.repository.consent_preferences(
             firebase_uid=identity.uid,
         )
@@ -606,8 +611,10 @@ def create_app(
 
     @app.get("/v1/cameras", response_model=list[Camera])
     async def list_cameras(
+        response: Response,
         user_id: str = Depends(request_user_id),
     ) -> list[Camera]:
+        response.headers["Cache-Control"] = "private, no-store"
         return await container.repository.list_cameras(user_id)
 
     @app.post("/v1/cameras/{camera_id}/revoke", response_model=Camera)
@@ -764,6 +771,40 @@ def create_app(
             status=activity_status,
         )
 
+    @app.get("/v1/captures", response_model=list[CaptureInventoryView])
+    async def list_capture_inventory(
+        response: Response,
+        limit: Annotated[int, Query(ge=1, le=200)] = 200,
+        user_id: str = Depends(request_user_id),
+    ) -> list[CaptureInventoryView]:
+        response.headers["Cache-Control"] = "private, no-store"
+        captures = await container.repository.recent_captures_for_owner(
+            user_id,
+            limit=limit,
+        )
+        return [
+            CaptureInventoryView.model_validate(
+                capture.model_dump(exclude={"idempotency_key", "object_key"})
+            )
+            for capture in captures
+        ]
+
+    @app.get("/v1/feedback", response_model=FeedbackInventoryView)
+    async def list_feedback_inventory(
+        response: Response,
+        limit: Annotated[int, Query(ge=1, le=200)] = 200,
+        user_id: str = Depends(request_user_id),
+    ) -> FeedbackInventoryView:
+        response.headers["Cache-Control"] = "private, no-store"
+        meal_feedback, question_responses = await asyncio.gather(
+            container.repository.list_meal_feedback_for_owner(user_id, limit=limit),
+            container.repository.list_question_responses_for_owner(user_id, limit=limit),
+        )
+        return FeedbackInventoryView(
+            meal_feedback=meal_feedback,
+            question_responses=question_responses,
+        )
+
     @app.get("/v1/audit-events", response_model=list[AuditEvent])
     async def list_audit_events(
         response: Response,
@@ -893,9 +934,11 @@ def create_app(
 
     @app.get("/v1/context-notes", response_model=list[UserContextNote])
     async def list_user_context_notes(
+        response: Response,
         include_inactive: bool = False,
         user_id: str = Depends(request_user_id),
     ) -> list[UserContextNote]:
+        response.headers["Cache-Control"] = "private, no-store"
         return await container.repository.list_user_context_notes(
             user_id,
             include_inactive=include_inactive,

@@ -299,6 +299,8 @@ function App() {
         <nav className="hero-links" aria-label="FoodLog tools">
           <Link to="/context">Tell FoodLog something</Link>
           <Link to="/knowledge">Open the household wiki</Link>
+          <Link to="/purchases">Inspect purchase evidence</Link>
+          <Link to="/data">View all stored account data</Link>
           <Link to="/camera">Open the phone camera page</Link>
         </nav>
       </header>

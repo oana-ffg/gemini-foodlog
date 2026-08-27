@@ -492,6 +492,48 @@ export interface CaptureProcessing {
   latest_failure_code: string | null;
 }
 
+export interface CaptureInventory {
+  id: string;
+  account_id: string;
+  camera_id: string;
+  content_type: string;
+  content_sha256: string;
+  metadata: Record<string, unknown> | null;
+  captured_utc_offset_minutes: number | null;
+  segment_id: string | null;
+  event_id: string | null;
+  status: "accepted" | "stored" | "processed";
+  created_at: string;
+}
+
+export interface QuestionResponseView {
+  id: string;
+  account_id: string;
+  question_id: string;
+  kind: QuestionResponseKind;
+  correction: string | null;
+  explanation: string | null;
+  feedback_id: string | null;
+  created_at: string;
+}
+
+export interface FeedbackInventory {
+  meal_feedback: Omit<MealFeedback, "idempotency_key">[];
+  question_responses: QuestionResponseView[];
+}
+
+export interface AuditEvent {
+  schema_version: 1;
+  id: string;
+  account_id: string;
+  action: string;
+  actor_kind: string;
+  source: string;
+  subject_kind: string;
+  subject_id: string;
+  created_at: string;
+}
+
 export interface PurchaseSummary {
   id: string;
   merchant: string;
@@ -500,6 +542,73 @@ export interface PurchaseSummary {
   latest_final_document_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface PurchaseNormalization {
+  parser_version: string;
+  item_count: number;
+  charge_count: number;
+  included_vat_ore: number | null;
+  created_at: string;
+}
+
+export interface PurchaseItem {
+  id: string;
+  ordinal: number;
+  name: string;
+  normalized_name: string;
+  disposition: "ordered" | "delivered";
+  quantity: number;
+  category: string | null;
+  unit_description: string | null;
+  unit_price_ore: number;
+  included_discount_ore: number | null;
+  line_total_ore: number;
+}
+
+export interface PurchaseCharge {
+  id: string;
+  kind: string;
+  amount_ore: number;
+  description: string;
+}
+
+export interface PurchaseDocument {
+  id: string;
+  kind: "confirmation" | "final";
+  revision_number: number;
+  order_reference: string | null;
+  invoice_reference: string | null;
+  created_at: string;
+  normalization: PurchaseNormalization | null;
+  items: PurchaseItem[];
+  charges: PurchaseCharge[];
+}
+
+export interface PurchaseReconciledItem {
+  id: string;
+  normalized_name: string;
+  display_name: string;
+  disposition: string;
+  ordered_quantity: number | null;
+  delivered_quantity: number | null;
+  confirmation_item_ids: string[];
+  final_item_ids: string[];
+}
+
+export interface PurchaseReconciliation {
+  confirmation_document_id: string | null;
+  final_document_id: string | null;
+  item_count: number;
+  unresolved_item_count: number;
+  has_unresolved_substitution_pairing: boolean;
+  items: PurchaseReconciledItem[];
+  updated_at: string;
+}
+
+export interface PurchaseDetail extends PurchaseSummary {
+  documents: PurchaseDocument[];
+  reconciliation: PurchaseReconciliation | null;
 }
 
 export interface BrowserCaptureMetadata {
@@ -602,8 +711,26 @@ export function listProcessing(limit = 20): Promise<CaptureProcessing[]> {
   return apiRequest<CaptureProcessing[]>(`/v1/processing?limit=${limit}`);
 }
 
+export function listCaptureInventory(limit = 200): Promise<CaptureInventory[]> {
+  return apiRequest<CaptureInventory[]>(`/v1/captures?limit=${limit}`);
+}
+
+export function listFeedbackInventory(limit = 200): Promise<FeedbackInventory> {
+  return apiRequest<FeedbackInventory>(`/v1/feedback?limit=${limit}`);
+}
+
+export function listAuditEvents(limit = 200): Promise<AuditEvent[]> {
+  return apiRequest<AuditEvent[]>(`/v1/audit-events?limit=${limit}`);
+}
+
 export function listPurchases(limit = 20): Promise<PurchaseSummary[]> {
   return apiRequest<PurchaseSummary[]>(`/v1/purchases?limit=${limit}`);
+}
+
+export function getPurchase(purchaseId: string): Promise<PurchaseDetail> {
+  return apiRequest<PurchaseDetail>(
+    `/v1/purchases/${encodeURIComponent(purchaseId)}`,
+  );
 }
 
 export function getConsentPreferences(): Promise<ConsentPreferences> {
@@ -680,6 +807,12 @@ export function listActivities(status?: MealStatus): Promise<MealEntry[]> {
 export function listOpenPatternQuestions(): Promise<ClarificationQuestion[]> {
   return apiRequest<ClarificationQuestion[]>(
     "/v1/questions?kind=pattern_hypothesis",
+  );
+}
+
+export function listQuestions(status: QuestionStatus): Promise<ClarificationQuestion[]> {
+  return apiRequest<ClarificationQuestion[]>(
+    `/v1/questions?question_status=${encodeURIComponent(status)}`,
   );
 }
 

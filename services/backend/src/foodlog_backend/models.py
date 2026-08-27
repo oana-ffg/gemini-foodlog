@@ -860,6 +860,20 @@ class CaptureRecord(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class CaptureInventoryView(BaseModel):
+    id: str
+    account_id: str
+    camera_id: str
+    content_type: str
+    content_sha256: str
+    metadata: CaptureEnvelopeV1 | None = None
+    captured_utc_offset_minutes: int | None = Field(default=None, ge=-840, le=840)
+    segment_id: str | None = Field(default=None, min_length=1, max_length=160)
+    event_id: str | None = Field(default=None, min_length=1, max_length=160)
+    status: CaptureStatus
+    created_at: datetime
+
+
 def capture_grouping_job_id(capture_id: str) -> str:
     return f"capture-grouping-{capture_id}"
 
@@ -1245,6 +1259,20 @@ class MealFeedback(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class MealFeedbackView(BaseModel):
+    id: str
+    account_id: str
+    meal_id: str
+    kind: MealFeedbackKind
+    actual_meal: str | None
+    explanation: str | None
+    correction: MealCorrection | None = None
+    base_revision_number: int | None = Field(default=None, ge=1)
+    learning_disposition: MealFeedbackLearningDisposition | None = None
+    question_id: str | None = None
+    created_at: datetime
+
+
 class MealRevision(BaseModel):
     id: str
     account_id: str
@@ -1550,6 +1578,22 @@ class QuestionResponse(BaseModel):
     idempotency_key: str
     feedback_id: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
+
+
+class QuestionResponseView(BaseModel):
+    id: str
+    account_id: str
+    question_id: str
+    kind: QuestionResponseKind
+    correction: str | None
+    explanation: str | None
+    feedback_id: str | None = None
+    created_at: datetime
+
+
+class FeedbackInventoryView(BaseModel):
+    meal_feedback: list[MealFeedbackView]
+    question_responses: list[QuestionResponseView]
 
 
 class QuestionResponseResult(BaseModel):
