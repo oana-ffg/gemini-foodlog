@@ -2,16 +2,20 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ApiError,
+  AuthenticationRequiredError,
   answerQuestion,
   getConsentPreferences,
   listJournal,
   listMealRevisions,
   listOpenQuestions,
+  listProcessing,
+  listPurchases,
   loadCaptureImage,
   provisionAccount,
   recordLaunchMailConsent,
   submitMealFeedback,
   type Account,
+  type CaptureProcessing,
   type ClarificationQuestion,
   type ConsentPreferences,
   type MealEntry,
@@ -25,6 +29,7 @@ import {
   readSignupLaunchMailIntent,
 } from "./signupIntent";
 import { chronologicalJournal, mealOccurrence } from "./journal";
+import { SystemStatus, type PurchaseContextState } from "./SystemStatus";
 
 interface JournalCardProps {
   entry: MealEntry;
@@ -314,11 +319,19 @@ function App() {
   const [capacityReached, setCapacityReached] = useState(false);
   const [journal, setJournal] = useState<MealEntry[]>([]);
   const [questions, setQuestions] = useState<ClarificationQuestion[]>([]);
+  const [processing, setProcessing] = useState<CaptureProcessing[]>();
+  const [processingUnavailable, setProcessingUnavailable] = useState(false);
+  const [purchaseContext, setPurchaseContext] = useState<PurchaseContextState>("loading");
+  const [sessionStale, setSessionStale] = useState(false);
   const [loadMessage, setLoadMessage] = useState("Loading your private journal…");
   const orderedJournal = useMemo(() => chronologicalJournal(journal), [journal]);
 
   const refreshWorkspace = useCallback(async () => {
     setLoadMessage("Loading your private journal…");
+    setProcessing(undefined);
+    setProcessingUnavailable(false);
+    setPurchaseContext("loading");
+    setSessionStale(false);
     try {
       const currentAccount = await provisionAccount();
       let currentConsent = await getConsentPreferences();
@@ -337,14 +350,38 @@ function App() {
         }
         clearSignupLaunchMailIntent(firebaseUid);
       }
-      const [entries, openQuestions] = await Promise.all([
+      const [entries, openQuestions, processingResult, purchasesResult] = await Promise.all([
         listJournal(),
         listOpenQuestions(),
+        listProcessing().then(
+          (value) => ({ value }),
+          (error: unknown) => ({ error }),
+        ),
+        listPurchases(1).then(
+          (value) => ({ value }),
+          (error: unknown) => ({ error }),
+        ),
       ]);
+      if ("error" in processingResult && processingResult.error instanceof AuthenticationRequiredError) {
+        throw processingResult.error;
+      }
+      if ("error" in purchasesResult && purchasesResult.error instanceof AuthenticationRequiredError) {
+        throw purchasesResult.error;
+      }
       setJournal(entries);
       setAccount(currentAccount);
       setConsentPreferences(currentConsent);
       setQuestions(openQuestions);
+      if ("value" in processingResult) {
+        setProcessing(processingResult.value);
+      } else {
+        setProcessingUnavailable(true);
+      }
+      if ("value" in purchasesResult) {
+        setPurchaseContext(purchasesResult.value.length > 0 ? "available" : "empty");
+      } else {
+        setPurchaseContext("unavailable");
+      }
       setCapacityReached(false);
       setLoadMessage("");
     } catch (error: unknown) {
@@ -368,6 +405,7 @@ function App() {
   useEffect(() => {
     refreshWorkspace()
       .catch((error: unknown) => {
+        setSessionStale(error instanceof AuthenticationRequiredError);
         setLoadMessage(error instanceof Error ? error.message : "The journal is unavailable.");
       });
   }, [refreshWorkspace]);
@@ -414,6 +452,14 @@ function App() {
       ) : null}
 
       {loadMessage ? <p className="empty-state" role="status">{loadMessage}</p> : null}
+
+      <SystemStatus
+        account={account}
+        processing={processing}
+        processingUnavailable={processingUnavailable}
+        purchaseContext={purchaseContext}
+        sessionStale={sessionStale}
+      />
 
       <section className="questions" aria-labelledby="questions-title">
         <div className="section-heading">

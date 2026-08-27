@@ -999,6 +999,13 @@ class Repository(Protocol):
 
     async def capture_for_owner(self, owner_user_id: str, capture_id: str) -> CaptureRecord: ...
 
+    async def recent_captures_for_owner(
+        self,
+        owner_user_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[CaptureRecord]: ...
+
 
 class InMemoryRepository:
     """Concurrency-safe local adapter mirroring the required Firestore invariants."""
@@ -3481,6 +3488,27 @@ class InMemoryRepository:
             if capture.account_id != account.id:
                 raise CrossAccountAccess
             return capture.model_copy(deep=True)
+
+    async def recent_captures_for_owner(
+        self,
+        owner_user_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[CaptureRecord]:
+        if not 1 <= limit <= 50:
+            raise ValueError("capture list limit must be between 1 and 50")
+        account = await self.account_for_owner(owner_user_id)
+        async with self._lock:
+            captures = sorted(
+                (
+                    capture
+                    for capture in self._captures.values()
+                    if capture.account_id == account.id
+                ),
+                key=lambda capture: (capture.created_at, capture.id),
+                reverse=True,
+            )
+            return [capture.model_copy(deep=True) for capture in captures[:limit]]
 
     def _owned_meal(self, account_id: str, meal_id: str) -> MealEntry:
         meal = self._meals.get(meal_id)

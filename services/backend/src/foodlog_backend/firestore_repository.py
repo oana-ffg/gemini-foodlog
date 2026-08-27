@@ -4104,6 +4104,25 @@ class FirestoreRepository:
             raise CrossAccountAccess
         return capture
 
+    async def recent_captures_for_owner(
+        self,
+        owner_user_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[CaptureRecord]:
+        if not 1 <= limit <= 50:
+            raise ValueError("capture list limit must be between 1 and 50")
+        account = await self.account_for_owner(owner_user_id)
+        query = (
+            self._collection(account.id, "captures")
+            .order_by("created_at", direction=firestore.Query.DESCENDING)
+            .limit(limit)
+        )
+        return [
+            self._capture_from_snapshot(snapshot, "")
+            async for snapshot in query.stream()
+        ]
+
     @staticmethod
     def _capture_from_snapshot(snapshot, idempotency_key: str) -> CaptureRecord:
         data = snapshot.to_dict()

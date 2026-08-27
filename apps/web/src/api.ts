@@ -268,6 +268,37 @@ export interface CaptureAccepted {
   duplicate: boolean;
 }
 
+export type ProcessingStage =
+  | "storage_pending"
+  | "grouping_pending"
+  | "grouping_active"
+  | "grouping_retrying"
+  | "analysis_pending"
+  | "analysis_active"
+  | "analysis_retrying"
+  | "complete"
+  | "attention_required";
+
+export interface CaptureProcessing {
+  capture_id: string;
+  camera_id: string;
+  captured_at: string;
+  stage: ProcessingStage;
+  attempt_count: number;
+  retry_at: string | null;
+  latest_failure_code: string | null;
+}
+
+export interface PurchaseSummary {
+  id: string;
+  merchant: string;
+  revision_count: number;
+  latest_confirmation_document_id: string | null;
+  latest_final_document_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface BrowserCaptureMetadata {
   capturedAt: string;
   sequenceId: string;
@@ -333,7 +364,9 @@ async function authenticatedFetch(path: string, init?: RequestInit): Promise<Res
   // also recovers when the API rejects a token that expired between acquisition
   // and verification. Never loop and never retry under a different signed-in user.
   if (auth.currentUser !== user) throw new AuthenticationRequiredError();
-  return send(true);
+  const refreshedResponse = await send(true);
+  if (refreshedResponse.status === 401) throw new AuthenticationRequiredError();
+  return refreshedResponse;
 }
 
 async function responseError(response: Response): Promise<ApiError> {
@@ -360,6 +393,14 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function provisionAccount(): Promise<Account> {
   return apiRequest<Account>("/v1/accounts", { method: "POST" });
+}
+
+export function listProcessing(limit = 20): Promise<CaptureProcessing[]> {
+  return apiRequest<CaptureProcessing[]>(`/v1/processing?limit=${limit}`);
+}
+
+export function listPurchases(limit = 20): Promise<PurchaseSummary[]> {
+  return apiRequest<PurchaseSummary[]>(`/v1/purchases?limit=${limit}`);
 }
 
 export function getConsentPreferences(): Promise<ConsentPreferences> {

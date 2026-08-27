@@ -336,6 +336,47 @@ def post_shared_browser_capture(
     )
 
 
+def test_processing_endpoint_is_private_tenant_scoped_and_never_caches() -> None:
+    image = (FIXTURES / "synthetic-steak-airfryer.png").read_bytes()
+    with build_client() as client:
+        assert client.post("/v1/accounts", headers=USER_HEADER).status_code == 200
+        owner_camera = client.post(
+            "/v1/browser-cameras",
+            headers=USER_HEADER,
+            json={"name": "Sink camera", "client_instance_id": "processing-client"},
+        ).json()
+        accepted = post_shared_browser_capture(
+            client,
+            camera=owner_camera,
+            image=image,
+            idempotency_key="processing-status-001",
+        )
+        owner = client.get("/v1/processing?limit=1", headers=USER_HEADER)
+        foreign_headers = {"X-FoodLog-Local-User": "owner-b"}
+        assert client.post("/v1/accounts", headers=foreign_headers).status_code == 200
+        foreign = client.get(
+            "/v1/processing?limit=1",
+            headers=foreign_headers,
+        )
+
+    assert accepted.status_code == 202
+    assert owner.status_code == 200
+    assert owner.headers["cache-control"] == "private, no-store"
+    assert owner.json() == [
+        {
+            "capture_id": accepted.json()["capture_id"],
+            "camera_id": owner_camera["id"],
+            "captured_at": owner.json()[0]["captured_at"],
+            "stage": "grouping_pending",
+            "attempt_count": 0,
+            "retry_at": None,
+            "latest_failure_code": None,
+        }
+    ]
+    assert foreign.status_code == 200
+    assert foreign.json() == []
+
+
 def post_fixture_capture(
     client: TestClient,
     *,

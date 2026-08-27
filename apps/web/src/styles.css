@@ -122,6 +122,25 @@ h1 {
 .consent-card p:not(.section-kicker) { margin: 0; color: #555d57; line-height: 1.55; }
 .consent-card__action { display: grid; justify-items: end; gap: 10px; }
 
+.system-status { margin: 52px 0 0; }
+.system-status .section-heading a { color: #315c44; font-weight: 700; }
+.system-state-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.system-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border: 1px solid #d9d5cb;
+  border-radius: 13px;
+  background: #fffdf8;
+}
+.system-state > div { display: grid; gap: 5px; }
+.system-state small { color: #646b65; }
+.system-state time, .system-state code { flex: 0 0 auto; color: #646b65; font-size: .78rem; }
+.system-state--warning { border-color: #e3c374; background: #fff8df; }
+.system-state--error { border-color: #dda99d; color: #7b392c; background: #f9e4df; }
+
 .capture-panel {
   display: grid;
   grid-template-columns: minmax(280px, 0.82fr) minmax(340px, 1.18fr);

@@ -386,6 +386,75 @@
         "title": "CaptureAccepted",
         "type": "object"
       },
+      "CaptureProcessingView": {
+        "properties": {
+          "attempt_count": {
+            "minimum": 0.0,
+            "title": "Attempt Count",
+            "type": "integer"
+          },
+          "camera_id": {
+            "title": "Camera Id",
+            "type": "string"
+          },
+          "capture_id": {
+            "title": "Capture Id",
+            "type": "string"
+          },
+          "captured_at": {
+            "format": "date-time",
+            "title": "Captured At",
+            "type": "string"
+          },
+          "latest_failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Failure Code"
+          },
+          "retry_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry At"
+          },
+          "stage": {
+            "enum": [
+              "storage_pending",
+              "grouping_pending",
+              "grouping_active",
+              "grouping_retrying",
+              "analysis_pending",
+              "analysis_active",
+              "analysis_retrying",
+              "complete",
+              "attention_required"
+            ],
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "capture_id",
+          "camera_id",
+          "captured_at",
+          "stage",
+          "attempt_count"
+        ],
+        "title": "CaptureProcessingView",
+        "type": "object"
+      },
       "ClarificationQuestion": {
         "properties": {
           "account_id": {
@@ -5113,6 +5182,68 @@
           }
         },
         "summary": "List Meal Revisions"
+      }
+    },
+    "/v1/processing": {
+      "get": {
+        "operationId": "list_processing_v1_processing_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CaptureProcessingView"
+                  },
+                  "title": "Response List Processing V1 Processing Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Processing"
       }
     },
     "/v1/purchases": {

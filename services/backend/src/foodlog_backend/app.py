@@ -91,6 +91,8 @@ from .models import (
     VerifiedDeviceIdentity,
     WaitlistEntry,
     WaitlistJoinRequest,
+    capture_grouping_job_id,
+    event_inference_job_id,
     utc_now,
 )
 from .notifications import (
@@ -100,6 +102,7 @@ from .notifications import (
     PubSubNotificationPublisher,
 )
 from .pattern_hypotheses import PatternHypothesisService
+from .processing_views import CaptureProcessingView, capture_processing_view
 from .purchase_views import (
     PurchaseDetailView,
     PurchaseSummaryView,
@@ -737,6 +740,40 @@ def create_app(
     @app.get("/v1/journal", response_model=list[MealEntry])
     async def list_journal(user_id: str = Depends(request_user_id)) -> list[MealEntry]:
         return await container.repository.list_meals(user_id)
+
+    @app.get("/v1/processing", response_model=list[CaptureProcessingView])
+    async def list_processing(
+        response: Response,
+        limit: Annotated[int, Query(ge=1, le=50)] = 20,
+        user_id: str = Depends(request_user_id),
+    ) -> list[CaptureProcessingView]:
+        response.headers["Cache-Control"] = "private, no-store"
+        captures = await container.repository.recent_captures_for_owner(
+            user_id,
+            limit=limit,
+        )
+        views: list[CaptureProcessingView] = []
+        for capture in captures:
+            grouping_job = await container.repository.job_for_account(
+                capture.account_id,
+                capture_grouping_job_id(capture.id),
+            )
+            inference_job = (
+                await container.repository.job_for_account(
+                    capture.account_id,
+                    event_inference_job_id(capture.event_id),
+                )
+                if capture.event_id
+                else None
+            )
+            views.append(
+                capture_processing_view(
+                    capture,
+                    grouping_job=grouping_job,
+                    inference_job=inference_job,
+                )
+            )
+        return views
 
     @app.get("/v1/purchases", response_model=list[PurchaseSummaryView])
     async def list_purchases(

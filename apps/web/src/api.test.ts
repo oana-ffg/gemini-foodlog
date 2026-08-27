@@ -19,6 +19,8 @@ import {
   listCameras,
   listContextNotes,
   listKnowledge,
+  listProcessing,
+  listPurchases,
   provisionAccount,
   recordLaunchMailConsent,
   retireKnowledge,
@@ -94,6 +96,39 @@ describe("authenticated API client", () => {
     const secondHeaders = new Headers((fetchMock.mock.calls[1][1] as RequestInit).headers);
     expect(firstHeaders.get("Authorization")).toBe("Bearer expired-token");
     expect(secondHeaders.get("Authorization")).toBe("Bearer refreshed-token");
+  });
+
+  it("surfaces a stale session after the one allowed token refresh also fails", async () => {
+    const getIdToken = vi.fn()
+      .mockResolvedValueOnce("expired-token")
+      .mockResolvedValueOnce("rejected-refresh-token");
+    firebase.auth.currentUser = { getIdToken };
+    const fetchMock = vi.fn()
+      .mockResolvedValue(jsonResponse({ detail: "invalid_authentication" }, 401));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(provisionAccount()).rejects.toBeInstanceOf(AuthenticationRequiredError);
+
+    expect(getIdToken.mock.calls).toEqual([[false], [true]]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("loads owner processing and purchase context from explicit bounded routes", async () => {
+    firebase.auth.currentUser = {
+      getIdToken: vi.fn().mockResolvedValue("firebase-id-token"),
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listProcessing(12);
+    await listPurchases(1);
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://127.0.0.1:8080/v1/processing?limit=12",
+      "http://127.0.0.1:8080/v1/purchases?limit=1",
+    ]);
   });
 
   it("uses explicit authenticated consent and waitlist operations", async () => {
