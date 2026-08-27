@@ -15,6 +15,7 @@ function entry(
     capture_id: `capture-${id}`,
     event_id: `event-${id}`,
     occurred_at: occurredAt,
+    activity_hypothesis: null,
     status,
     confidence: "likely",
     title: `Meal ${id}`,

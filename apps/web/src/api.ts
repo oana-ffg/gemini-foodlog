@@ -82,13 +82,7 @@ export interface MealComponent {
   preparation_methods: string[];
 }
 
-export interface MealEntry {
-  id: string;
-  account_id: string;
-  capture_id: string;
-  event_id: string | null;
-  occurred_at: string | null;
-  status: MealStatus;
+export interface MealInferenceSummary {
   confidence: Confidence;
   title: string;
   components: MealComponent[];
@@ -97,6 +91,112 @@ export interface MealEntry {
   rationale: string;
   clarification_question: string | null;
   clarification_reason: string | null;
+}
+
+export type ActivityInferenceKind =
+  | "tentative_meal"
+  | "unknown_activity"
+  | "likely_non_cooking";
+export type ActivityUserAction =
+  | "confirm_guess"
+  | "correct"
+  | "discard_not_cooking";
+export type ContextSourceKind =
+  | "purchase"
+  | "household_knowledge"
+  | "recent_meal"
+  | "user_note";
+
+export interface ImageRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface ImageEvidenceLink {
+  capture_id: string;
+  region: ImageRegion | null;
+}
+
+export interface DirectObservation {
+  id: string;
+  description: string;
+  image_evidence: ImageEvidenceLink[];
+}
+
+export interface ContextEvidence {
+  id: string;
+  description: string;
+  source_kind: ContextSourceKind;
+  source_id: string;
+}
+
+export interface ReasoningAssumption {
+  id: string;
+  description: string;
+  knowledge_revision_id: string;
+}
+
+export interface Deduction {
+  id: string;
+  description: string;
+  evidence_ids: string[];
+}
+
+export interface ActivityAlternative {
+  label: string;
+  reason: string;
+  evidence_ids: string[];
+}
+
+export interface ActivityMealComponent {
+  id: string;
+  name: string;
+  ingredients: string[];
+  preparation_methods: string[];
+  confidence: Confidence;
+  alternatives: ActivityAlternative[];
+  evidence_ids: string[];
+}
+
+export interface FocusedEventQuestion {
+  prompt: string;
+  justification: string;
+  evidence_ids: string[];
+  candidate_labels: string[];
+  impact:
+    | "changes_meal_identity"
+    | "changes_food_trigger_relevance"
+    | "changes_reusable_household_distinction";
+}
+
+export interface ActivityMealInference {
+  schema_version: "activity-meal-inference-v1";
+  event_id: string;
+  source_capture_ids: string[];
+  kind: ActivityInferenceKind;
+  best_guess: string | null;
+  confidence: Confidence;
+  components: ActivityMealComponent[];
+  direct_observations: DirectObservation[];
+  contextual_evidence: ContextEvidence[];
+  assumptions: ReasoningAssumption[];
+  deductions: Deduction[];
+  alternatives: ActivityAlternative[];
+  rationale: string;
+  question: FocusedEventQuestion | null;
+  allowed_actions: ActivityUserAction[];
+}
+
+export interface MealEntry extends MealInferenceSummary {
+  id: string;
+  account_id: string;
+  capture_id: string;
+  event_id: string | null;
+  occurred_at: string | null;
+  activity_hypothesis: ActivityMealInference | null;
+  status: MealStatus;
   revision_number: number;
   created_at: string;
 }
@@ -107,17 +207,8 @@ export interface MealRevision {
   number: number;
   status: MealStatus;
   source: MealRevisionSource;
-  inference: Pick<
-    MealEntry,
-    | "title"
-    | "confidence"
-    | "components"
-    | "observations"
-    | "alternatives"
-    | "rationale"
-    | "clarification_question"
-    | "clarification_reason"
-  >;
+  inference: MealInferenceSummary;
+  activity_hypothesis: ActivityMealInference | null;
   created_at: string;
 }
 

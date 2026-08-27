@@ -10,7 +10,6 @@ import {
   listOpenQuestions,
   listProcessing,
   listPurchases,
-  loadCaptureImage,
   provisionAccount,
   recordLaunchMailConsent,
   submitMealFeedback,
@@ -22,6 +21,7 @@ import {
   type MealRevision,
   type MealStatus,
 } from "./api";
+import { ActivityImageViewer, ActivityRationale } from "./ActivityDetail";
 import { SessionControls, useAuth } from "./auth";
 import { CapacityWaitlist, LaunchMailConsentControls } from "./ConsentControls";
 import {
@@ -78,6 +78,10 @@ function RevisionHistory({ mealId, revisionCount }: { mealId: string; revisionCo
               </div>
               <h4>{revision.inference.title}</h4>
               <p>{revision.inference.rationale}</p>
+              <ActivityRationale
+                inference={revision.inference}
+                hypothesis={revision.activity_hypothesis}
+              />
             </article>
           ))}
         </div>
@@ -87,27 +91,16 @@ function RevisionHistory({ mealId, revisionCount }: { mealId: string; revisionCo
 }
 
 function JournalCard({ entry, onChanged }: JournalCardProps) {
-  const [imageUrl, setImageUrl] = useState<string>();
   const [correcting, setCorrecting] = useState(false);
   const [actualMeal, setActualMeal] = useState("");
   const [explanation, setExplanation] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
-
-  useEffect(() => {
-    let active = true;
-    let objectUrl: string | undefined;
-    loadCaptureImage(entry.capture_id)
-      .then((url) => {
-        objectUrl = url;
-        if (active) setImageUrl(url);
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [entry.capture_id]);
+  const captureIds = entry.activity_hypothesis?.source_capture_ids ?? [entry.capture_id];
+  const [selectedCaptureId, setSelectedCaptureId] = useState(entry.capture_id);
+  const visibleCaptureId = captureIds.includes(selectedCaptureId)
+    ? selectedCaptureId
+    : captureIds[0] ?? entry.capture_id;
 
   const confirm = async () => {
     setBusy(true);
@@ -156,7 +149,11 @@ function JournalCard({ entry, onChanged }: JournalCardProps) {
 
   return (
     <article className="journal-card">
-      {imageUrl ? <img src={imageUrl} alt="Captured kitchen evidence" /> : null}
+      <ActivityImageViewer
+        captureIds={captureIds}
+        selectedCaptureId={visibleCaptureId}
+        onSelectCapture={setSelectedCaptureId}
+      />
       <div className="journal-card__body">
         <div className="entry-meta">
           <div className="badge-row">
@@ -171,17 +168,11 @@ function JournalCard({ entry, onChanged }: JournalCardProps) {
         </div>
         <h3>{entry.title}</h3>
         <p>{entry.rationale}</p>
-        <details>
-          <summary>Evidence and alternatives</summary>
-          <h4>Observed</h4>
-          <ul>{entry.observations.map((item) => <li key={item}>{item}</li>)}</ul>
-          {entry.alternatives.length > 0 ? (
-            <>
-              <h4>Alternatives</h4>
-              <ul>{entry.alternatives.map((item) => <li key={item}>{item}</li>)}</ul>
-            </>
-          ) : null}
-        </details>
+        <ActivityRationale
+          inference={entry}
+          hypothesis={entry.activity_hypothesis}
+          onSelectCapture={setSelectedCaptureId}
+        />
 
         <div className="feedback-actions" aria-label="Meal feedback">
           {entry.status === "provisional" ? (
