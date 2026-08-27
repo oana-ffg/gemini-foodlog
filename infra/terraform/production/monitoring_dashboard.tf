@@ -200,14 +200,13 @@ resource "google_monitoring_dashboard" "production" {
       tiles = concat(
         [
           {
-            xPos   = 0
-            yPos   = 0
             width  = 12
             height = 4
             widget = {
               title = "Ownership, budget, and response boundary"
               text = {
                 format  = "MARKDOWN"
+                style   = {}
                 content = <<-EOT
                   ## Owner: Oana
 
@@ -220,41 +219,49 @@ resource "google_monitoring_dashboard" "production" {
           }
         ],
         [
-          for index, chart in local.dashboard_charts : {
-            xPos   = (index % 2) * 6
-            yPos   = 4 + floor(index / 2) * 4
-            width  = 6
-            height = 4
-            widget = {
-              title = chart.title
-              xyChart = {
-                chartOptions = {
-                  mode = "COLOR"
-                }
-                dataSets = [
-                  {
-                    plotType   = chart.plot_type
-                    targetAxis = "Y1"
-                    timeSeriesQuery = {
-                      timeSeriesFilter = {
-                        filter = chart.filter
-                        aggregation = {
-                          alignmentPeriod    = "60s"
-                          perSeriesAligner   = chart.aligner
-                          crossSeriesReducer = chart.reducer
-                          groupByFields      = chart.group_by
+          for index, chart in local.dashboard_charts : merge(
+            {
+              yPos   = 4 + floor(index / 2) * 4
+              width  = 6
+              height = 4
+              widget = {
+                title = chart.title
+                xyChart = {
+                  chartOptions = {
+                    mode = "COLOR"
+                  }
+                  dataSets = [
+                    {
+                      plotType   = chart.plot_type
+                      targetAxis = "Y1"
+                      timeSeriesQuery = {
+                        timeSeriesFilter = {
+                          filter = chart.filter
+                          aggregation = merge(
+                            {
+                              alignmentPeriod    = "60s"
+                              perSeriesAligner   = chart.aligner
+                              crossSeriesReducer = chart.reducer
+                            },
+                            length(chart.group_by) == 0 ? {} : {
+                              groupByFields = chart.group_by
+                            }
+                          )
                         }
                       }
                     }
+                  ]
+                  yAxis = {
+                    label = chart.axis
+                    scale = "LINEAR"
                   }
-                ]
-                yAxis = {
-                  label = chart.axis
-                  scale = "LINEAR"
                 }
               }
+            },
+            index % 2 == 0 ? {} : {
+              xPos = 6
             }
-          }
+          )
         ]
       )
     }
