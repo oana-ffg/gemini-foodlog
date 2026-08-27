@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { PurchaseEvidence } from "./PurchasesPage";
-import type { PurchaseDetail } from "./api";
+import { ForwardingSetup, PurchaseEvidence } from "./PurchasesPage";
+import type { InboundMailAddress, PurchaseDetail } from "./api";
 
 const purchase: PurchaseDetail = {
   id: "purchase-1",
@@ -55,6 +55,14 @@ const purchase: PurchaseDetail = {
   },
 };
 
+const inboundAddress: InboundMailAddress = {
+  id: "current",
+  account_id: "account-1",
+  address: "private-address@gemini-foodlog-2026.appspotmail.com",
+  status: "active",
+  created_at: "2026-08-27T20:00:00Z",
+};
+
 describe("purchase evidence view", () => {
   it("keeps final evidence, normalization, items, charges, and reconciliation visible", () => {
     const html = renderToStaticMarkup(<PurchaseEvidence purchase={purchase} />);
@@ -73,5 +81,36 @@ describe("purchase evidence view", () => {
     );
 
     expect(html).toContain("no reconciliation was invented");
+  });
+
+  it("shows optional scoped forwarding instructions and the stable private address", () => {
+    const html = renderToStaticMarkup(
+      <ForwardingSetup
+        address={inboundAddress}
+        purchaseCount={0}
+        message="The address is stable for this account."
+        onCopy={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Optional one-time setup");
+    expect(html).toContain(inboundAddress.address);
+    expect(html).toContain("Match Nemlig purchase messages—not all of your mail");
+    expect(html).toContain("Camera capture and the food journal keep working if you skip it");
+    expect(html).toContain("Awaiting first purchase email");
+  });
+
+  it("uses received evidence as the honest setup signal", () => {
+    const html = renderToStaticMarkup(
+      <ForwardingSetup
+        address={inboundAddress}
+        purchaseCount={2}
+        message="Private forwarding address copied."
+        onCopy={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Purchase evidence received");
+    expect(html).not.toContain("Forwarding enabled");
   });
 });

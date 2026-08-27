@@ -13,6 +13,7 @@ import {
   correctKnowledge,
   createContextNote,
   createDeviceCamera,
+  getOrCreateInboundMailAddress,
   getPurchase,
   getKnowledgePage,
   getConsentPreferences,
@@ -138,6 +139,27 @@ describe("authenticated API client", () => {
       "http://127.0.0.1:8080/v1/processing?limit=12",
       "http://127.0.0.1:8080/v1/purchases?limit=1",
     ]);
+  });
+
+  it("creates or retrieves the stable private inbound address without caller-selected scope", async () => {
+    firebase.auth.currentUser = {
+      getIdToken: vi.fn().mockResolvedValue("firebase-id-token"),
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      id: "current",
+      account_id: "account-1",
+      address: "private-address@gemini-foodlog-2026.appspotmail.com",
+      status: "active",
+      created_at: "2026-08-27T20:00:00Z",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getOrCreateInboundMailAddress();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:8080/v1/inbound-mail-address",
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 
   it("loads every owner-readable account-data collection from bounded routes", async () => {

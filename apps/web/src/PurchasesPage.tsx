@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  getOrCreateInboundMailAddress,
   getPurchase,
   listPurchases,
+  type InboundMailAddress,
   type PurchaseDetail,
   type PurchaseSummary,
 } from "./api";
@@ -97,11 +99,85 @@ export function PurchaseEvidence({ purchase }: { purchase: PurchaseDetail }) {
   );
 }
 
+interface ForwardingSetupProps {
+  address: InboundMailAddress | undefined;
+  purchaseCount: number;
+  message: string;
+  onCopy: () => void;
+}
+
+export function ForwardingSetup({
+  address,
+  purchaseCount,
+  message,
+  onCopy,
+}: ForwardingSetupProps) {
+  return (
+    <section className="forwarding-setup" aria-labelledby="forwarding-setup-title">
+      <div className="section-heading">
+        <div>
+          <p className="section-kicker">Optional one-time setup</p>
+          <h2 id="forwarding-setup-title">Send Nemlig purchase mail automatically</h2>
+        </div>
+        <span className={`forwarding-state forwarding-state--${purchaseCount > 0 ? "received" : "waiting"}`}>
+          {purchaseCount > 0 ? "Purchase evidence received" : "Awaiting first purchase email"}
+        </span>
+      </div>
+      <p>
+        Create a mail rule in the inbox that receives your Nemlig emails. Match Nemlig order
+        confirmations and final invoices, then forward only those messages to this private address.
+      </p>
+      <div className="forwarding-address">
+        <code>{address?.address ?? "Preparing your private forwarding address…"}</code>
+        <button type="button" disabled={!address} onClick={onCopy}>Copy address</button>
+      </div>
+      <ol className="forwarding-steps">
+        <li>Open rules or filters in the mailbox where Nemlig sends your receipts.</li>
+        <li>Match Nemlig purchase messages—not all of your mail.</li>
+        <li>Forward them to the exact private address above and save the rule.</li>
+      </ol>
+      <p className="fine-print">
+        This is optional. Camera capture and the food journal keep working if you skip it. FoodLog
+        accepts the message as untrusted evidence and only recognizes authenticated Nemlig purchase
+        mail; unrelated forwarded mail does not become purchase data.
+      </p>
+      <p className="form-message" role="status">{message}</p>
+    </section>
+  );
+}
+
 export default function PurchasesPage() {
   const [purchases, setPurchases] = useState<PurchaseSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
   const [detail, setDetail] = useState<PurchaseDetail>();
   const [message, setMessage] = useState("Loading purchase evidence…");
+  const [forwardingAddress, setForwardingAddress] = useState<InboundMailAddress>();
+  const [forwardingMessage, setForwardingMessage] = useState(
+    "Preparing your stable private forwarding address…",
+  );
+
+  useEffect(() => {
+    let active = true;
+    void getOrCreateInboundMailAddress().then(
+      (value) => {
+        if (!active) return;
+        setForwardingAddress(value);
+        setForwardingMessage(
+          "The address is stable for this account. Copy it into your mailbox rule once.",
+        );
+      },
+      (error: unknown) => {
+        if (active) {
+          setForwardingMessage(
+            error instanceof Error
+              ? error.message
+              : "The private forwarding address is unavailable.",
+          );
+        }
+      },
+    );
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -140,6 +216,16 @@ export default function PurchasesPage() {
     return () => { active = false; };
   }, [selectedId]);
 
+  const copyForwardingAddress = async () => {
+    if (!forwardingAddress) return;
+    try {
+      await navigator.clipboard.writeText(forwardingAddress.address);
+      setForwardingMessage("Private forwarding address copied.");
+    } catch {
+      setForwardingMessage("Clipboard access failed. Select and copy the address manually.");
+    }
+  };
+
   return (
     <main className="data-page">
       <header className="data-page__header">
@@ -153,6 +239,12 @@ export default function PurchasesPage() {
           <Link to="/">Back to journal</Link>
         </div>
       </header>
+      <ForwardingSetup
+        address={forwardingAddress}
+        purchaseCount={purchases.length}
+        message={forwardingMessage}
+        onCopy={() => void copyForwardingAddress()}
+      />
       <div className="purchase-workspace">
         <nav className="purchase-index" aria-label="Purchases">
           {purchases.map((purchase) => (

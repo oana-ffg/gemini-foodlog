@@ -555,6 +555,15 @@ summary { cursor: pointer; font-weight: 700; }
 .stored-data-collection > p { margin: 0; padding: 0 20px 16px; color: #555d57; line-height: 1.5; }
 .stored-data-collection pre { max-height: 520px; margin: 0; padding: 20px; overflow: auto; color: #dce8df; background: #18231d; font: .78rem/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .purchase-workspace { display: grid; grid-template-columns: minmax(240px, .42fr) minmax(0, 1.58fr); align-items: start; gap: 20px; }
+.forwarding-setup { margin-bottom: 24px; padding: 28px; border: 1px solid #d8d2c4; border-radius: 20px; background: #fffdf8; box-shadow: 0 12px 36px rgba(31, 37, 33, .06); }
+.forwarding-setup > p { max-width: 850px; color: #555d57; line-height: 1.6; }
+.forwarding-state { display: inline-flex; align-items: center; padding: 8px 12px; border-radius: 999px; font-size: .78rem; font-weight: 800; }
+.forwarding-state--waiting { color: #76590e; background: #fff0c2; }
+.forwarding-state--received { color: #1f6348; background: #dceee3; }
+.forwarding-address { display: flex; align-items: stretch; gap: 10px; margin: 20px 0; }
+.forwarding-address code { display: flex; align-items: center; min-width: 0; flex: 1; overflow-wrap: anywhere; padding: 14px 16px; border: 1px solid #d8d2c4; border-radius: 12px; color: #25332a; background: #f1eee6; }
+.forwarding-address button { flex: 0 0 auto; }
+.forwarding-steps { display: grid; gap: 8px; margin: 18px 0; padding-left: 24px; color: #3f4842; }
 .purchase-index { display: grid; gap: 8px; padding: 12px; border-radius: 18px; background: #e9e5da; }
 .purchase-index__item { display: grid; justify-items: start; gap: 6px; min-height: 0; padding: 16px; border-radius: 12px; color: #1f2521; background: transparent; text-align: left; }
 .purchase-index__item:hover, .purchase-index__item--selected { background: #fffdf8; box-shadow: 0 5px 18px rgba(31, 37, 33, .08); }
@@ -613,6 +622,7 @@ summary { cursor: pointer; font-weight: 700; }
   .data-page__account { justify-items: start; }
   .data-page__account .session-controls { justify-items: start; }
   .data-overview, .purchase-workspace { grid-template-columns: 1fr; }
+  .forwarding-address { display: grid; }
   .data-overview { padding: 24px; }
   .data-overview dl { grid-template-columns: repeat(2, 1fr); }
   .purchase-detail { padding: 22px; }

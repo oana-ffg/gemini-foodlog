@@ -18,6 +18,14 @@ export interface Account {
   accepted_image_count: number;
 }
 
+export interface InboundMailAddress {
+  id: "current";
+  account_id: string;
+  address: string;
+  status: "active";
+  created_at: string;
+}
+
 export interface ConsentPreferences {
   launch_mail_opt_in: boolean | null;
   launch_mail_policy_version: string | null;
@@ -705,6 +713,12 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function provisionAccount(): Promise<Account> {
   return apiRequest<Account>("/v1/accounts", { method: "POST" });
+}
+
+export function getOrCreateInboundMailAddress(): Promise<InboundMailAddress> {
+  return apiRequest<InboundMailAddress>("/v1/inbound-mail-address", {
+    method: "POST",
+  });
 }
 
 export function listProcessing(limit = 20): Promise<CaptureProcessing[]> {
