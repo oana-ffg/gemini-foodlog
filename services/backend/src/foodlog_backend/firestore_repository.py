@@ -155,6 +155,33 @@ from .repository import (
 )
 
 ENTITLEMENT_MODE_VALUES = frozenset(item.value for item in EntitlementMode)
+PUBLIC_CAPACITY_TRANSACTION_MAX_ATTEMPTS = 10
+PUBLIC_CAPACITY_OUTER_RETRY_ATTEMPTS = 4
+TRANSACTION_COMMIT_FAILURE_PREFIX = "Failed to commit transaction in "
+
+
+def _public_capacity_values(
+    snapshot: DocumentSnapshot,
+    *,
+    configured_limit: int,
+) -> tuple[int, int]:
+    count = snapshot.get("active_account_count") if snapshot.exists else 0
+    stored_limit = snapshot.get("account_limit") if snapshot.exists else configured_limit
+    if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+        raise ValueError("Public account capacity count is invalid")
+    if (
+        not isinstance(stored_limit, int)
+        or isinstance(stored_limit, bool)
+        or stored_limit < 1
+    ):
+        raise ValueError("Public account capacity limit is invalid")
+    return count, min(stored_limit, configured_limit)
+
+
+def _capacity_retry_delay(owner_user_id: str, attempt: int) -> float:
+    jitter_bytes = sha256(f"{owner_user_id}:{attempt}".encode()).digest()[:2]
+    jitter = int.from_bytes(jitter_bytes) / 65535 * 0.05
+    return min(0.025 * (2**attempt), 0.2) + jitter
 
 
 def _document(model: BaseModel, *, exclude: set[str] | None = None) -> dict[str, Any]:
@@ -262,8 +289,6 @@ class FirestoreRepository:
         trial_image_limit = (
             self._trial_image_limit if entitlement_mode == EntitlementMode.TRIAL else None
         )
-        transaction = self._client.transaction()
-
         @firestore.async_transactional
         async def provision(transaction):
             identity_ref = self._identity(owner_user_id)
@@ -283,19 +308,10 @@ class FirestoreRepository:
             limit = self._public_account_limit
             if entitlement_mode == EntitlementMode.TRIAL:
                 capacity = await capacity_ref.get(transaction=transaction)
-                count = capacity.get("active_account_count") if capacity.exists else 0
-                stored_limit = (
-                    capacity.get("account_limit") if capacity.exists else self._public_account_limit
+                count, limit = _public_capacity_values(
+                    capacity,
+                    configured_limit=self._public_account_limit,
                 )
-                if not isinstance(count, int) or isinstance(count, bool) or count < 0:
-                    raise ValueError("Public account capacity count is invalid")
-                if (
-                    not isinstance(stored_limit, int)
-                    or isinstance(stored_limit, bool)
-                    or stored_limit < 1
-                ):
-                    raise ValueError("Public account capacity limit is invalid")
-                limit = min(stored_limit, self._public_account_limit)
                 if count >= limit:
                     raise AccountCapacityReached
 
@@ -366,7 +382,34 @@ class FirestoreRepository:
                 )
             return account
 
-        return await provision(transaction)
+        capacity_ref = self._client.collection("system").document("public_capacity")
+        for attempt in range(PUBLIC_CAPACITY_OUTER_RETRY_ATTEMPTS):
+            try:
+                return await provision(
+                    self._client.transaction(
+                        max_attempts=PUBLIC_CAPACITY_TRANSACTION_MAX_ATTEMPTS
+                    )
+                )
+            except ValueError as exc:
+                if not str(exc).startswith(TRANSACTION_COMMIT_FAILURE_PREFIX):
+                    raise
+
+                identity = await self._identity(owner_user_id).get()
+                if identity.exists:
+                    return await self.account_for_owner(owner_user_id)
+                if entitlement_mode == EntitlementMode.TRIAL:
+                    capacity = await capacity_ref.get()
+                    count, limit = _public_capacity_values(
+                        capacity,
+                        configured_limit=self._public_account_limit,
+                    )
+                    if count >= limit:
+                        raise AccountCapacityReached from None
+                if attempt + 1 == PUBLIC_CAPACITY_OUTER_RETRY_ATTEMPTS:
+                    raise
+                await asyncio.sleep(_capacity_retry_delay(owner_user_id, attempt))
+
+        raise AssertionError("Public capacity retry loop did not return or raise")
 
     async def _claim_account_notification(
         self,
@@ -1187,19 +1230,11 @@ class FirestoreRepository:
                 if stored.firebase_uid != firebase_uid:
                     raise CrossAccountAccess
                 return stored
-            count = capacity.get("active_account_count") if capacity.exists else 0
-            stored_limit = (
-                capacity.get("account_limit") if capacity.exists else self._public_account_limit
+            count, limit = _public_capacity_values(
+                capacity,
+                configured_limit=self._public_account_limit,
             )
-            if not isinstance(count, int) or isinstance(count, bool) or count < 0:
-                raise ValueError("Public account capacity count is invalid")
-            if (
-                not isinstance(stored_limit, int)
-                or isinstance(stored_limit, bool)
-                or stored_limit < 1
-            ):
-                raise ValueError("Public account capacity limit is invalid")
-            if count < min(stored_limit, self._public_account_limit):
+            if count < limit:
                 raise WaitlistUnavailable
             transaction.create(waitlist_ref, _document(entry))
             return entry

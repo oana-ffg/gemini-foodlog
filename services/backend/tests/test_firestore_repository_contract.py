@@ -10,6 +10,8 @@ import pytest
 from google.cloud.firestore_v1.async_client import AsyncClient
 
 from foodlog_backend.errors import (
+    AccountAlreadyProvisioned,
+    AccountCapacityReached,
     AiTraceConflict,
     AiTraceNotFound,
     IdempotencyConflict,
@@ -68,6 +70,77 @@ from foodlog_backend.models import (
     utc_now,
 )
 from tests.inference_fixtures import base_payload
+
+
+@pytest.mark.skipif(
+    "FIRESTORE_EMULATOR_HOST" not in os.environ,
+    reason="requires the Firestore emulator",
+)
+def test_firestore_public_capacity_is_atomic_and_waitlist_is_stable() -> None:
+    async def scenario() -> None:
+        project_id = f"gemini-foodlog-capacity-contract-{uuid4().hex}"
+        client = AsyncClient(project=project_id)
+        repository = FirestoreRepository(
+            project_id=project_id,
+            public_account_limit=4,
+            trial_image_limit=200,
+            client=client,
+        )
+
+        owner_ids = [f"capacity-contract-owner-{index}" for index in range(8)]
+        outcomes = await asyncio.gather(
+            *(repository.provision_account(owner_id) for owner_id in owner_ids),
+            return_exceptions=True,
+        )
+        admitted = [outcome for outcome in outcomes if not isinstance(outcome, Exception)]
+        rejected = [outcome for outcome in outcomes if isinstance(outcome, Exception)]
+
+        assert len(admitted) == 4, repr(rejected)
+        assert len({account.id for account in admitted}) == 4
+        assert len(rejected) == 4
+        assert all(isinstance(error, AccountCapacityReached) for error in rejected), repr(
+            rejected
+        )
+
+        admitted_owner_id = admitted[0].owner_user_id
+        assert await repository.provision_account(admitted_owner_id) == admitted[0]
+
+        rejected_owner_id = next(
+            owner_id
+            for owner_id, outcome in zip(owner_ids, outcomes, strict=True)
+            if isinstance(outcome, AccountCapacityReached)
+        )
+        waitlist = await repository.join_waitlist(
+            firebase_uid=rejected_owner_id,
+            email_normalized=f"{rejected_owner_id}@example.test",
+            policy_version="capacity-waitlist-v1",
+        )
+        assert (
+            await repository.join_waitlist(
+                firebase_uid=rejected_owner_id,
+                email_normalized=f"{rejected_owner_id}@example.test",
+                policy_version="capacity-waitlist-v1",
+            )
+            == waitlist
+        )
+        with pytest.raises(AccountAlreadyProvisioned):
+            await repository.join_waitlist(
+                firebase_uid=admitted_owner_id,
+                email_normalized=f"{admitted_owner_id}@example.test",
+                policy_version="capacity-waitlist-v1",
+            )
+
+        capacity = await client.collection("system").document("public_capacity").get()
+        assert capacity.to_dict() == {
+            "schema_version": 1,
+            "active_account_count": 4,
+            "account_limit": 4,
+            "waitlist_open": True,
+            "updated_at": capacity.get("updated_at"),
+        }
+        client.close()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.skipif(
