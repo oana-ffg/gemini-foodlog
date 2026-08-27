@@ -744,6 +744,16 @@ class BrowserCamera(CameraActivity):
     revoked_at: datetime | None = None
 
 
+class BrowserCameraView(CameraActivity):
+    id: str
+    account_id: str
+    name: str
+    kind: Literal["browser"] = "browser"
+    status: CameraStatus = CameraStatus.ACTIVE
+    created_at: datetime = Field(default_factory=utc_now)
+    revoked_at: datetime | None = None
+
+
 class DeviceCameraCreate(BaseModel):
     name: CameraName
 
@@ -759,6 +769,7 @@ class DeviceCamera(CameraActivity):
 
 
 Camera = Annotated[BrowserCamera | DeviceCamera, Field(discriminator="kind")]
+CameraView = Annotated[BrowserCameraView | DeviceCamera, Field(discriminator="kind")]
 
 
 class DeviceCredentialRecord(BaseModel):

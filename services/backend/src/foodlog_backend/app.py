@@ -63,9 +63,10 @@ from .models import (
     AuditActorKind,
     AuditEvent,
     AuditSource,
-    BrowserCamera,
     BrowserCameraCreate,
+    BrowserCameraView,
     Camera,
+    CameraView,
     CaptureAccepted,
     CaptureEnvelopeV1,
     CaptureInventoryView,
@@ -131,6 +132,14 @@ MAX_IMAGE_DIMENSION = 4_096
 MAX_CAPTURE_FUTURE_SKEW = timedelta(minutes=5)
 DEVICE_TOKEN_PREFIX = "flc_v1_"
 DEVICE_TOKEN_VERSION = 1
+
+
+def camera_view(camera: Camera) -> CameraView:
+    if camera.kind == "device":
+        return camera
+    return BrowserCameraView.model_validate(
+        camera.model_dump(exclude={"client_instance_id_hash"})
+    )
 
 
 def detected_image_type(content: bytes) -> str | None:
@@ -598,33 +607,39 @@ def create_app(
             firebase_uid=identity.uid,
         )
 
-    @app.post("/v1/browser-cameras", response_model=BrowserCamera)
+    @app.post("/v1/browser-cameras", response_model=BrowserCameraView)
     async def create_browser_camera(
         request: BrowserCameraCreate,
         user_id: str = Depends(request_user_id),
-    ) -> BrowserCamera:
-        return await container.repository.create_browser_camera(
+    ) -> BrowserCameraView:
+        camera = await container.repository.create_browser_camera(
             user_id,
             request.name,
             request.client_instance_id,
         )
+        return camera_view(camera)
 
-    @app.get("/v1/cameras", response_model=list[Camera])
+    @app.get("/v1/cameras", response_model=list[CameraView])
     async def list_cameras(
         response: Response,
         user_id: str = Depends(request_user_id),
-    ) -> list[Camera]:
+    ) -> list[CameraView]:
         response.headers["Cache-Control"] = "private, no-store"
-        return await container.repository.list_cameras(user_id)
+        return [
+            camera_view(camera)
+            for camera in await container.repository.list_cameras(user_id)
+        ]
 
-    @app.post("/v1/cameras/{camera_id}/revoke", response_model=Camera)
+    @app.post("/v1/cameras/{camera_id}/revoke", response_model=CameraView)
     async def revoke_camera(
         camera_id: str,
         user_id: str = Depends(request_user_id),
-    ) -> Camera:
-        return await container.repository.revoke_camera(
-            owner_user_id=user_id,
-            camera_id=camera_id,
+    ) -> CameraView:
+        return camera_view(
+            await container.repository.revoke_camera(
+                owner_user_id=user_id,
+                camera_id=camera_id,
+            )
         )
 
     @app.post("/v1/device-cameras", response_model=DeviceCameraCredentialIssue)

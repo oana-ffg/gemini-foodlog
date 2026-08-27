@@ -323,7 +323,29 @@
         "title": "Body_upload_capture_v1_captures_post",
         "type": "object"
       },
-      "BrowserCamera": {
+      "BrowserCameraCreate": {
+        "properties": {
+          "client_instance_id": {
+            "maxLength": 128,
+            "minLength": 16,
+            "title": "Client Instance Id",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "client_instance_id"
+        ],
+        "title": "BrowserCameraCreate",
+        "type": "object"
+      },
+      "BrowserCameraView": {
         "properties": {
           "accepted_capture_count": {
             "default": 0,
@@ -334,18 +356,6 @@
           "account_id": {
             "title": "Account Id",
             "type": "string"
-          },
-          "client_instance_id_hash": {
-            "anyOf": [
-              {
-                "pattern": "^[0-9a-f]{64}$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Client Instance Id Hash"
           },
           "created_at": {
             "format": "date-time",
@@ -400,29 +410,7 @@
           "account_id",
           "name"
         ],
-        "title": "BrowserCamera",
-        "type": "object"
-      },
-      "BrowserCameraCreate": {
-        "properties": {
-          "client_instance_id": {
-            "maxLength": 128,
-            "minLength": 16,
-            "title": "Client Instance Id",
-            "type": "string"
-          },
-          "name": {
-            "maxLength": 80,
-            "minLength": 1,
-            "title": "Name",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "client_instance_id"
-        ],
-        "title": "BrowserCameraCreate",
+        "title": "BrowserCameraView",
         "type": "object"
       },
       "CameraStatus": {
@@ -4551,7 +4539,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BrowserCamera"
+                  "$ref": "#/components/schemas/BrowserCameraView"
                 }
               }
             },
@@ -4600,14 +4588,14 @@
                   "items": {
                     "discriminator": {
                       "mapping": {
-                        "browser": "#/components/schemas/BrowserCamera",
+                        "browser": "#/components/schemas/BrowserCameraView",
                         "device": "#/components/schemas/DeviceCamera"
                       },
                       "propertyName": "kind"
                     },
                     "oneOf": [
                       {
-                        "$ref": "#/components/schemas/BrowserCamera"
+                        "$ref": "#/components/schemas/BrowserCameraView"
                       },
                       {
                         "$ref": "#/components/schemas/DeviceCamera"
@@ -4672,14 +4660,14 @@
                 "schema": {
                   "discriminator": {
                     "mapping": {
-                      "browser": "#/components/schemas/BrowserCamera",
+                      "browser": "#/components/schemas/BrowserCameraView",
                       "device": "#/components/schemas/DeviceCamera"
                     },
                     "propertyName": "kind"
                   },
                   "oneOf": [
                     {
-                      "$ref": "#/components/schemas/BrowserCamera"
+                      "$ref": "#/components/schemas/BrowserCameraView"
                     },
                     {
                       "$ref": "#/components/schemas/DeviceCamera"

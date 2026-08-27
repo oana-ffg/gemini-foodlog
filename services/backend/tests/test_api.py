@@ -495,6 +495,7 @@ def test_owner_can_inventory_safe_capture_metadata_and_raw_meal_feedback() -> No
     assert consent.headers["cache-control"] == "private, no-store"
     assert cameras.headers["cache-control"] == "private, no-store"
     assert context.headers["cache-control"] == "private, no-store"
+    assert all("client_instance_id_hash" not in item for item in cameras.json())
     assert len(captures.json()) == 1
     assert captures.json()[0]["content_sha256"] == sha256(image).hexdigest()
     assert "idempotency_key" not in captures.json()[0]
