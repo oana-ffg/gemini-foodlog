@@ -7,6 +7,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import httpx
+from google.cloud.firestore_v1 import Client as FirestoreClient
 
 SYNTHETIC_MARKER = "Synthetic context-composer smoke:"
 
@@ -72,6 +73,9 @@ def retire_active_synthetic_records(client: httpx.Client) -> None:
 
 
 def smoke(args: argparse.Namespace) -> None:
+    firestore = FirestoreClient(project=args.project)
+    spend_ref = firestore.collection("system").document("model_spend")
+    spend_before = spend_ref.get().to_dict()
     firebase_response = httpx.post(
         "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword",
         params={"key": args.firebase_api_key},
@@ -274,6 +278,9 @@ def smoke(args: argparse.Namespace) -> None:
         assert isinstance(retired_page, dict)
         assert retired_page["page"]["lifecycle"] == "retired"
 
+    spend_after = spend_ref.get().to_dict()
+    assert spend_after == spend_before
+
     print(f"account_id={account['id']}")
     print(f"initial_note_id={initial_id}")
     print(f"replacement_note_id={replacement_id}")
@@ -284,6 +291,7 @@ def smoke(args: argparse.Namespace) -> None:
     print("edit_preserved_retired_original=true")
     print("promotion_preserved_exact_statement=true")
     print("synthetic_context_and_knowledge_retired=true")
+    print("model_spend_ledger_unchanged=true")
     print("model_calls=0")
 
 
@@ -292,6 +300,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--api-url", required=True)
     parser.add_argument("--firebase-api-key", required=True)
     parser.add_argument("--origin", required=True)
+    parser.add_argument("--project", required=True)
     parser.add_argument("--timezone", default="Europe/Copenhagen")
     return parser.parse_args()
 
