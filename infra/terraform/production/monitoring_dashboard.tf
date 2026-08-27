@@ -200,8 +200,8 @@ resource "google_monitoring_dashboard" "production" {
       tiles = concat(
         [
           {
-            x      = 0
-            y      = 0
+            xPos   = 0
+            yPos   = 0
             width  = 12
             height = 4
             widget = {
@@ -221,8 +221,8 @@ resource "google_monitoring_dashboard" "production" {
         ],
         [
           for index, chart in local.dashboard_charts : {
-            x      = (index % 2) * 6
-            y      = 4 + floor(index / 2) * 4
+            xPos   = (index % 2) * 6
+            yPos   = 4 + floor(index / 2) * 4
             width  = 6
             height = 4
             widget = {
