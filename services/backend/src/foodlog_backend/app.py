@@ -99,6 +99,7 @@ from .notifications import (
     NotificationPublisher,
     PubSubNotificationPublisher,
 )
+from .pattern_hypotheses import PatternHypothesisService
 from .purchase_views import (
     PurchaseDetailView,
     PurchaseSummaryView,
@@ -172,6 +173,7 @@ class Container:
     inbound_mail_address_service: InboundMailAddressService
     feedback_learning_service: FeedbackLearningService
     household_teaching_service: HouseholdTeachingService
+    pattern_hypothesis_service: PatternHypothesisService
 
 
 def create_app(
@@ -249,6 +251,7 @@ def create_app(
         ),
         feedback_learning_service=FeedbackLearningService(repository),
         household_teaching_service=HouseholdTeachingService(repository),
+        pattern_hypothesis_service=PatternHypothesisService(repository),
     )
     app = FastAPI(title="Gemini FoodLog API", version="0.1.0")
     app.state.container = container
@@ -940,7 +943,7 @@ def create_app(
         idempotency_key: str = Header(min_length=8, max_length=128),
         user_id: str = Depends(request_user_id),
     ) -> QuestionResponseResult:
-        return await container.repository.respond_to_question(
+        return await container.pattern_hypothesis_service.respond(
             owner_user_id=user_id,
             question_id=question_id,
             request=request,

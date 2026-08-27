@@ -1303,6 +1303,21 @@ class QuestionEvidenceReference(BaseModel):
     id: str = Field(min_length=1, max_length=200)
 
 
+class PatternEvidenceExample(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", str_strip_whitespace=True)
+
+    evidence: QuestionEvidenceReference
+    occurred_at: datetime
+    summary: str = Field(min_length=1, max_length=500)
+
+    @field_validator("occurred_at")
+    @classmethod
+    def occurrence_has_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("pattern evidence timestamps must include a UTC offset")
+        return value
+
+
 class ClarificationQuestion(BaseModel):
     id: str
     account_id: str
@@ -1314,6 +1329,21 @@ class ClarificationQuestion(BaseModel):
     evidence: list[QuestionEvidenceReference] = Field(default_factory=list, max_length=20)
     choices: list[str] = Field(default_factory=list, max_length=8)
     tentative_claim: str | None = Field(default=None, min_length=1, max_length=2_000)
+    pattern_claim: KnowledgeClaim | None = None
+    pattern_observation_started_at: datetime | None = None
+    pattern_observation_ended_at: datetime | None = None
+    pattern_supporting_examples: list[PatternEvidenceExample] = Field(
+        default_factory=list,
+        max_length=20,
+    )
+    pattern_counterexamples: list[PatternEvidenceExample] = Field(
+        default_factory=list,
+        max_length=20,
+    )
+    pattern_prompt_version: str | None = Field(default=None, min_length=1, max_length=120)
+    pattern_evidence_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    pattern_topic_key: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    predecessor_question_id: str | None = Field(default=None, min_length=1, max_length=200)
     source_revision_number: int | None = Field(default=None, ge=1)
     status: QuestionStatus = QuestionStatus.OPEN
     answer: str | None = None
@@ -1359,6 +1389,43 @@ class ClarificationQuestion(BaseModel):
             raise ValueError("pattern questions require a tentative claim")
         elif not self.evidence:
             raise ValueError("pattern questions require supporting evidence")
+        rich_pattern_fields = (
+            self.pattern_claim,
+            self.pattern_observation_started_at,
+            self.pattern_observation_ended_at,
+            self.pattern_prompt_version,
+            self.pattern_evidence_hash,
+            self.pattern_topic_key,
+        )
+        if any(value is not None for value in rich_pattern_fields):
+            if self.kind != QuestionKind.PATTERN_HYPOTHESIS:
+                raise ValueError("event questions cannot contain pattern hypothesis metadata")
+            if any(value is None for value in rich_pattern_fields):
+                raise ValueError("rich pattern hypotheses require complete metadata")
+            assert self.pattern_observation_started_at is not None
+            assert self.pattern_observation_ended_at is not None
+            for value in (
+                self.pattern_observation_started_at,
+                self.pattern_observation_ended_at,
+            ):
+                if value.tzinfo is None or value.utcoffset() is None:
+                    raise ValueError("pattern observation timestamps must include a UTC offset")
+            if self.pattern_observation_ended_at < self.pattern_observation_started_at:
+                raise ValueError("pattern observation window must be ordered")
+            if len(self.pattern_supporting_examples) < 2:
+                raise ValueError("rich pattern hypotheses require at least two examples")
+            example_identities = [
+                (example.evidence.kind, example.evidence.id)
+                for example in (
+                    *self.pattern_supporting_examples,
+                    *self.pattern_counterexamples,
+                )
+            ]
+            if len(example_identities) != len(set(example_identities)):
+                raise ValueError("pattern evidence examples must be unique")
+            evidence_identities = {(item.kind, item.id) for item in self.evidence}
+            if set(example_identities) != evidence_identities:
+                raise ValueError("pattern examples must exactly match question evidence")
         if self.status == QuestionStatus.OPEN and (
             self.response_kind is not None
             or self.response_id is not None
@@ -1424,6 +1491,7 @@ class QuestionResponseResult(BaseModel):
     response: QuestionResponse
     feedback: MealFeedback | None = None
     revision: MealRevision | None = None
+    knowledge: KnowledgeRevisionResult | None = None
 
 
 class QuestionAnswerRequest(BaseModel):

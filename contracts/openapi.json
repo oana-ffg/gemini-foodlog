@@ -477,6 +477,106 @@
             ],
             "title": "Meal Id"
           },
+          "pattern_claim": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeClaim"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pattern_counterexamples": {
+            "items": {
+              "$ref": "#/components/schemas/PatternEvidenceExample"
+            },
+            "maxItems": 20,
+            "title": "Pattern Counterexamples",
+            "type": "array"
+          },
+          "pattern_evidence_hash": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pattern Evidence Hash"
+          },
+          "pattern_observation_ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pattern Observation Ended At"
+          },
+          "pattern_observation_started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pattern Observation Started At"
+          },
+          "pattern_prompt_version": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pattern Prompt Version"
+          },
+          "pattern_supporting_examples": {
+            "items": {
+              "$ref": "#/components/schemas/PatternEvidenceExample"
+            },
+            "maxItems": 20,
+            "title": "Pattern Supporting Examples",
+            "type": "array"
+          },
+          "pattern_topic_key": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pattern Topic Key"
+          },
+          "predecessor_question_id": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predecessor Question Id"
+          },
           "prompt": {
             "maxLength": 500,
             "minLength": 1,
@@ -2246,6 +2346,32 @@
         "title": "MealStatus",
         "type": "string"
       },
+      "PatternEvidenceExample": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "$ref": "#/components/schemas/QuestionEvidenceReference"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "summary": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence",
+          "occurred_at",
+          "summary"
+        ],
+        "title": "PatternEvidenceExample",
+        "type": "object"
+      },
       "PreparationMethodCorrection": {
         "properties": {
           "component_index": {
@@ -3034,6 +3160,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/MealFeedback"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "knowledge": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeRevisionResult"
               },
               {
                 "type": "null"

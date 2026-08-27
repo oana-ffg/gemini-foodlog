@@ -84,6 +84,7 @@ from .models import (
     IngredientCorrection,
     JobKind,
     JobStatus,
+    KnowledgeClaim,
     KnowledgeEvidenceKind,
     KnowledgeLifecycle,
     KnowledgePage,
@@ -105,6 +106,7 @@ from .models import (
     ModelUsageRecord,
     NotificationOutboxStatus,
     ParsedPurchaseDocument,
+    PatternEvidenceExample,
     PreparationMethodCorrection,
     Purchase,
     PurchaseCharge,
@@ -143,6 +145,8 @@ from .purchase_normalization import (
     reconcile_purchase_items,
 )
 
+PATTERN_RESURFACE_MINIMUM_NEW_SUPPORT = 2
+
 
 def event_question_id(meal_id: str, revision_number: int) -> str:
     identity = f"event-question-v1:{meal_id}:{revision_number}"
@@ -152,6 +156,51 @@ def event_question_id(meal_id: str, revision_number: int) -> str:
 def pattern_question_id(account_id: str, tentative_claim: str) -> str:
     normalized = " ".join(tentative_claim.casefold().split())
     return sha256(f"pattern-question-v1:{account_id}:{normalized}".encode()).hexdigest()
+
+
+def pattern_topic_key(claim: KnowledgeClaim) -> str:
+    canonical = claim.model_dump_json()
+    return sha256(f"pattern-topic-v1:{canonical}".encode()).hexdigest()
+
+
+def pattern_evidence_hash(
+    *,
+    observation_started_at: datetime,
+    observation_ended_at: datetime,
+    supporting_examples: list[PatternEvidenceExample],
+    counterexamples: list[PatternEvidenceExample],
+) -> str:
+    payload = {
+        "observation_started_at": observation_started_at.isoformat(),
+        "observation_ended_at": observation_ended_at.isoformat(),
+        "supporting_examples": [
+            item.model_dump(mode="json")
+            for item in sorted(
+                supporting_examples,
+                key=lambda item: (item.evidence.kind, item.evidence.id),
+            )
+        ],
+        "counterexamples": [
+            item.model_dump(mode="json")
+            for item in sorted(
+                counterexamples,
+                key=lambda item: (item.evidence.kind, item.evidence.id),
+            )
+        ],
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return sha256(f"pattern-evidence-v1:{canonical}".encode()).hexdigest()
+
+
+def rich_pattern_question_id(
+    *,
+    account_id: str,
+    topic_key: str,
+    evidence_hash: str,
+) -> str:
+    return sha256(
+        f"pattern-question-v2:{account_id}:{topic_key}:{evidence_hash}".encode()
+    ).hexdigest()
 
 
 def user_context_note_request_hash(request: UserContextNoteCreate) -> str:
@@ -787,6 +836,12 @@ class Repository(Protocol):
         tentative_claim: str,
         evidence: list[QuestionEvidenceReference],
         supersedes_question_id: str | None = None,
+        pattern_claim: KnowledgeClaim | None = None,
+        observation_started_at: datetime | None = None,
+        observation_ended_at: datetime | None = None,
+        supporting_examples: list[PatternEvidenceExample] | None = None,
+        counterexamples: list[PatternEvidenceExample] | None = None,
+        prompt_version: str | None = None,
     ) -> ClarificationQuestion: ...
 
     async def list_meals(self, owner_user_id: str) -> list[MealEntry]: ...
@@ -1000,6 +1055,7 @@ class InMemoryRepository:
         self._revision_by_feedback: dict[str, MealRevision] = {}
         self._questions: dict[str, ClarificationQuestion] = {}
         self._question_by_meal: dict[str, str] = {}
+        self._latest_pattern_question_by_topic: dict[tuple[str, str], str] = {}
         self._question_responses: dict[str, QuestionResponse] = {}
         self._question_response_by_idempotency: dict[tuple[str, str], str] = {}
         self._user_context_notes: dict[str, UserContextNote] = {}
@@ -2684,16 +2740,85 @@ class InMemoryRepository:
         tentative_claim: str,
         evidence: list[QuestionEvidenceReference],
         supersedes_question_id: str | None = None,
+        pattern_claim: KnowledgeClaim | None = None,
+        observation_started_at: datetime | None = None,
+        observation_ended_at: datetime | None = None,
+        supporting_examples: list[PatternEvidenceExample] | None = None,
+        counterexamples: list[PatternEvidenceExample] | None = None,
+        prompt_version: str | None = None,
     ) -> ClarificationQuestion:
         async with self._lock:
             if account_id not in self._accounts:
                 raise AccountNotProvisioned
-            question_id = pattern_question_id(account_id, tentative_claim)
+            rich_values = (
+                pattern_claim,
+                observation_started_at,
+                observation_ended_at,
+                supporting_examples,
+                counterexamples,
+                prompt_version,
+            )
+            rich = any(value is not None for value in rich_values)
+            if rich and any(value is None for value in rich_values):
+                raise ValueError("rich pattern proposals require complete metadata")
+            if rich:
+                assert pattern_claim is not None
+                assert observation_started_at is not None
+                assert observation_ended_at is not None
+                assert supporting_examples is not None
+                assert counterexamples is not None
+                assert prompt_version is not None
+                topic_key = pattern_topic_key(pattern_claim)
+                evidence_hash = pattern_evidence_hash(
+                    observation_started_at=observation_started_at,
+                    observation_ended_at=observation_ended_at,
+                    supporting_examples=supporting_examples,
+                    counterexamples=counterexamples,
+                )
+                question_id = rich_pattern_question_id(
+                    account_id=account_id,
+                    topic_key=topic_key,
+                    evidence_hash=evidence_hash,
+                )
+            else:
+                topic_key = None
+                evidence_hash = None
+                question_id = pattern_question_id(account_id, tentative_claim)
             existing = self._questions.get(question_id)
             if existing is not None:
                 if existing.account_id != account_id:
                     raise QuestionNotFound
                 return existing.model_copy(deep=True)
+            predecessor = None
+            if topic_key is not None:
+                predecessor_id = self._latest_pattern_question_by_topic.get(
+                    (account_id, topic_key)
+                )
+                predecessor = (
+                    self._questions.get(predecessor_id)
+                    if predecessor_id is not None
+                    else None
+                )
+                if predecessor is not None:
+                    if predecessor.status == QuestionStatus.OPEN:
+                        return predecessor.model_copy(deep=True)
+                    if predecessor.response_kind != QuestionResponseKind.REJECT:
+                        return predecessor.model_copy(deep=True)
+                    prior_support_ids = {
+                        item.evidence.id
+                        for item in predecessor.pattern_supporting_examples
+                    }
+                    new_support_ids = {
+                        item.evidence.id for item in supporting_examples or []
+                    }
+                    if (
+                        len(new_support_ids - prior_support_ids)
+                        < PATTERN_RESURFACE_MINIMUM_NEW_SUPPORT
+                        or predecessor.pattern_observation_ended_at is None
+                        or observation_ended_at is None
+                        or observation_ended_at <= predecessor.pattern_observation_ended_at
+                    ):
+                        return predecessor.model_copy(deep=True)
             superseded = None
             if supersedes_question_id is not None:
                 superseded = self._questions.get(supersedes_question_id)
@@ -2714,6 +2839,15 @@ class InMemoryRepository:
                 reason=reason,
                 evidence=evidence,
                 tentative_claim=tentative_claim,
+                pattern_claim=pattern_claim,
+                pattern_observation_started_at=observation_started_at,
+                pattern_observation_ended_at=observation_ended_at,
+                pattern_supporting_examples=supporting_examples or [],
+                pattern_counterexamples=counterexamples or [],
+                pattern_prompt_version=prompt_version,
+                pattern_evidence_hash=evidence_hash,
+                pattern_topic_key=topic_key,
+                predecessor_question_id=(predecessor.id if predecessor is not None else None),
                 created_at=now,
             )
             if superseded is not None:
@@ -2721,6 +2855,8 @@ class InMemoryRepository:
                 superseded.superseded_by_question_id = question.id
                 superseded.superseded_at = now
             self._questions[question.id] = question
+            if topic_key is not None:
+                self._latest_pattern_question_by_topic[(account_id, topic_key)] = question.id
             return question.model_copy(deep=True)
 
     async def list_meals(self, owner_user_id: str) -> list[MealEntry]:

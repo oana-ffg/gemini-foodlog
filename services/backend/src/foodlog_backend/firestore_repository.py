@@ -80,6 +80,7 @@ from .models import (
     InboundMailRoute,
     JobKind,
     JobStatus,
+    KnowledgeClaim,
     KnowledgeLifecycle,
     KnowledgePage,
     KnowledgeRevision,
@@ -98,6 +99,7 @@ from .models import (
     ModelUsageRecord,
     NotificationOutboxStatus,
     ParsedPurchaseDocument,
+    PatternEvidenceExample,
     Purchase,
     PurchaseCharge,
     PurchaseDocument,
@@ -135,6 +137,7 @@ from .purchase_normalization import (
     reconcile_purchase_items,
 )
 from .repository import (
+    PATTERN_RESURFACE_MINIMUM_NEW_SUPPORT,
     event_question_from_hypothesis,
     event_question_id,
     inference_from_meal,
@@ -143,9 +146,12 @@ from .repository import (
     materialize_activity_hypothesis,
     materialize_knowledge_page,
     normalize_knowledge_topic,
+    pattern_evidence_hash,
     pattern_question_id,
+    pattern_topic_key,
     purchase_identity_aliases,
     revised_inference,
+    rich_pattern_question_id,
     user_context_note_id,
     user_context_note_request_hash,
     validate_capture_scope,
@@ -2845,17 +2851,70 @@ class FirestoreRepository:
         tentative_claim: str,
         evidence: list[QuestionEvidenceReference],
         supersedes_question_id: str | None = None,
+        pattern_claim: KnowledgeClaim | None = None,
+        observation_started_at: datetime | None = None,
+        observation_ended_at: datetime | None = None,
+        supporting_examples: list[PatternEvidenceExample] | None = None,
+        counterexamples: list[PatternEvidenceExample] | None = None,
+        prompt_version: str | None = None,
     ) -> ClarificationQuestion:
+        rich_values = (
+            pattern_claim,
+            observation_started_at,
+            observation_ended_at,
+            supporting_examples,
+            counterexamples,
+            prompt_version,
+        )
+        rich = any(value is not None for value in rich_values)
+        if rich and any(value is None for value in rich_values):
+            raise ValueError("rich pattern proposals require complete metadata")
+        if rich:
+            assert pattern_claim is not None
+            assert observation_started_at is not None
+            assert observation_ended_at is not None
+            assert supporting_examples is not None
+            assert counterexamples is not None
+            assert prompt_version is not None
+            topic_key = pattern_topic_key(pattern_claim)
+            evidence_hash = pattern_evidence_hash(
+                observation_started_at=observation_started_at,
+                observation_ended_at=observation_ended_at,
+                supporting_examples=supporting_examples,
+                counterexamples=counterexamples,
+            )
+            question_id = rich_pattern_question_id(
+                account_id=account_id,
+                topic_key=topic_key,
+                evidence_hash=evidence_hash,
+            )
+        else:
+            topic_key = None
+            evidence_hash = None
+            question_id = pattern_question_id(account_id, tentative_claim)
         question = ClarificationQuestion(
-            id=pattern_question_id(account_id, tentative_claim),
+            id=question_id,
             account_id=account_id,
             kind=QuestionKind.PATTERN_HYPOTHESIS,
             prompt=prompt,
             reason=reason,
             evidence=evidence,
             tentative_claim=tentative_claim,
+            pattern_claim=pattern_claim,
+            pattern_observation_started_at=observation_started_at,
+            pattern_observation_ended_at=observation_ended_at,
+            pattern_supporting_examples=supporting_examples or [],
+            pattern_counterexamples=counterexamples or [],
+            pattern_prompt_version=prompt_version,
+            pattern_evidence_hash=evidence_hash,
+            pattern_topic_key=topic_key,
         )
         question_ref = self._collection(account_id, "questions").document(question.id)
+        topic_ref = (
+            self._collection(account_id, "pattern_hypothesis_topics").document(topic_key)
+            if topic_key is not None
+            else None
+        )
         superseded_ref = (
             self._collection(account_id, "questions").document(supersedes_question_id)
             if supersedes_question_id is not None
@@ -2868,6 +2927,17 @@ class FirestoreRepository:
         async def open_pattern(transaction):
             account_snapshot = await account_ref.get(transaction=transaction)
             existing_snapshot = await question_ref.get(transaction=transaction)
+            topic_snapshot = (
+                await topic_ref.get(transaction=transaction) if topic_ref is not None else None
+            )
+            predecessor_ref = None
+            predecessor_snapshot = None
+            if topic_snapshot is not None and topic_snapshot.exists:
+                predecessor_id = topic_snapshot.get("latest_question_id")
+                predecessor_ref = self._collection(account_id, "questions").document(
+                    predecessor_id
+                )
+                predecessor_snapshot = await predecessor_ref.get(transaction=transaction)
             superseded_snapshot = (
                 await superseded_ref.get(transaction=transaction)
                 if superseded_ref is not None
@@ -2884,6 +2954,31 @@ class FirestoreRepository:
                 if existing.account_id != account_id:
                     raise QuestionNotFound
                 return existing
+            predecessor = None
+            if predecessor_snapshot is not None:
+                if not predecessor_snapshot.exists:
+                    raise QuestionNotFound
+                predecessor = _model(predecessor_snapshot, ClarificationQuestion)
+                if predecessor.account_id != account_id:
+                    raise QuestionNotFound
+                if predecessor.status == QuestionStatus.OPEN:
+                    return predecessor
+                if predecessor.response_kind != QuestionResponseKind.REJECT:
+                    return predecessor
+                prior_support_ids = {
+                    item.evidence.id for item in predecessor.pattern_supporting_examples
+                }
+                new_support_ids = {
+                    item.evidence.id for item in supporting_examples or []
+                }
+                if (
+                    len(new_support_ids - prior_support_ids)
+                    < PATTERN_RESURFACE_MINIMUM_NEW_SUPPORT
+                    or predecessor.pattern_observation_ended_at is None
+                    or observation_ended_at is None
+                    or observation_ended_at <= predecessor.pattern_observation_ended_at
+                ):
+                    return predecessor
             superseded = None
             if superseded_snapshot is not None:
                 if not superseded_snapshot.exists:
@@ -2896,18 +2991,34 @@ class FirestoreRepository:
                     raise QuestionNotFound
                 if superseded.status != QuestionStatus.OPEN:
                     raise QuestionSuperseded
-            transaction.create(question_ref, _document(question))
+            created_question = (
+                question.model_copy(update={"predecessor_question_id": predecessor.id})
+                if predecessor is not None
+                else question
+            )
+            transaction.create(question_ref, _document(created_question))
             if superseded is not None:
                 transaction.update(
                     superseded_ref,
                     {
                         "status": QuestionStatus.SUPERSEDED,
-                        "superseded_by_question_id": question.id,
-                        "superseded_at": question.created_at,
-                        "updated_at": question.created_at,
+                        "superseded_by_question_id": created_question.id,
+                        "superseded_at": created_question.created_at,
+                        "updated_at": created_question.created_at,
                     },
                 )
-            return question
+            if topic_ref is not None:
+                transaction.set(
+                    topic_ref,
+                    {
+                        "schema_version": 1,
+                        "account_id": account_id,
+                        "topic_key": topic_key,
+                        "latest_question_id": created_question.id,
+                        "updated_at": created_question.created_at,
+                    },
+                )
+            return created_question
 
         return await open_pattern(transaction)
 

@@ -536,6 +536,15 @@ There are two valid agent-initiated interactions:
 - **Focused event questions** appear only on the relevant journal event and distinguish between concrete hypotheses already supported by evidence. They do not ask the user to identify the meal from scratch.
 - **Longitudinal pattern hypotheses** appear in the AI observations feed after enough history exists. Examples include "I'm noticing you usually eat steak on Thursdays; is that accurate?" and "Weekday breakfasts look like cereal, while weekends are usually pancakes or pastries; is that accurate?" Each hypothesis cites its supporting time window and examples and lets the user confirm, correct, or reject it.
 
+Each persisted pattern hypothesis contains the exact display claim, a normalized structured claim,
+the observation window, dated supporting examples, dated counterexamples, the prompt version, and
+a deterministic evidence hash. Identical evidence cannot create a second question. A rejected claim
+stays suppressed until its observation window advances and at least two previously unseen supporting
+records exist; the later proposal links the rejected predecessor. Confirming a rich hypothesis creates
+strong confirmed household knowledge with the exact question response as provenance. A natural-language
+correction is preserved verbatim and confirmed without manufacturing a structured claim from wording the
+user did not supply. Rejection creates no household knowledge.
+
 The observations feed is not a clarification inbox and does not contain generic event-labeling forms. A question such as "What meal or ingredient was being prepared?" appearing there is an explicit product failure. Uncertainty alone does not require a question; harmless uncertainty remains visible in the event rationale.
 
 ### 9.5 Proactive knowledge updates
@@ -761,6 +770,7 @@ The exact document paths and indexes will be designed before implementation, but
 - meal components, ingredients, preparation methods, and component-scoped evidence and corrections
 - meal evidence and alternatives
 - `questions` and answers
+- `pattern_hypothesis_topics`, which point to the latest bounded hypothesis per structured claim
 - raw feedback records
 - `knowledge_pages`
 - `knowledge_page_revisions`
