@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from dataclasses import replace
 
@@ -44,16 +45,21 @@ def invocation_spec(invocation_key: str = "accounted-call-0001") -> ModelInvocat
 def test_integer_model_cost_and_reservation_are_conservative() -> None:
     spec = invocation_spec()
 
-    assert model_cost_usd_nanos(
-        model=spec.model,
-        prompt_tokens=100,
-        response_tokens=10,
-        thinking_tokens=5,
-    ) == 144_375
+    assert (
+        model_cost_usd_nanos(
+            model=spec.model,
+            prompt_tokens=100,
+            response_tokens=10,
+            thinking_tokens=5,
+        )
+        == 144_375
+    )
     assert conservative_reservation_dkk_micros(spec) == 9_900
 
 
-def test_accounted_invocation_reserves_before_call_and_reconciles_once() -> None:
+def test_accounted_invocation_reserves_before_call_and_reconciles_once(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
     async def scenario() -> None:
         repository = InMemoryRepository(
             public_account_limit=25,
@@ -102,6 +108,19 @@ def test_accounted_invocation_reserves_before_call_and_reconciles_once() -> None
         assert len(repository._model_usage) == 1
 
     asyncio.run(scenario())
+    [telemetry] = [
+        json.loads(line)
+        for line in capfd.readouterr().out.splitlines()
+        if '"event":"model_usage_recorded"' in line
+    ]
+    assert telemetry["service"] == "model_accounting"
+    assert telemetry["model"] == "gemini-3.6-flash"
+    assert telemetry["purpose"] == "event_inference"
+    assert telemetry["workload"] == "production"
+    assert telemetry["outcome"] == "succeeded"
+    assert telemetry["retry_attempt"] == 0
+    assert telemetry["total_tokens"] == 115
+    assert telemetry["actual_dkk_micros"] == 1_155
 
 
 def test_limit_rejection_and_failed_call_never_hide_or_repeat_spend_state() -> None:
@@ -181,13 +200,17 @@ def test_firestore_reservation_and_usage_reconcile_atomically() -> None:
         project_id = "gemini-foodlog-model-accounting-test"
         client = AsyncClient(project=project_id)
         account_id = "model-accounting-account"
-        await client.collection("accounts").document(account_id).set(
-            {
-                "schema_version": 1,
-                "id": account_id,
-                "owner_user_id": "model-accounting-owner",
-                "status": "active",
-            }
+        await (
+            client.collection("accounts")
+            .document(account_id)
+            .set(
+                {
+                    "schema_version": 1,
+                    "id": account_id,
+                    "owner_user_id": "model-accounting-owner",
+                    "status": "active",
+                }
+            )
         )
         repository = FirestoreRepository(
             project_id=project_id,

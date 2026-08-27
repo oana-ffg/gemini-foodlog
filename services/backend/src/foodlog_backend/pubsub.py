@@ -19,6 +19,7 @@ class PubSubPushEnvelope(BaseModel):
 
     message: PubSubMessage
     subscription: str
+    delivery_attempt: int = Field(default=1, alias="deliveryAttempt", ge=1)
 
 
 def decode_event[EventT: BaseModel](

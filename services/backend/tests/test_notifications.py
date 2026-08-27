@@ -4,6 +4,7 @@ from base64 import b64encode
 from urllib.parse import parse_qs
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from foodlog_backend.models import NotificationOutboxStatus
@@ -42,7 +43,9 @@ def provision_published_account(
     return account.id, publisher.events[0].event_id
 
 
-def test_account_provisioning_creates_and_publishes_one_durable_outbox_event() -> None:
+def test_account_provisioning_creates_and_publishes_one_durable_outbox_event(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
     repository = build_repository()
     publisher = InMemoryNotificationPublisher()
     service = AccountProvisioningService(repository=repository, publisher=publisher)
@@ -64,6 +67,15 @@ def test_account_provisioning_creates_and_publishes_one_durable_outbox_event() -
     assert event.status == NotificationOutboxStatus.PUBLISHED
     assert event.publish_attempt_count == 1
     assert event.provider_message_id == "memory-message-1"
+    [capacity_event] = [
+        json.loads(line)
+        for line in capfd.readouterr().out.splitlines()
+        if '"event":"account_capacity_observed"' in line
+    ]
+    assert capacity_event["service"] == "api"
+    assert capacity_event["account_capacity_count"] == 1
+    assert capacity_event["account_capacity_limit"] == 25
+    assert capacity_event["outcome"] == "account_created"
 
 
 def test_pubsub_outage_never_rolls_back_signup_and_retry_recovers() -> None:

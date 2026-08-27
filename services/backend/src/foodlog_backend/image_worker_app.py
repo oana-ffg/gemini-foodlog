@@ -83,6 +83,8 @@ def create_image_worker_app(
                 account_id=event.account_id,
                 capture_id=event.capture_id,
                 message_id=envelope.message.message_id,
+                service="image_worker",
+                delivery_attempt=envelope.delivery_attempt,
                 error_kind=safe_error_kind(error),
             )
             raise HTTPException(status_code=503, detail="capture_grouping_failed") from error
@@ -92,6 +94,8 @@ def create_image_worker_app(
             account_id=event.account_id,
             capture_id=event.capture_id,
             message_id=envelope.message.message_id,
+            service="image_worker",
+            delivery_attempt=envelope.delivery_attempt,
             outcome="acknowledged",
         )
         return Response(status_code=status.HTTP_204_NO_CONTENT)

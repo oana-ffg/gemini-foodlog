@@ -82,6 +82,8 @@ def create_notification_app(
                 "notification_delivery_failed",
                 notification_id=event.event_id,
                 message_id=envelope.message.message_id,
+                service="notification_worker",
+                delivery_attempt=envelope.delivery_attempt,
                 error_kind=safe_error_kind(error),
             )
             raise HTTPException(status_code=503, detail="notification_delivery_failed") from error
@@ -90,6 +92,8 @@ def create_notification_app(
             "notification_delivery_completed",
             notification_id=event.event_id,
             message_id=envelope.message.message_id,
+            service="notification_worker",
+            delivery_attempt=envelope.delivery_attempt,
             outcome="delivered_or_duplicate",
         )
         return Response(status_code=status.HTTP_204_NO_CONTENT)

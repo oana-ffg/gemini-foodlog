@@ -17,6 +17,7 @@ from .models import (
     EntitlementMode,
     utc_now,
 )
+from .operational_logging import emit_operational_event
 from .pubsub import PubSubJsonPublisher
 from .repository import Repository
 
@@ -74,9 +75,11 @@ class AccountProvisioningService:
         *,
         repository: Repository,
         publisher: NotificationPublisher,
+        public_account_limit: int = 25,
     ) -> None:
         self._repository = repository
         self._publisher = publisher
+        self._public_account_limit = public_account_limit
 
     async def provision_account(self, owner_user_id: str) -> Account:
         account = await self._repository.provision_account(owner_user_id)
@@ -99,6 +102,16 @@ class AccountProvisioningService:
             )
             if event is None:
                 return account
+            if event.publish_attempt_count == 1 and event.public_slot_number is not None:
+                emit_operational_event(
+                    "INFO",
+                    "account_capacity_observed",
+                    service="api",
+                    account_id=account.id,
+                    account_capacity_count=event.public_slot_number,
+                    account_capacity_limit=self._public_account_limit,
+                    outcome="account_created",
+                )
             provider_message_id = await self._publisher.publish(
                 AccountCreatedEventV1(event_id=event.id)
             )

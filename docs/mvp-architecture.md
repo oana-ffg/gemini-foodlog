@@ -833,6 +833,12 @@ without downloading private trace bodies by filtering Cloud Logging on
 trace, event, or worker evidence ID. Full application-visible traces remain in the
 private trace bucket and are not duplicated into these logs.
 
+The bounded application metric descriptors and the native Cloud Storage, Pub/Sub,
+and Cloud Run signals used alongside them are defined in the
+[operational telemetry map](observability.md). Account, capture, event, request, and
+message identifiers remain available only as log correlation fields and never
+become metric labels.
+
 Compression is deterministic, object creation is immutable, and the Firestore index
 stores the compressed object SHA-256. Reads verify the hash, gzip/JSON structure,
 schema version, account, and trace identity before returning any content. The common

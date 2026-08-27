@@ -162,6 +162,8 @@ def create_inference_worker_app(
                 job_id=job_id,
                 subject_revision=job.subject_revision,
                 message_id=envelope.message.message_id,
+                service="inference_worker",
+                delivery_attempt=envelope.delivery_attempt,
                 error_kind=safe_error_kind(error),
             )
             raise HTTPException(status_code=503, detail="event_inference_failed") from error
@@ -177,6 +179,8 @@ def create_inference_worker_app(
             job_id=job_id,
             subject_revision=job.subject_revision,
             message_id=envelope.message.message_id,
+            service="inference_worker",
+            delivery_attempt=envelope.delivery_attempt,
             outcome="published",
         )
         return Response(status_code=status.HTTP_204_NO_CONTENT)

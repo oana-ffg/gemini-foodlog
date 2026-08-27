@@ -47,8 +47,13 @@ def stored_capture(
     return asyncio.run(prepare())
 
 
-def push_envelope(payload: dict, *, message_id: str = "image-message-1") -> dict:
-    return {
+def push_envelope(
+    payload: dict,
+    *,
+    message_id: str = "image-message-1",
+    delivery_attempt: int | None = None,
+) -> dict:
+    envelope = {
         "message": {
             "data": b64encode(
                 json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -57,6 +62,9 @@ def push_envelope(payload: dict, *, message_id: str = "image-message-1") -> dict
         },
         "subscription": "projects/test/subscriptions/foodlog-image-consumer",
     }
+    if delivery_attempt is not None:
+        envelope["deliveryAttempt"] = delivery_attempt
+    return envelope
 
 
 def worker_settings() -> ImageWorkerSettings:
@@ -127,6 +135,43 @@ def test_image_worker_groups_once_and_acknowledges_duplicate_delivery() -> None:
     assert repository._jobs[(account_id, capture_grouping_job_id(capture_id))].status == (
         JobStatus.COMPLETED
     )
+
+
+def test_capture_and_redelivery_emit_metric_source_fields(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    repository, publisher, account_id, capture_id = stored_capture()
+    capture_logs = [json.loads(line) for line in capfd.readouterr().out.splitlines()]
+    [storage_event] = [
+        item for item in capture_logs if item.get("event") == "capture_storage_completed"
+    ]
+    assert storage_event == {
+        "accepted_image_count": 1,
+        "account_id": account_id,
+        "capture_id": capture_id,
+        "event": "capture_storage_completed",
+        "outcome": "stored",
+        "schema": "foodlog_operational_event_v1",
+        "service": "api",
+        "severity": "INFO",
+        "trial_image_limit": 200,
+    }
+
+    app = create_image_worker_app(worker_settings(), repository=repository)
+    envelope = push_envelope(
+        publisher.events[0].model_dump(mode="json"),
+        delivery_attempt=3,
+    )
+    with TestClient(app) as client:
+        assert client.post("/internal/pubsub/capture-stored", json=envelope).status_code == 204
+
+    worker_logs = [json.loads(line) for line in capfd.readouterr().out.splitlines()]
+    [completion] = [
+        item for item in worker_logs if item.get("event") == "capture_grouping_completed"
+    ]
+    assert completion["service"] == "image_worker"
+    assert completion["delivery_attempt"] == 3
+    assert completion["outcome"] == "acknowledged"
 
 
 def test_image_worker_rejects_bad_events_and_retries_processing_failures(

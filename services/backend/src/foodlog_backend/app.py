@@ -138,9 +138,7 @@ DEVICE_TOKEN_VERSION = 1
 def camera_view(camera: Camera) -> CameraView:
     if camera.kind == "device":
         return camera
-    return BrowserCameraView.model_validate(
-        camera.model_dump(exclude={"client_instance_id_hash"})
-    )
+    return BrowserCameraView.model_validate(camera.model_dump(exclude={"client_instance_id_hash"}))
 
 
 def detected_image_type(content: bytes) -> str | None:
@@ -224,9 +222,7 @@ def create_app(
             public_account_limit=active_settings.public_account_limit,
             trial_image_limit=active_settings.trial_image_limit,
             unlimited_owner_user_ids=active_settings.unlimited_owner_user_ids,
-            model_spend_limit_dkk_micros=(
-                active_settings.model_spend_limit_dkk_micros
-            ),
+            model_spend_limit_dkk_micros=(active_settings.model_spend_limit_dkk_micros),
         )
         object_store: ObjectStore = GCSObjectStore(
             project_id=active_settings.gcp_project_id,
@@ -237,9 +233,7 @@ def create_app(
             public_account_limit=active_settings.public_account_limit,
             trial_image_limit=active_settings.trial_image_limit,
             unlimited_owner_user_ids=active_settings.unlimited_owner_user_ids,
-            model_spend_limit_dkk_micros=(
-                active_settings.model_spend_limit_dkk_micros
-            ),
+            model_spend_limit_dkk_micros=(active_settings.model_spend_limit_dkk_micros),
         )
         object_store = InMemoryObjectStore()
     if active_settings.environment == "production":
@@ -265,6 +259,7 @@ def create_app(
         account_service=AccountProvisioningService(
             repository=repository,
             publisher=active_notification_publisher,
+            public_account_limit=active_settings.public_account_limit,
         ),
         notification_publisher=active_notification_publisher,
         capture_event_publisher=active_capture_event_publisher,
@@ -627,10 +622,7 @@ def create_app(
         user_id: str = Depends(request_user_id),
     ) -> list[CameraView]:
         response.headers["Cache-Control"] = "private, no-store"
-        return [
-            camera_view(camera)
-            for camera in await container.repository.list_cameras(user_id)
-        ]
+        return [camera_view(camera) for camera in await container.repository.list_cameras(user_id)]
 
     @app.post("/v1/cameras/{camera_id}/revoke", response_model=CameraView)
     async def revoke_camera(

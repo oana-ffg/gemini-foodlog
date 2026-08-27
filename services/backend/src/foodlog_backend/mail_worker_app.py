@@ -91,6 +91,8 @@ def create_mail_worker_app(
                 account_id=event.account_id,
                 mail_id=event.mail_id,
                 message_id=envelope.message.message_id,
+                service="mail_worker",
+                delivery_attempt=envelope.delivery_attempt,
                 error_kind=safe_error_kind(error),
             )
             raise HTTPException(status_code=503, detail="mail_classification_failed") from error
@@ -100,6 +102,8 @@ def create_mail_worker_app(
             account_id=event.account_id,
             mail_id=event.mail_id,
             message_id=envelope.message.message_id,
+            service="mail_worker",
+            delivery_attempt=envelope.delivery_attempt,
             outcome=classification.outcome.value,
         )
         return Response(status_code=status.HTTP_204_NO_CONTENT)

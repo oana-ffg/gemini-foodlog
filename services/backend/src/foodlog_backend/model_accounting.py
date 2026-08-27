@@ -7,10 +7,12 @@ from typing import Protocol
 
 from .errors import ModelInvocationAlreadyReconciled
 from .models import ModelSpendReservation, ModelUsageRecord
+from .operational_logging import emit_operational_event
 
 CONSERVATIVE_DKK_PER_USD = 8
 MODEL_INPUT_USD_NANOS_PER_TOKEN = {"gemini-3.6-flash": 825}
 MODEL_OUTPUT_USD_NANOS_PER_TOKEN = {"gemini-3.6-flash": 4_125}
+
 
 class ModelAccountingRepository(Protocol):
     async def reserve_model_spend(
@@ -49,11 +51,14 @@ class ModelInvocationSpec:
                 raise ValueError(f"{field_name} is required")
         if self.model not in MODEL_INPUT_USD_NANOS_PER_TOKEN:
             raise ValueError(f"No reviewed pricing is configured for model {self.model}")
-        if min(
-            self.max_prompt_tokens,
-            self.max_output_tokens,
-            self.max_billable_calls,
-        ) <= 0:
+        if (
+            min(
+                self.max_prompt_tokens,
+                self.max_output_tokens,
+                self.max_billable_calls,
+            )
+            <= 0
+        ):
             raise ValueError("model invocation ceilings and billable calls must be positive")
         if self.retry_attempt < 0:
             raise ValueError("retry_attempt cannot be negative")
@@ -129,9 +134,7 @@ def conservative_reservation_dkk_micros(spec: ModelInvocationSpec) -> int:
         response_tokens=spec.max_output_tokens,
         thinking_tokens=0,
     )
-    return usd_nanos_to_conservative_dkk_micros(
-        per_attempt_usd_nanos * spec.max_billable_calls
-    )
+    return usd_nanos_to_conservative_dkk_micros(per_attempt_usd_nanos * spec.max_billable_calls)
 
 
 def reservation_id_for_invocation(spec: ModelInvocationSpec) -> str:
@@ -145,6 +148,23 @@ def reservation_id_for_invocation(spec: ModelInvocationSpec) -> str:
         )
     )
     return f"model-{sha256(identity.encode()).hexdigest()}"
+
+
+def _emit_model_usage(spec: ModelInvocationSpec, usage: ModelUsageRecord) -> None:
+    emit_operational_event(
+        "INFO" if usage.outcome == "succeeded" else "WARNING",
+        "model_usage_recorded",
+        service="model_accounting",
+        account_id=spec.account_id,
+        event_id=spec.event_id,
+        model=spec.model,
+        purpose=spec.purpose,
+        workload="evaluation" if spec.evaluation else "production",
+        outcome=usage.outcome,
+        retry_attempt=usage.retry_attempt,
+        total_tokens=usage.total_tokens,
+        actual_dkk_micros=usage.actual_dkk_micros,
+    )
 
 
 async def execute_accounted_model_invocation[ResultT](
@@ -190,7 +210,7 @@ async def execute_accounted_model_invocation[ResultT](
             response_tokens=response_tokens,
             thinking_tokens=thinking_tokens,
         )
-        await repository.record_model_usage(
+        usage = await repository.record_model_usage(
             ModelUsageRecord(
                 id=reservation.id,
                 reservation_id=reservation.id,
@@ -210,13 +230,12 @@ async def execute_accounted_model_invocation[ResultT](
                 thinking_tokens=thinking_tokens,
                 total_tokens=total_tokens,
                 actual_usd_nanos=actual_usd_nanos,
-                actual_dkk_micros=usd_nanos_to_conservative_dkk_micros(
-                    actual_usd_nanos
-                ),
+                actual_dkk_micros=usd_nanos_to_conservative_dkk_micros(actual_usd_nanos),
                 reserved_dkk_micros=reservation.reserved_dkk_micros,
                 error_code=(partial.error_code if partial is not None else type(error).__name__),
             )
         )
+        _emit_model_usage(spec, usage)
         raise
 
     actual_usd_nanos = model_cost_usd_nanos(
@@ -249,6 +268,7 @@ async def execute_accounted_model_invocation[ResultT](
             reserved_dkk_micros=reservation.reserved_dkk_micros,
         )
     )
+    _emit_model_usage(spec, usage)
     return AccountedModelInvocation(
         result=completed.result,
         reservation=reservation,

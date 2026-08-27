@@ -13,6 +13,7 @@ from .models import (
     CaptureEnvelopeV1,
     DeviceCamera,
 )
+from .operational_logging import emit_operational_event
 from .repository import Repository
 from .storage import ObjectStore
 
@@ -102,6 +103,16 @@ class CaptureService:
                     [error, *cleanup_errors],
                 ) from error
             raise
+        emit_operational_event(
+            "INFO",
+            "capture_storage_completed",
+            service="api",
+            account_id=capture.account_id,
+            capture_id=capture.id,
+            outcome="stored" if created else "duplicate",
+            accepted_image_count=updated_account.accepted_image_count,
+            trial_image_limit=updated_account.trial_image_limit,
+        )
         return CaptureAccepted(
             capture_id=capture.id,
             accepted_image_count=updated_account.accepted_image_count,

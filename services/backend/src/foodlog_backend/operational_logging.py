@@ -14,8 +14,13 @@ TRACE_CONTEXT_PATTERN = re.compile(r"^(?P<trace>[0-9a-f]{32})(?:/[0-9]+)?(?:;o=[
 SAFE_VALUE_PATTERN = re.compile(r"^[A-Za-z0-9._:/{}-]{1,240}$")
 SAFE_FIELDS = frozenset(
     {
+        "accepted_image_count",
         "account_id",
+        "account_capacity_count",
+        "account_capacity_limit",
+        "actual_dkk_micros",
         "capture_id",
+        "delivery_attempt",
         "duration_ms",
         "environment",
         "error_kind",
@@ -26,12 +31,18 @@ SAFE_FIELDS = frozenset(
         "job_id",
         "mail_id",
         "message_id",
+        "model",
         "notification_id",
         "outcome",
+        "purpose",
         "request_id",
+        "retry_attempt",
         "service",
         "subject_revision",
+        "total_tokens",
         "trace_id",
+        "trial_image_limit",
+        "workload",
     }
 )
 

@@ -157,6 +157,14 @@ The deploy input in `production.auto.tfvars` must be an Artifact Registry image 
 by sha256 digest. Release work updates that one reviewed value after tests and the
 remote image build succeed; mutable tags are never deployed.
 
+## Operational telemetry
+
+`monitoring.tf` owns eight bounded log-based application metrics. Native Cloud Run,
+Pub/Sub, and Cloud Storage metrics cover service health, queue/DLQ backlog, and
+private object storage without duplicating those points. The complete signal map,
+cardinality boundary, cost boundary, and live verification contract are documented
+in [`docs/observability.md`](../../../docs/observability.md).
+
 ## Runtime secrets
 
 `secrets.tf` owns protected, regional Secret Manager metadata and narrow accessor IAM;
