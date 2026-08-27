@@ -100,3 +100,28 @@ def test_processing_view_only_calls_completed_inference_complete() -> None:
     assert pending.stage == "analysis_pending"
     assert complete.stage == "complete"
     assert complete.retry_at is None
+
+
+def test_grouped_stored_capture_reports_the_inference_job_not_grouping_complete() -> None:
+    grouped = capture(status=CaptureStatus.STORED, event_id="event-001")
+    grouping_complete = job(
+        kind=JobKind.CAPTURE_GROUPING,
+        subject_id="capture-001",
+        status=JobStatus.COMPLETED,
+        attempt_count=6,
+    )
+    inference_retry = job(
+        kind=JobKind.EVENT_INFERENCE,
+        subject_id="event-001",
+        attempt_count=2,
+    )
+
+    view = capture_processing_view(
+        grouped,
+        grouping_job=grouping_complete,
+        inference_job=inference_retry,
+    )
+
+    assert view.stage == "analysis_retrying"
+    assert view.attempt_count == 2
+    assert view.latest_failure_code == "provider_timeout"

@@ -40,6 +40,27 @@ def capture_processing_view(
     if capture.status == CaptureStatus.ACCEPTED:
         return _view(capture, "storage_pending")
 
+    if capture.event_id is not None:
+        if inference_job is None:
+            return _view(capture, "attention_required")
+        if inference_job.status == JobStatus.COMPLETED:
+            return _view(
+                capture,
+                "complete" if capture.status == CaptureStatus.PROCESSED else "attention_required",
+                inference_job,
+            )
+        return _view(
+            capture,
+            _job_stage(
+                inference_job,
+                pending="analysis_pending",
+                active="analysis_active",
+                retrying="analysis_retrying",
+                now=current_time,
+            ),
+            inference_job,
+        )
+
     if capture.status == CaptureStatus.STORED:
         if grouping_job is None or grouping_job.status == JobStatus.COMPLETED:
             return _view(capture, "attention_required", grouping_job)
@@ -55,21 +76,7 @@ def capture_processing_view(
             grouping_job,
         )
 
-    if capture.event_id is None or inference_job is None:
-        return _view(capture, "attention_required", inference_job)
-    if inference_job.status == JobStatus.COMPLETED:
-        return _view(capture, "complete", inference_job)
-    return _view(
-        capture,
-        _job_stage(
-            inference_job,
-            pending="analysis_pending",
-            active="analysis_active",
-            retrying="analysis_retrying",
-            now=current_time,
-        ),
-        inference_job,
-    )
+    return _view(capture, "attention_required")
 
 
 def _job_stage(
