@@ -8,6 +8,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Protocol
 
+from google.api_core.exceptions import DeadlineExceeded
 from google.cloud import pubsub_v1
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -275,11 +276,14 @@ class DeadLetterOperationsService:
         if not 1 <= max_messages <= MAX_DEAD_LETTER_MESSAGES:
             raise ValueError("dead-letter pull must request between 1 and 10 messages")
         subscription = expected_subscription(self._project_id, stream)
-        response = await asyncio.to_thread(
-            self._subscriber.pull,
-            request={"subscription": subscription, "max_messages": max_messages},
-            timeout=15.0,
-        )
+        try:
+            response = await asyncio.to_thread(
+                self._subscriber.pull,
+                request={"subscription": subscription, "max_messages": max_messages},
+                timeout=15.0,
+            )
+        except DeadlineExceeded:
+            return subscription, []
         received_messages = list(getattr(response, "received_messages", ()))
         try:
             pulled = [

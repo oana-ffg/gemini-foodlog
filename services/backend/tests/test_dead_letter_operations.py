@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
+from google.api_core.exceptions import DeadlineExceeded
 
 from foodlog_backend.dead_letter_operations import (
     DeadLetterOperationsService,
@@ -51,9 +52,12 @@ class FakeSubscriber:
         self.pull_requests: list[dict] = []
         self.deadline_requests: list[dict] = []
         self.ack_requests: list[dict] = []
+        self.pull_failure: Exception | None = None
 
     def pull(self, *, request, timeout=None):
         self.pull_requests.append({"request": request, "timeout": timeout})
+        if self.pull_failure is not None:
+            raise self.pull_failure
         return SimpleNamespace(received_messages=self.messages)
 
     def modify_ack_deadline(self, *, request):
@@ -172,6 +176,27 @@ def test_invalid_payload_fails_closed_and_is_released() -> None:
 
     assert subscriber.deadline_requests[0]["ack_ids"] == ["ack-message-2"]
     assert subscriber.ack_requests == []
+
+
+def test_empty_pull_deadline_is_a_successful_empty_inspection() -> None:
+    subscriber = FakeSubscriber([])
+    subscriber.pull_failure = DeadlineExceeded("no messages available")
+    service = DeadLetterOperationsService(
+        project_id="foodlog-test-2026",
+        repository=FakeRepository(),
+        subscriber=subscriber,
+    )
+
+    result = asyncio.run(
+        service.inspect(
+            stream=DeadLetterStream.IMAGE,
+            purpose=AuditPurpose.INCIDENT_TRIAGE,
+            session_id="session-empty",
+        )
+    )
+
+    assert result.messages == []
+    assert result.audit_event_ids == []
 
 
 def test_replay_requires_exact_confirmation_before_pull() -> None:
