@@ -423,6 +423,7 @@ class AiTraceService:
             or payload.get("schema_version") != TRACE_SCHEMA_VERSION
             or payload.get("trace_id") != trace.id
             or payload.get("account_id") != account_id
+            or payload.get("event_id") != trace.event_id
         ):
             raise AiTraceIntegrityError("AI trace payload identity does not match its index")
         return payload

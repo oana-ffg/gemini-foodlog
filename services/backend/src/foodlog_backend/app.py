@@ -814,7 +814,11 @@ def create_app(
             question_responses=question_responses,
         )
 
-    @app.get("/v1/audit-events", response_model=list[AuditEvent])
+    @app.get(
+        "/v1/audit-events",
+        response_model=list[AuditEvent],
+        response_model_exclude_none=True,
+    )
     async def list_audit_events(
         response: Response,
         limit: Annotated[int, Query(ge=1, le=200)] = 100,

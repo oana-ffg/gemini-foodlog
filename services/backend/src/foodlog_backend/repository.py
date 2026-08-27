@@ -831,6 +831,14 @@ class Repository(Protocol):
         trace_id: str,
     ) -> AiTraceRecord: ...
 
+    async def ai_traces_for_event(
+        self,
+        *,
+        account_id: str,
+        event_id: str,
+        limit: int = 25,
+    ) -> list[AiTraceRecord]: ...
+
     async def save_meal(self, *, account_id: str, meal: MealEntry) -> MealEntry: ...
 
     async def open_question(
@@ -2743,6 +2751,30 @@ class InMemoryRepository:
             if trace is None:
                 raise AiTraceNotFound
             return trace.model_copy(deep=True)
+
+    async def ai_traces_for_event(
+        self,
+        *,
+        account_id: str,
+        event_id: str,
+        limit: int = 25,
+    ) -> list[AiTraceRecord]:
+        if not 1 <= limit <= 25:
+            raise ValueError("AI trace event limit must be between 1 and 25")
+        async with self._lock:
+            if (account_id, event_id) not in self._events:
+                raise ActivityEventNotFound
+            traces = sorted(
+                (
+                    trace
+                    for (trace_account_id, _), trace in self._ai_traces.items()
+                    if trace_account_id == account_id and trace.event_id == event_id
+                ),
+                key=lambda trace: (trace.created_at, trace.id),
+            )
+            if len(traces) > limit:
+                raise ValueError("AI trace event evidence exceeds the diagnostic bound")
+            return [trace.model_copy(deep=True) for trace in traces]
 
     async def save_meal(self, *, account_id: str, meal: MealEntry) -> MealEntry:
         if meal.account_id != account_id:

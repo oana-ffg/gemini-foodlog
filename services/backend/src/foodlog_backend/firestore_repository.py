@@ -2793,6 +2793,28 @@ class FirestoreRepository:
             raise AiTraceNotFound
         return trace
 
+    async def ai_traces_for_event(
+        self,
+        *,
+        account_id: str,
+        event_id: str,
+        limit: int = 25,
+    ) -> list[AiTraceRecord]:
+        if not 1 <= limit <= 25:
+            raise ValueError("AI trace event limit must be between 1 and 25")
+        event_snapshot = await self._collection(account_id, "events").document(event_id).get()
+        if not event_snapshot.exists or event_snapshot.get("account_id") != account_id:
+            raise ActivityEventNotFound
+        query = self._collection(account_id, "traces").where(
+            filter=FieldFilter("event_id", "==", event_id)
+        ).limit(limit + 1)
+        traces = [_model(snapshot, AiTraceRecord) async for snapshot in query.stream()]
+        if any(trace.account_id != account_id or trace.event_id != event_id for trace in traces):
+            raise ValueError("AI trace evidence escaped its account or event scope")
+        if len(traces) > limit:
+            raise ValueError("AI trace event evidence exceeds the diagnostic bound")
+        return sorted(traces, key=lambda trace: (trace.created_at, trace.id))
+
     async def save_meal(self, *, account_id: str, meal: MealEntry) -> MealEntry:
         if meal.account_id != account_id:
             raise CrossAccountAccess

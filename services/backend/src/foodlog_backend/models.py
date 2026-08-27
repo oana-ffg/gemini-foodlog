@@ -316,12 +316,14 @@ class AuditActorKind(StrEnum):
     USER = "user"
     CAMERA = "camera"
     SYSTEM = "system"
+    OPERATOR = "operator"
 
 
 class AuditSource(StrEnum):
     API = "api"
     CAPTURE_API = "capture_api"
     AGENT = "agent"
+    OPERATOR_CLI = "operator_cli"
 
 
 class AuditAction(StrEnum):
@@ -330,6 +332,14 @@ class AuditAction(StrEnum):
     CAPTURE_IMAGE_READ = "capture.image_read"
     MEAL_FEEDBACK_RECORDED = "meal.feedback_recorded"
     AI_TRACE_RECORDED = "ai.trace_recorded"
+    OPERATOR_DIAGNOSTIC_READ = "operator.diagnostic_read"
+
+
+class AuditPurpose(StrEnum):
+    INCIDENT_TRIAGE = "incident_triage"
+    SUPPORT = "support"
+    SECURITY_REVIEW = "security_review"
+    DEVELOPMENT_VERIFICATION = "development_verification"
 
 
 class DeviceCredentialStatus(StrEnum):
@@ -397,6 +407,7 @@ class AuditEvent(BaseModel):
     source: AuditSource
     subject_kind: str = Field(pattern=r"^[a-z][a-z0-9_]{0,39}$")
     subject_id: str = Field(min_length=1, max_length=160)
+    purpose: AuditPurpose | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
     @field_validator("created_at")

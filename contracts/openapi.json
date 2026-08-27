@@ -222,7 +222,8 @@
           "capture.stored",
           "capture.image_read",
           "meal.feedback_recorded",
-          "ai.trace_recorded"
+          "ai.trace_recorded",
+          "operator.diagnostic_read"
         ],
         "title": "AuditAction",
         "type": "string"
@@ -231,7 +232,8 @@
         "enum": [
           "user",
           "camera",
-          "system"
+          "system",
+          "operator"
         ],
         "title": "AuditActorKind",
         "type": "string"
@@ -259,6 +261,16 @@
             "pattern": "^[0-9a-f]{64}$",
             "title": "Id",
             "type": "string"
+          },
+          "purpose": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AuditPurpose"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "schema_version": {
             "const": 1,
@@ -293,11 +305,22 @@
         "title": "AuditEvent",
         "type": "object"
       },
+      "AuditPurpose": {
+        "enum": [
+          "incident_triage",
+          "support",
+          "security_review",
+          "development_verification"
+        ],
+        "title": "AuditPurpose",
+        "type": "string"
+      },
       "AuditSource": {
         "enum": [
           "api",
           "capture_api",
-          "agent"
+          "agent",
+          "operator_cli"
         ],
         "title": "AuditSource",
         "type": "string"

@@ -1,5 +1,5 @@
 import asyncio
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from google.api_core.exceptions import PreconditionFailed
@@ -58,6 +58,14 @@ class FakeBlob:
     @property
     def content_type(self) -> str:
         return self.objects[self.key][1]
+
+    @property
+    def size(self) -> int:
+        return len(self.objects[self.key][0])
+
+    generation = 7
+    crc32c = "fake-crc32c"
+    updated = datetime(2026, 8, 27, tzinfo=UTC)
 
     def reload(self) -> None:
         return None
@@ -236,6 +244,12 @@ def test_gcs_adapter_writes_once_and_round_trips_private_bytes() -> None:
     assert created is True
     assert duplicate is False
     assert asyncio.run(store.get("account-a", key)) == b"image-bytes"
+    metadata = asyncio.run(store.metadata("account-a", key))
+    assert metadata.key == key
+    assert metadata.size == len(b"image-bytes")
+    assert metadata.content_type == "image/jpeg"
+    assert metadata.generation == 7
+    assert metadata.crc32c == "fake-crc32c"
     assert client.bucket_instance.objects[key][1] == "image/jpeg"
 
 
@@ -281,6 +295,8 @@ def test_object_stores_reject_foreign_or_ambiguous_account_paths(key: str) -> No
             asyncio.run(store.put("account-a", key, b"private", "application/octet-stream"))
         with pytest.raises(CrossAccountAccess):
             asyncio.run(store.get("account-a", key))
+        with pytest.raises(CrossAccountAccess):
+            asyncio.run(store.metadata("account-a", key))
 
     assert gcs_client.bucket_instance.objects == {}
 

@@ -1,7 +1,7 @@
 from hashlib import sha256
 from typing import Protocol
 
-from .models import AuditAction, AuditActorKind, AuditEvent, AuditSource
+from .models import AuditAction, AuditActorKind, AuditEvent, AuditPurpose, AuditSource
 
 
 class AuditRepository(Protocol):
@@ -16,18 +16,21 @@ def build_audit_event(
     source: AuditSource,
     subject_kind: str,
     subject_id: str,
+    purpose: AuditPurpose | None = None,
+    occurrence_id: str | None = None,
 ) -> AuditEvent:
-    identity = "\0".join(
-        (
-            "foodlog-audit-v1",
-            account_id,
-            action.value,
-            actor_kind.value,
-            source.value,
-            subject_kind,
-            subject_id,
-        )
-    )
+    identity_fields = [
+        "foodlog-audit-v1",
+        account_id,
+        action.value,
+        actor_kind.value,
+        source.value,
+        subject_kind,
+        subject_id,
+    ]
+    if purpose is not None or occurrence_id is not None:
+        identity_fields.extend((purpose.value if purpose is not None else "", occurrence_id or ""))
+    identity = "\0".join(identity_fields)
     return AuditEvent(
         id=sha256(identity.encode()).hexdigest(),
         account_id=account_id,
@@ -36,6 +39,7 @@ def build_audit_event(
         source=source,
         subject_kind=subject_kind,
         subject_id=subject_id,
+        purpose=purpose,
     )
 
 
@@ -48,6 +52,8 @@ async def record_audit_event(
     source: AuditSource,
     subject_kind: str,
     subject_id: str,
+    purpose: AuditPurpose | None = None,
+    occurrence_id: str | None = None,
 ) -> AuditEvent:
     return await repository.append_audit_event(
         build_audit_event(
@@ -57,5 +63,7 @@ async def record_audit_event(
             source=source,
             subject_kind=subject_kind,
             subject_id=subject_id,
+            purpose=purpose,
+            occurrence_id=occurrence_id,
         )
     )

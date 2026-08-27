@@ -1,10 +1,22 @@
 import asyncio
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
 from google.api_core.exceptions import PreconditionFailed
 from google.cloud import storage
 
 from .errors import CrossAccountAccess
+
+
+@dataclass(frozen=True)
+class ObjectMetadata:
+    key: str
+    size: int
+    content_type: str | None
+    generation: int | None
+    crc32c: str | None
+    updated_at: datetime | None
 
 
 def validate_account_object_key(account_id: str, key: str) -> None:
@@ -31,6 +43,8 @@ class ObjectStore(Protocol):
     ) -> bool: ...
 
     async def get(self, account_id: str, key: str) -> bytes: ...
+
+    async def metadata(self, account_id: str, key: str) -> ObjectMetadata: ...
 
 
 class InMemoryObjectStore:
@@ -61,6 +75,19 @@ class InMemoryObjectStore:
         validate_account_object_key(account_id, key)
         async with self._lock:
             return self._objects[key][0]
+
+    async def metadata(self, account_id: str, key: str) -> ObjectMetadata:
+        validate_account_object_key(account_id, key)
+        async with self._lock:
+            content, content_type = self._objects[key]
+            return ObjectMetadata(
+                key=key,
+                size=len(content),
+                content_type=content_type,
+                generation=None,
+                crc32c=None,
+                updated_at=None,
+            )
 
 
 class GCSObjectStore:
@@ -103,3 +130,16 @@ class GCSObjectStore:
     async def get(self, account_id: str, key: str) -> bytes:
         validate_account_object_key(account_id, key)
         return await asyncio.to_thread(self._bucket.blob(key).download_as_bytes)
+
+    async def metadata(self, account_id: str, key: str) -> ObjectMetadata:
+        validate_account_object_key(account_id, key)
+        blob = self._bucket.blob(key)
+        await asyncio.to_thread(blob.reload)
+        return ObjectMetadata(
+            key=key,
+            size=blob.size,
+            content_type=blob.content_type,
+            generation=int(blob.generation) if blob.generation is not None else None,
+            crc32c=blob.crc32c,
+            updated_at=blob.updated,
+        )
