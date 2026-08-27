@@ -126,6 +126,14 @@ class UserContextNoteStatus(StrEnum):
     RETIRED = "retired"
 
 
+def _normalize_context_window_timestamp(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("context note validity timestamps must include a UTC offset")
+    return value.astimezone(UTC)
+
+
 class UserContextNoteCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -133,11 +141,16 @@ class UserContextNoteCreate(BaseModel):
     valid_from: datetime | None = None
     valid_until: datetime | None = None
 
+    @field_validator("valid_from", "valid_until")
+    @classmethod
+    def validity_timestamp_is_utc(
+        cls,
+        value: datetime | None,
+    ) -> datetime | None:
+        return _normalize_context_window_timestamp(value)
+
     @model_validator(mode="after")
     def validity_window_is_ordered(self) -> "UserContextNoteCreate":
-        for value in (self.valid_from, self.valid_until):
-            if value is not None and (value.tzinfo is None or value.utcoffset() is None):
-                raise ValueError("context note validity timestamps must include a UTC offset")
         if (
             self.valid_from is not None
             and self.valid_until is not None
@@ -159,6 +172,14 @@ class UserContextNote(BaseModel):
     status: UserContextNoteStatus = UserContextNoteStatus.ACTIVE
     created_at: datetime = Field(default_factory=utc_now)
     retired_at: datetime | None = None
+
+    @field_validator("valid_from", "valid_until")
+    @classmethod
+    def validity_timestamp_is_utc(
+        cls,
+        value: datetime | None,
+    ) -> datetime | None:
+        return _normalize_context_window_timestamp(value)
 
     @model_validator(mode="after")
     def lifecycle_and_window_are_consistent(self) -> "UserContextNote":

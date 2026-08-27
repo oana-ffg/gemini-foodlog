@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -20,6 +20,18 @@ def test_context_note_window_requires_offset_and_forward_order() -> None:
         UserContextNoteCreate(text="Duck tomorrow", valid_from=now.replace(tzinfo=None))
     with pytest.raises(ValidationError, match="must be after"):
         UserContextNoteCreate(text="Duck tomorrow", valid_from=now, valid_until=now)
+
+
+def test_context_note_window_normalizes_offset_for_stable_idempotent_responses() -> None:
+    local_offset = timezone(timedelta(hours=2))
+    request = UserContextNoteCreate(
+        text="Duck tomorrow",
+        valid_from=datetime(2026, 8, 28, tzinfo=local_offset),
+        valid_until=datetime(2026, 8, 29, tzinfo=local_offset),
+    )
+
+    assert request.valid_from == datetime(2026, 8, 27, 22, tzinfo=UTC)
+    assert request.valid_until == datetime(2026, 8, 28, 22, tzinfo=UTC)
 
 
 def test_repository_preserves_raw_note_expiry_retirement_and_tenant_scope() -> None:
