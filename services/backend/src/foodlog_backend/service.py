@@ -1,9 +1,13 @@
 from hashlib import sha256
 from uuid import uuid4
 
+from .audit import record_audit_event
 from .errors import CrossAccountAccess
 from .image_events import CaptureEventPublisher, CaptureStoredEventV1
 from .models import (
+    AuditAction,
+    AuditActorKind,
+    AuditSource,
     BrowserCamera,
     CaptureAccepted,
     CaptureEnvelopeV1,
@@ -69,6 +73,15 @@ class CaptureService:
                     account_id=capture.account_id,
                     capture_id=capture.id,
                 )
+            )
+            await record_audit_event(
+                self._repository,
+                account_id=capture.account_id,
+                action=AuditAction.CAPTURE_STORED,
+                actor_kind=AuditActorKind.CAMERA,
+                source=AuditSource.CAPTURE_API,
+                subject_kind="capture",
+                subject_id=capture.id,
             )
         except Exception as error:
             cleanup_errors: list[Exception] = []

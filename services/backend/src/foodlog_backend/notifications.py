@@ -7,7 +7,16 @@ import httpx
 from google.cloud import pubsub_v1
 from pydantic import BaseModel, ConfigDict
 
-from .models import Account, AccountCreatedOutbox, EntitlementMode, utc_now
+from .audit import record_audit_event
+from .models import (
+    Account,
+    AccountCreatedOutbox,
+    AuditAction,
+    AuditActorKind,
+    AuditSource,
+    EntitlementMode,
+    utc_now,
+)
 from .pubsub import PubSubJsonPublisher
 from .repository import Repository
 
@@ -71,6 +80,15 @@ class AccountProvisioningService:
 
     async def provision_account(self, owner_user_id: str) -> Account:
         account = await self._repository.provision_account(owner_user_id)
+        await record_audit_event(
+            self._repository,
+            account_id=account.id,
+            action=AuditAction.ACCOUNT_PROVISIONED,
+            actor_kind=AuditActorKind.USER,
+            source=AuditSource.API,
+            subject_kind="account",
+            subject_id=account.id,
+        )
         lease_id = str(uuid4())
         event: AccountCreatedOutbox | None = None
         try:

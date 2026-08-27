@@ -14,7 +14,7 @@ from foodlog_backend.ai_traces import (
 )
 from foodlog_backend.errors import AiTraceNotFound
 from foodlog_backend.model_accounting import ModelInvocationSpec, reservation_id_for_invocation
-from foodlog_backend.models import ModelUsageRecord, utc_now
+from foodlog_backend.models import AuditAction, ModelUsageRecord, utc_now
 from foodlog_backend.repository import InMemoryRepository
 from foodlog_backend.storage import InMemoryObjectStore
 
@@ -145,6 +145,10 @@ def test_trace_round_trip_is_hashed_redacted_and_account_scoped() -> None:
         assert retry == record
         assert record.latency_ms == 432
         assert record.object_key == f"accounts/{account.id}/traces/{record.id}.json.gz"
+        audit_events = await repository.list_audit_events_for_owner("trace-owner")
+        assert len(audit_events) == 1
+        assert audit_events[0].action == AuditAction.AI_TRACE_RECORDED
+        assert audit_events[0].subject_id == record.id
 
         payload = await service.read(account_id=account.id, trace_id=record.id)
         audit_result = audit_application_visible_trace(payload)

@@ -377,6 +377,76 @@ def test_processing_endpoint_is_private_tenant_scoped_and_never_caches() -> None
     assert foreign.json() == []
 
 
+def test_audit_events_are_idempotent_private_and_cover_user_visible_operations() -> None:
+    image = (FIXTURES / "synthetic-steak-airfryer.png").read_bytes()
+    with build_client() as client:
+        _, camera = provision(client)
+        metadata = capture_metadata(camera["id"], image)
+        capture = post_fixture_capture(
+            client,
+            camera=camera,
+            image=image,
+            idempotency_key="audit-capture-001",
+            metadata=metadata,
+        )
+        capture_retry = post_shared_browser_capture(
+            client,
+            camera=camera,
+            image=image,
+            idempotency_key="audit-capture-001",
+            metadata=metadata,
+        )
+        capture_id = capture.json()["capture_id"]
+        assert client.get(
+            f"/v1/captures/{capture_id}/image",
+            headers=USER_HEADER,
+        ).status_code == 200
+        assert client.get(
+            f"/v1/captures/{capture_id}/image",
+            headers=USER_HEADER,
+        ).status_code == 200
+        meal = client.get("/v1/journal", headers=USER_HEADER).json()[0]
+        feedback_request = {
+            "headers": {**USER_HEADER, "Idempotency-Key": "audit-feedback-001"},
+            "json": {"kind": "confirm"},
+        }
+        feedback = client.post(f"/v1/meals/{meal['id']}/feedback", **feedback_request)
+        feedback_retry = client.post(
+            f"/v1/meals/{meal['id']}/feedback",
+            **feedback_request,
+        )
+        events = client.get("/v1/audit-events", headers=USER_HEADER)
+        foreign = client.get(
+            "/v1/audit-events",
+            headers={"X-FoodLog-Local-User": "unprovisioned-owner"},
+        )
+
+    assert capture.status_code == capture_retry.status_code == 202
+    assert feedback.status_code == feedback_retry.status_code == 200
+    assert events.status_code == 200
+    assert events.headers["cache-control"] == "private, no-store"
+    assert [event["action"] for event in events.json()] == [
+        "meal.feedback_recorded",
+        "capture.image_read",
+        "capture.stored",
+        "account.provisioned",
+    ]
+    assert len({event["id"] for event in events.json()}) == 4
+    assert all(event["account_id"] == camera["account_id"] for event in events.json())
+    assert all(set(event) == {
+        "schema_version",
+        "id",
+        "account_id",
+        "action",
+        "actor_kind",
+        "source",
+        "subject_kind",
+        "subject_id",
+        "created_at",
+    } for event in events.json())
+    assert foreign.status_code == 404
+
+
 def post_fixture_capture(
     client: TestClient,
     *,

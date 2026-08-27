@@ -312,6 +312,26 @@ class CameraStatus(StrEnum):
     REVOKED = "revoked"
 
 
+class AuditActorKind(StrEnum):
+    USER = "user"
+    CAMERA = "camera"
+    SYSTEM = "system"
+
+
+class AuditSource(StrEnum):
+    API = "api"
+    CAPTURE_API = "capture_api"
+    AGENT = "agent"
+
+
+class AuditAction(StrEnum):
+    ACCOUNT_PROVISIONED = "account.provisioned"
+    CAPTURE_STORED = "capture.stored"
+    CAPTURE_IMAGE_READ = "capture.image_read"
+    MEAL_FEEDBACK_RECORDED = "meal.feedback_recorded"
+    AI_TRACE_RECORDED = "ai.trace_recorded"
+
+
 class DeviceCredentialStatus(StrEnum):
     ACTIVE = "active"
     REVOKED = "revoked"
@@ -366,6 +386,25 @@ class Account(BaseModel):
         ):
             raise ValueError("Unlimited accounts cannot have a trial image limit")
         return self
+
+
+class AuditEvent(BaseModel):
+    schema_version: Literal[1] = 1
+    id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    account_id: str = Field(min_length=1, max_length=128)
+    action: AuditAction
+    actor_kind: AuditActorKind
+    source: AuditSource
+    subject_kind: str = Field(pattern=r"^[a-z][a-z0-9_]{0,39}$")
+    subject_id: str = Field(min_length=1, max_length=160)
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("created_at")
+    @classmethod
+    def created_at_has_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("audit event timestamps must include a UTC offset")
+        return value
 
 
 class InboundMailAddress(BaseModel):

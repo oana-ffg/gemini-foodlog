@@ -12,6 +12,7 @@ from fastapi.responses import Response
 from PIL import Image
 from pydantic import ValidationError
 
+from .audit import record_audit_event
 from .auth import (
     FirebaseIdentityTokenVerifier,
     IdentityTokenVerifier,
@@ -57,6 +58,10 @@ from .image_events import (
 from .inbound_mail import InboundMailAddressService
 from .models import (
     Account,
+    AuditAction,
+    AuditActorKind,
+    AuditEvent,
+    AuditSource,
     BrowserCamera,
     BrowserCameraCreate,
     Camera,
@@ -741,6 +746,18 @@ def create_app(
     async def list_journal(user_id: str = Depends(request_user_id)) -> list[MealEntry]:
         return await container.repository.list_meals(user_id)
 
+    @app.get("/v1/audit-events", response_model=list[AuditEvent])
+    async def list_audit_events(
+        response: Response,
+        limit: Annotated[int, Query(ge=1, le=200)] = 100,
+        user_id: str = Depends(request_user_id),
+    ) -> list[AuditEvent]:
+        response.headers["Cache-Control"] = "private, no-store"
+        return await container.repository.list_audit_events_for_owner(
+            user_id,
+            limit=limit,
+        )
+
     @app.get("/v1/processing", response_model=list[CaptureProcessingView])
     async def list_processing(
         response: Response,
@@ -994,6 +1011,15 @@ def create_app(
     ) -> Response:
         capture = await container.repository.capture_for_owner(user_id, capture_id)
         content = await container.object_store.get(capture.account_id, capture.object_key)
+        await record_audit_event(
+            container.repository,
+            account_id=capture.account_id,
+            action=AuditAction.CAPTURE_IMAGE_READ,
+            actor_kind=AuditActorKind.USER,
+            source=AuditSource.API,
+            subject_kind="capture",
+            subject_id=capture.id,
+        )
         return Response(
             content=content,
             media_type=capture.content_type,

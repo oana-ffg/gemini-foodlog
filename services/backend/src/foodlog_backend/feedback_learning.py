@@ -5,6 +5,7 @@ from hashlib import sha256
 
 from pydantic import ConfigDict
 
+from .audit import record_audit_event
 from .knowledge_updates import (
     ConfirmedClaimSource,
     HouseholdKnowledgeUpdater,
@@ -12,6 +13,9 @@ from .knowledge_updates import (
     KnowledgeUpdateProposal,
 )
 from .models import (
+    AuditAction,
+    AuditActorKind,
+    AuditSource,
     ComponentCorrection,
     IngredientCorrection,
     KnowledgeClaim,
@@ -67,6 +71,15 @@ class FeedbackLearningService:
             meal_id=meal_id,
             request=request,
             idempotency_key=idempotency_key,
+        )
+        await record_audit_event(
+            self._repository,
+            account_id=feedback.feedback.account_id,
+            action=AuditAction.MEAL_FEEDBACK_RECORDED,
+            actor_kind=AuditActorKind.USER,
+            source=AuditSource.API,
+            subject_kind="feedback",
+            subject_id=feedback.feedback.id,
         )
         outcome = self._outcome_without_learning(request)
         if outcome is not None:

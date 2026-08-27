@@ -7,6 +7,7 @@ from typing import Protocol
 from unicodedata import normalize as unicode_normalize
 from uuid import uuid4
 
+from .audit import build_audit_event
 from .errors import (
     AccountAlreadyProvisioned,
     AccountCapacityReached,
@@ -64,6 +65,10 @@ from .models import (
     ActivityEventStatus,
     ActivitySegment,
     AiTraceRecord,
+    AuditAction,
+    AuditActorKind,
+    AuditEvent,
+    AuditSource,
     BrowserCamera,
     Camera,
     CameraStatus,
@@ -532,6 +537,15 @@ def materialize_activity_hypothesis(
 
 class Repository(Protocol):
     async def provision_account(self, owner_user_id: str) -> Account: ...
+
+    async def append_audit_event(self, event: AuditEvent) -> AuditEvent: ...
+
+    async def list_audit_events_for_owner(
+        self,
+        owner_user_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[AuditEvent]: ...
 
     async def claim_account_notification_for_publish(
         self,
@@ -1029,6 +1043,7 @@ class InMemoryRepository:
         self._model_spend_reservations: dict[str, ModelSpendReservation] = {}
         self._model_usage: dict[str, ModelUsageRecord] = {}
         self._ai_traces: dict[tuple[str, str], AiTraceRecord] = {}
+        self._audit_events: dict[tuple[str, str], AuditEvent] = {}
         self._accounts: dict[str, Account] = {}
         self._account_by_owner: dict[str, str] = {}
         self._notification_outbox: dict[str, AccountCreatedOutbox] = {}
@@ -1122,6 +1137,45 @@ class InMemoryRepository:
             )
             self._notification_outbox[event.id] = event
             return account.model_copy(deep=True)
+
+    def _append_audit_event_locked(self, event: AuditEvent) -> AuditEvent:
+        if event.account_id not in self._accounts:
+            raise AccountNotProvisioned
+        key = (event.account_id, event.id)
+        existing = self._audit_events.get(key)
+        if existing is not None:
+            if existing.model_dump(exclude={"created_at"}) != event.model_dump(
+                exclude={"created_at"}
+            ):
+                raise ValueError("audit event identity conflicts with existing evidence")
+            return existing.model_copy(deep=True)
+        self._audit_events[key] = event.model_copy(deep=True)
+        return event.model_copy(deep=True)
+
+    async def append_audit_event(self, event: AuditEvent) -> AuditEvent:
+        async with self._lock:
+            return self._append_audit_event_locked(event)
+
+    async def list_audit_events_for_owner(
+        self,
+        owner_user_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[AuditEvent]:
+        if not 1 <= limit <= 200:
+            raise ValueError("audit event list limit must be between 1 and 200")
+        account = await self.account_for_owner(owner_user_id)
+        async with self._lock:
+            events = sorted(
+                (
+                    event
+                    for (account_id, _), event in self._audit_events.items()
+                    if account_id == account.id
+                ),
+                key=lambda event: (event.created_at, event.id),
+                reverse=True,
+            )
+            return [event.model_copy(deep=True) for event in events[:limit]]
 
     async def claim_account_notification_for_publish(
         self,
@@ -2662,9 +2716,21 @@ class InMemoryRepository:
             if existing is not None:
                 if existing != trace:
                     raise AiTraceConflict
-                return existing.model_copy(deep=True)
-            self._ai_traces[key] = trace.model_copy(deep=True)
-            return trace.model_copy(deep=True)
+                stored = existing.model_copy(deep=True)
+            else:
+                self._ai_traces[key] = trace.model_copy(deep=True)
+                stored = trace.model_copy(deep=True)
+            self._append_audit_event_locked(
+                build_audit_event(
+                    account_id=trace.account_id,
+                    action=AuditAction.AI_TRACE_RECORDED,
+                    actor_kind=AuditActorKind.SYSTEM,
+                    source=AuditSource.AGENT,
+                    subject_kind="trace",
+                    subject_id=trace.id,
+                )
+            )
+            return stored
 
     async def ai_trace_for_account(
         self,

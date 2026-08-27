@@ -11,6 +11,7 @@ from google.cloud.firestore_v1.async_client import AsyncClient
 from google.cloud.firestore_v1.base_query import FieldFilter
 from pydantic import BaseModel
 
+from .audit import build_audit_event
 from .errors import (
     AccountAlreadyProvisioned,
     AccountCapacityReached,
@@ -64,6 +65,10 @@ from .models import (
     ActivityEventStatus,
     ActivitySegment,
     AiTraceRecord,
+    AuditAction,
+    AuditActorKind,
+    AuditEvent,
+    AuditSource,
     BrowserCamera,
     Camera,
     CameraStatus,
@@ -2717,12 +2722,22 @@ class FirestoreRepository:
     async def record_ai_trace(self, trace: AiTraceRecord) -> AiTraceRecord:
         account_ref = self._account(trace.account_id)
         trace_ref = self._collection(trace.account_id, "traces").document(trace.id)
+        audit = build_audit_event(
+            account_id=trace.account_id,
+            action=AuditAction.AI_TRACE_RECORDED,
+            actor_kind=AuditActorKind.SYSTEM,
+            source=AuditSource.AGENT,
+            subject_kind="trace",
+            subject_id=trace.id,
+        )
+        audit_ref = self._collection(trace.account_id, "audit_events").document(audit.id)
         transaction = self._client.transaction()
 
         @firestore.async_transactional
         async def record(transaction):
             account_snapshot = await account_ref.get(transaction=transaction)
             existing_snapshot = await trace_ref.get(transaction=transaction)
+            audit_snapshot = await audit_ref.get(transaction=transaction)
             if (
                 not account_snapshot.exists
                 or account_snapshot.get("status") != "active"
@@ -2733,11 +2748,66 @@ class FirestoreRepository:
                 existing = _model(existing_snapshot, AiTraceRecord)
                 if existing != trace:
                     raise AiTraceConflict
-                return existing
-            transaction.create(trace_ref, _document(trace))
-            return trace
+                stored = existing
+            else:
+                transaction.create(trace_ref, _document(trace))
+                stored = trace
+            if audit_snapshot.exists:
+                existing_audit = _model(audit_snapshot, AuditEvent)
+                if existing_audit.model_dump(
+                    exclude={"created_at"}
+                ) != audit.model_dump(exclude={"created_at"}):
+                    raise ValueError(
+                        "audit event identity conflicts with existing evidence"
+                    )
+            else:
+                transaction.create(audit_ref, _document(audit))
+            return stored
 
         return await record(transaction)
+
+    async def append_audit_event(self, event: AuditEvent) -> AuditEvent:
+        account_ref = self._account(event.account_id)
+        event_ref = self._collection(event.account_id, "audit_events").document(event.id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def append(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
+            existing_snapshot = await event_ref.get(transaction=transaction)
+            if (
+                not account_snapshot.exists
+                or account_snapshot.get("status") != "active"
+                or account_snapshot.get("id") != event.account_id
+            ):
+                raise AccountNotProvisioned
+            if existing_snapshot.exists:
+                existing = _model(existing_snapshot, AuditEvent)
+                if existing.model_dump(exclude={"created_at"}) != event.model_dump(
+                    exclude={"created_at"}
+                ):
+                    raise ValueError("audit event identity conflicts with existing evidence")
+                return existing
+            transaction.create(event_ref, _document(event))
+            return event
+
+        return await append(transaction)
+
+    async def list_audit_events_for_owner(
+        self,
+        owner_user_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[AuditEvent]:
+        if not 1 <= limit <= 200:
+            raise ValueError("audit event list limit must be between 1 and 200")
+        account = await self.account_for_owner(owner_user_id)
+        query = (
+            self._collection(account.id, "audit_events")
+            .order_by("created_at", direction=firestore.Query.DESCENDING)
+            .limit(limit)
+        )
+        return [_model(snapshot, AuditEvent) async for snapshot in query.stream()]
 
     async def ai_trace_for_account(
         self,

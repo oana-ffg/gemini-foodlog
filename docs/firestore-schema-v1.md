@@ -97,6 +97,7 @@ belong in private Cloud Storage rather than Firestore.
 | `purchase_reconciliations/{purchase_id}` | Current deterministic order-versus-delivery projection | latest normalized confirmation/final source IDs, canonical reconciliation hash, exact-name/quantity dispositions, source item IDs, unresolved count, and an explicit flag when removed plus added lines may be substitutions but the retailer evidence does not prove the pairing. |
 | `raw_mail/{mail_id}` | MIME transport metadata and immutable object link | recipient, nullable sender <= 500 chars, normalized sender address, nullable subject <= 500 chars, nullable normalized message-ID hash, fixed `trust_class` (`untrusted_external`), bounded MIME part/attachment counts and accepted content-type list, content SHA-256, byte size, server-derived `object_key`, transport status (`reserved`, `stored`, or `published`), bounded publish attempt/provider IDs, and timestamps; MIME bytes stay in GCS and parsing adds separate normalized purchase evidence. The worker may consume `stored` or `published` after a genuine Pub/Sub event because publishing necessarily follows the durable GCS write and `stored` transition; it rejects `reserved`, missing, cross-account, or hash-mismatched records. |
 | `traces/{trace_id}` | Agent-run index | deterministic trace, root-trace, optional parent-trace, event, and model-reservation IDs; model/provider/prompt versions, purpose, retry/evaluation lineage, outcome/error code, started/completed timestamps, latency, token/cost counters, compressed byte size, and immutable GCS `object_key` plus SHA-256. Full application-visible trace content stays in GCS; invocation keys are hashed and secrets or hidden reasoning are forbidden. |
+| `audit_events/{sha256_action_subject}` | Immutable bounded operation evidence | schema version, deterministic ID, account ID, action, actor kind, source, bounded subject kind/ID, and creation time. Records contain no token, credential, request body, prompt, response, image bytes, or free-form user/model text. Repeated delivery of the same action for the same subject returns the original event instead of creating read-amplified duplicates. |
 | `jobs/{job_id}` | Durable asynchronous work state | `kind`, subject ID and revision, status, attempt count, `available_at`, lease token/owner/expiry, last error code/message <= 2,000 chars; payload <= 20 scalar/reference keys. |
 | `exports/{export_id}` | User data-export state | status, requested/completed/expiry timestamps, temporary GCS object key, byte size, SHA-256; object expires after one day. |
 | `consents/{sha256_actor_email_kind_policy_decision}` | Immutable consent change | `kind` (`launch_mail`), `granted`, `policy_version`, `actor_user_id`, `email_normalized`, timestamp; identical retries deduplicate while a changed decision or verified email appends a new event. The owning identity also holds the current decision and its dedicated update time so withdrawing and later opting in again cannot leave stale state. |
@@ -116,8 +117,10 @@ belong in private Cloud Storage rather than Firestore.
 3. If object upload fails, reconciliation returns the reservation to a retryable
    state; a retry never consumes a second quota unit.
 4. Immutable records—media links, feedback, meal revisions, consent events, raw-mail
-   identity, and trace identity—are append-only. Corrections update a materialized
-   view and append evidence.
+   identity, trace identity, and audit events—are append-only. Corrections update a
+   materialized view and append evidence. An audit ID deterministically binds its
+   action, actor kind, source, subject, and owning account; an exact retry returns the
+   original record, while conflicting reuse fails closed.
 5. A targeted meal correction names its immutable base revision and exact structural
    path. The transaction rejects stale bases or invalid paths, copies every unrelated
    component and evidence field forward, appends one revision, and only then updates
