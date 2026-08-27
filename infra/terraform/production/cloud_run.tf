@@ -11,6 +11,21 @@ variable "api_container_image" {
   }
 }
 
+variable "unlimited_owner_user_ids" {
+  description = "Firebase UIDs explicitly exempted from public capacity and image-trial limits. Supply through ignored local Terraform input; never commit user identifiers."
+  type        = set(string)
+  default     = []
+  sensitive   = true
+
+  validation {
+    condition = alltrue([
+      for uid in var.unlimited_owner_user_ids :
+      length(uid) >= 1 && length(uid) <= 128 && uid == trimspace(uid)
+    ])
+    error_message = "Unlimited Firebase UIDs must be non-empty, trimmed, and at most 128 characters."
+  }
+}
+
 locals {
   model_spend_limit_dkk_micros = 400000000
 
@@ -35,6 +50,7 @@ locals {
     FOODLOG_PUBLIC_ACCOUNT_LIMIT          = "25"
     FOODLOG_STORAGE_BACKEND               = "gcp"
     FOODLOG_TRIAL_IMAGE_LIMIT             = "200"
+    FOODLOG_UNLIMITED_OWNER_USER_IDS      = jsonencode(sort(tolist(var.unlimited_owner_user_ids)))
     FOODLOG_WAITLIST_POLICY_VERSION       = "capacity-waitlist-v1"
   }
 

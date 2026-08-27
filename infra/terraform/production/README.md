@@ -52,6 +52,16 @@ uses deletion policy `PREVENT`, and the live database also has delete protection
 enabled. Point-in-time recovery remains disabled during the prototype to avoid
 unnecessary retained-version storage; the standard one-hour version window remains.
 
+### Unlimited internal or judge accounts
+
+Public accounts receive the configured 200-image lifetime trial. To make a known
+Firebase account unlimited, add its exact UID to an ignored
+`infra/terraform/production/terraform.tfvars` file as an item in the
+`unlimited_owner_user_ids` set. Create that input only after the real UID is known;
+do not commit the file or the UID. Apply the reviewed Terraform plan before the
+account is provisioned. Entitlement mode is assigned when the account record is
+created and is not silently changed by later configuration edits.
+
 ## App Engine inbound-mail bootstrap
 
 The App Engine application is a one-time project property rather than a resource in
