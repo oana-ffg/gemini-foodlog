@@ -131,9 +131,7 @@ def test_mail_worker_preserves_confirmation_then_final_invoice_as_one_purchase()
                 raw_mail_id=mail_id,
                 content_sha256=sha256(content).hexdigest(),
             )
-            events.append(
-                RawMailStoredEventV1(account_id=account.id, mail_id=mail_id)
-            )
+            events.append(RawMailStoredEventV1(account_id=account.id, mail_id=mail_id))
         return repository, store, account.id, events
 
     repository, store, account_id, events = asyncio.run(prepare())
@@ -164,28 +162,18 @@ def test_mail_worker_preserves_confirmation_then_final_invoice_as_one_purchase()
         if scope == account_id
     ]
     purchases = [
-        purchase
-        for (scope, _), purchase in repository._purchases.items()
-        if scope == account_id
+        purchase for (scope, _), purchase in repository._purchases.items() if scope == account_id
     ]
     normalizations = [
         normalization
         for (scope, _), normalization in repository._purchase_normalizations.items()
         if scope == account_id
     ]
-    items = [
-        item
-        for (scope, _), item in repository._purchase_items.items()
-        if scope == account_id
-    ]
+    items = [item for (scope, _), item in repository._purchase_items.items() if scope == account_id]
     charges = [
-        charge
-        for (scope, _), charge in repository._purchase_charges.items()
-        if scope == account_id
+        charge for (scope, _), charge in repository._purchase_charges.items() if scope == account_id
     ]
-    reconciliation = repository._purchase_reconciliations[
-        (account_id, purchases[0].id)
-    ]
+    reconciliation = repository._purchase_reconciliations[(account_id, purchases[0].id)]
     assert health.json() == {"status": "ok", "mode": "test"}
     assert confirmation.status_code == invoice.status_code == duplicate.status_code == 204
     assert len(purchases) == 1
@@ -199,9 +187,9 @@ def test_mail_worker_preserves_confirmation_then_final_invoice_as_one_purchase()
     assert len(items) == 4
     assert len(charges) == 11
     assert reconciliation.unresolved_item_count == 0
-    assert {
-        item.disposition for item in reconciliation.items
-    } == {PurchaseReconciliationDisposition.DELIVERED_AS_ORDERED}
+    assert {item.disposition for item in reconciliation.items} == {
+        PurchaseReconciliationDisposition.DELIVERED_AS_ORDERED
+    }
 
 
 def test_mail_worker_rejects_bad_event_and_retries_missing_object() -> None:

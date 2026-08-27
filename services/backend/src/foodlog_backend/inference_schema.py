@@ -145,6 +145,7 @@ class FocusedEventQuestion(InferenceModel):
 
 class ActivityMealInferenceV1(InferenceModel):
     """Shared validated contract for model output and persisted journal hypotheses."""
+
     schema_version: Literal["activity-meal-inference-v1"]
     event_id: str = Field(min_length=1, max_length=160)
     source_capture_ids: list[str] = Field(min_length=1, max_length=120)
@@ -247,9 +248,7 @@ class ActivityMealInferenceV1(InferenceModel):
                 )
             question_evidence = set(self.question.evidence_ids)
             for candidate_label in self.question.candidate_labels[1:]:
-                candidate_evidence = set(
-                    alternatives_by_label[candidate_label].evidence_ids
-                )
+                candidate_evidence = set(alternatives_by_label[candidate_label].evidence_ids)
                 if not candidate_evidence <= question_evidence:
                     raise ValueError(
                         "question evidence must include every cited alternative's evidence"

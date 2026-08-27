@@ -308,8 +308,7 @@ def validate_knowledge_revision(
     if draft.lifecycle not in _KNOWLEDGE_TRANSITIONS[previous.lifecycle]:
         raise InvalidKnowledgeTransition
     if not any(
-        evidence.kind == KnowledgeEvidenceKind.KNOWLEDGE_REVISION
-        and evidence.id == previous.id
+        evidence.kind == KnowledgeEvidenceKind.KNOWLEDGE_REVISION and evidence.id == previous.id
         for evidence in draft.evidence
     ):
         raise InvalidKnowledgeProvenance
@@ -528,9 +527,7 @@ def materialize_activity_hypothesis(
         alternatives=[item.label for item in hypothesis.alternatives],
         rationale=hypothesis.rationale,
         clarification_question=(hypothesis.question.prompt if hypothesis.question else None),
-        clarification_reason=(
-            hypothesis.question.justification if hypothesis.question else None
-        ),
+        clarification_reason=(hypothesis.question.justification if hypothesis.question else None),
         status=MealStatus.PROVISIONAL,
         revision_number=revision_number,
         created_at=created_at,
@@ -1079,14 +1076,10 @@ class InMemoryRepository:
         self._purchases: dict[tuple[str, str], Purchase] = {}
         self._purchase_documents: dict[tuple[str, str], PurchaseDocument] = {}
         self._purchase_aliases: dict[tuple[str, str], PurchaseIdentityAlias] = {}
-        self._purchase_normalizations: dict[
-            tuple[str, str], PurchaseDocumentNormalization
-        ] = {}
+        self._purchase_normalizations: dict[tuple[str, str], PurchaseDocumentNormalization] = {}
         self._purchase_items: dict[tuple[str, str], PurchaseItem] = {}
         self._purchase_charges: dict[tuple[str, str], PurchaseCharge] = {}
-        self._purchase_reconciliations: dict[
-            tuple[str, str], PurchaseReconciliation
-        ] = {}
+        self._purchase_reconciliations: dict[tuple[str, str], PurchaseReconciliation] = {}
         self._device_cameras: dict[str, DeviceCamera] = {}
         self._device_credentials: dict[str, DeviceCredentialRecord] = {}
         self._cameras: dict[str, BrowserCamera] = {}
@@ -1559,21 +1552,17 @@ class InMemoryRepository:
             purchase = self._purchases.get((document.account_id, document.purchase_id))
             if source != document or purchase is None:
                 raise PurchaseNormalizationConflict
-            existing = self._purchase_normalizations.get(
-                (document.account_id, document.id)
-            )
+            existing = self._purchase_normalizations.get((document.account_id, document.id))
             if existing is not None:
-                if (
-                    existing.model_dump(exclude={"created_at"})
-                    != normalization.model_dump(exclude={"created_at"})
+                if existing.model_dump(exclude={"created_at"}) != normalization.model_dump(
+                    exclude={"created_at"}
                 ):
                     raise PurchaseNormalizationConflict
                 persisted_items = [
                     self._purchase_items[(document.account_id, item.id)] for item in items
                 ]
                 persisted_charges = [
-                    self._purchase_charges[(document.account_id, charge.id)]
-                    for charge in charges
+                    self._purchase_charges[(document.account_id, charge.id)] for charge in charges
                 ]
                 reconciliation = self._purchase_reconciliations.get(
                     (document.account_id, document.purchase_id)
@@ -1599,8 +1588,7 @@ class InMemoryRepository:
             confirmation_items = [
                 item
                 for (account_id, _), item in self._purchase_items.items()
-                if account_id == document.account_id
-                and item.document_id == confirmation_id
+                if account_id == document.account_id and item.document_id == confirmation_id
             ]
             final_items = [
                 item
@@ -1653,9 +1641,7 @@ class InMemoryRepository:
     ) -> PurchaseEvidenceBundle:
         account = await self.account_for_owner(owner_user_id)
         async with self._lock:
-            return self._purchase_evidence_unlocked(account.id, purchase_id).model_copy(
-                deep=True
-            )
+            return self._purchase_evidence_unlocked(account.id, purchase_id).model_copy(deep=True)
 
     async def recent_purchase_evidence_for_account(
         self,
@@ -1677,9 +1663,7 @@ class InMemoryRepository:
                 reverse=True,
             )[:limit]
             return [
-                self._purchase_evidence_unlocked(account_id, purchase.id).model_copy(
-                    deep=True
-                )
+                self._purchase_evidence_unlocked(account_id, purchase.id).model_copy(deep=True)
                 for purchase in purchases
             ]
 
@@ -1718,9 +1702,7 @@ class InMemoryRepository:
             ),
             key=lambda item: (item.document_revision_number, item.ordinal),
         )
-        document_revisions = {
-            document.id: document.revision_number for document in documents
-        }
+        document_revisions = {document.id: document.revision_number for document in documents}
         charges = sorted(
             (
                 charge
@@ -2588,9 +2570,7 @@ class InMemoryRepository:
                 existing_meal.account_id != account_id or existing_meal.event_id != event_id
             ):
                 raise CrossAccountAccess
-            revision_number = (
-                existing_meal.revision_number + 1 if existing_meal is not None else 1
-            )
+            revision_number = existing_meal.revision_number + 1 if existing_meal is not None else 1
             created_at = existing_meal.created_at if existing_meal is not None else now
             meal = materialize_activity_hypothesis(
                 event=event,
@@ -2676,10 +2656,7 @@ class InMemoryRepository:
                 ):
                     raise ModelSpendReservationConflict
                 return existing.model_copy(deep=True)
-            proposed_total = (
-                self._model_spend_reserved_dkk_micros
-                + reservation.reserved_dkk_micros
-            )
+            proposed_total = self._model_spend_reserved_dkk_micros + reservation.reserved_dkk_micros
             if proposed_total > self._model_spend_limit_dkk_micros:
                 raise ModelSpendLimitExceeded
             stored = reservation.model_copy(deep=True)
@@ -2903,13 +2880,9 @@ class InMemoryRepository:
                 return existing.model_copy(deep=True)
             predecessor = None
             if topic_key is not None:
-                predecessor_id = self._latest_pattern_question_by_topic.get(
-                    (account_id, topic_key)
-                )
+                predecessor_id = self._latest_pattern_question_by_topic.get((account_id, topic_key))
                 predecessor = (
-                    self._questions.get(predecessor_id)
-                    if predecessor_id is not None
-                    else None
+                    self._questions.get(predecessor_id) if predecessor_id is not None else None
                 )
                 if predecessor is not None:
                     if predecessor.status == QuestionStatus.OPEN:
@@ -2917,12 +2890,9 @@ class InMemoryRepository:
                     if predecessor.response_kind != QuestionResponseKind.REJECT:
                         return predecessor.model_copy(deep=True)
                     prior_support_ids = {
-                        item.evidence.id
-                        for item in predecessor.pattern_supporting_examples
+                        item.evidence.id for item in predecessor.pattern_supporting_examples
                     }
-                    new_support_ids = {
-                        item.evidence.id for item in supporting_examples or []
-                    }
+                    new_support_ids = {item.evidence.id for item in supporting_examples or []}
                     if (
                         len(new_support_ids - prior_support_ids)
                         < PATTERN_RESURFACE_MINIMUM_NEW_SUPPORT
@@ -2990,8 +2960,7 @@ class InMemoryRepository:
             meals: Iterable[MealEntry] = (
                 meal
                 for meal in self._meals.values()
-                if meal.account_id == account.id
-                and (status is None or meal.status == status)
+                if meal.account_id == account.id and (status is None or meal.status == status)
             )
             return [
                 meal.model_copy(deep=True)
@@ -3038,9 +3007,7 @@ class InMemoryRepository:
         async with self._lock:
             if account_id not in self._accounts:
                 raise AccountNotProvisioned
-            duplicate = self._knowledge_revision_requests.get(
-                (account_id, idempotency_key)
-            )
+            duplicate = self._knowledge_revision_requests.get((account_id, idempotency_key))
             if duplicate is not None:
                 stored_hash, result = duplicate
                 if stored_hash != request_hash:
@@ -3127,8 +3094,7 @@ class InMemoryRepository:
             pages = (
                 page
                 for page in self._knowledge_pages.values()
-                if page.account_id == account_id
-                and page.lifecycle != KnowledgeLifecycle.RETIRED
+                if page.account_id == account_id and page.lifecycle != KnowledgeLifecycle.RETIRED
             )
             return [
                 page.model_copy(deep=True)
@@ -3213,8 +3179,7 @@ class InMemoryRepository:
         await self.knowledge_page_for_owner(owner_user_id, page_id)
         async with self._lock:
             return [
-                revision.model_copy(deep=True)
-                for revision in self._knowledge_revisions[page_id]
+                revision.model_copy(deep=True) for revision in self._knowledge_revisions[page_id]
             ]
 
     async def record_meal_feedback(
@@ -3246,18 +3211,12 @@ class InMemoryRepository:
         account = await self.account_for_owner(owner_user_id)
         async with self._lock:
             feedback = sorted(
-                (
-                    item
-                    for item in self._feedback.values()
-                    if item.account_id == account.id
-                ),
+                (item for item in self._feedback.values() if item.account_id == account.id),
                 key=lambda item: (item.created_at, item.id),
                 reverse=True,
             )
             return [
-                MealFeedbackView.model_validate(
-                    item.model_dump(exclude={"idempotency_key"})
-                )
+                MealFeedbackView.model_validate(item.model_dump(exclude={"idempotency_key"}))
                 for item in feedback[:limit]
             ]
 
@@ -3408,9 +3367,7 @@ class InMemoryRepository:
                 )
                 if current is None or current.account_id != account_id:
                     raise MealRevisionConflict
-                result.append(
-                    (meal.model_copy(deep=True), current.model_copy(deep=True))
-                )
+                result.append((meal.model_copy(deep=True), current.model_copy(deep=True)))
             return result
 
     async def active_user_context_notes_for_account(
@@ -3465,8 +3422,7 @@ class InMemoryRepository:
                 (
                     question
                     for question in self._questions.values()
-                    if question.account_id == account_id
-                    and question.status == QuestionStatus.OPEN
+                    if question.account_id == account_id and question.status == QuestionStatus.OPEN
                 ),
                 key=lambda item: (item.created_at, item.id),
                 reverse=True,
@@ -3515,9 +3471,7 @@ class InMemoryRepository:
             question = self._questions.get(question_id)
             if not question or question.account_id != account.id:
                 raise QuestionNotFound
-            duplicate_id = self._question_response_by_idempotency.get(
-                (account.id, idempotency_key)
-            )
+            duplicate_id = self._question_response_by_idempotency.get((account.id, idempotency_key))
             if duplicate_id is not None:
                 response = self._question_responses[duplicate_id]
                 if (
@@ -3563,9 +3517,7 @@ class InMemoryRepository:
                         else MealFeedbackKind.CORRECT
                     ),
                     actual_meal=(
-                        request.correction
-                        if request.kind == QuestionResponseKind.CORRECT
-                        else None
+                        request.correction if request.kind == QuestionResponseKind.CORRECT else None
                     ),
                     explanation=(
                         request.explanation
@@ -3589,9 +3541,7 @@ class InMemoryRepository:
                 correction=request.correction,
                 explanation=request.explanation,
                 idempotency_key=idempotency_key,
-                feedback_id=(
-                    feedback_result.feedback.id if feedback_result is not None else None
-                ),
+                feedback_id=(feedback_result.feedback.id if feedback_result is not None else None),
             )
             question.status = QuestionStatus.ANSWERED
             question.response_kind = request.kind
@@ -3628,9 +3578,7 @@ class InMemoryRepository:
                 reverse=True,
             )
             return [
-                QuestionResponseView.model_validate(
-                    item.model_dump(exclude={"idempotency_key"})
-                )
+                QuestionResponseView.model_validate(item.model_dump(exclude={"idempotency_key"}))
                 for item in responses[:limit]
             ]
 
@@ -3885,9 +3833,7 @@ def targeted_correction_inference(
         component = _correction_component(components, correction.component_index)
         if correction.preparation_method_index >= len(component.preparation_methods):
             raise InvalidMealCorrectionTarget
-        component.preparation_methods[correction.preparation_method_index] = (
-            correction.replacement
-        )
+        component.preparation_methods[correction.preparation_method_index] = correction.replacement
     else:  # pragma: no cover - the discriminated model union is exhaustive
         raise InvalidMealCorrectionTarget
 

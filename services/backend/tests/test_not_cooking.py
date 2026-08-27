@@ -119,10 +119,13 @@ def test_not_cooking_is_immutable_hidden_and_exactly_retryable() -> None:
             MealStatus.NOT_COOKING,
         ]
         assert revisions[0].inference == revisions[1].inference
-        assert await repository.list_questions(
-            "not-cooking-owner",
-            question_status=QuestionStatus.OPEN,
-        ) == []
+        assert (
+            await repository.list_questions(
+                "not-cooking-owner",
+                question_status=QuestionStatus.OPEN,
+            )
+            == []
+        )
         superseded = await repository.list_questions(
             "not-cooking-owner",
             question_status=QuestionStatus.SUPERSEDED,
@@ -187,9 +190,7 @@ def test_explicit_correction_reclassifies_not_cooking_without_erasing_history() 
 
         assert reclassified.revision.status == MealStatus.CORRECTED
         assert reclassified.revision.inference.title == "Steak"
-        assert [item.id for item in await repository.list_meals("reclassify-owner")] == [
-            meal.id
-        ]
+        assert [item.id for item in await repository.list_meals("reclassify-owner")] == [meal.id]
         revisions = await repository.list_meal_revisions("reclassify-owner", meal.id)
         assert [revision.status for revision in revisions] == [
             MealStatus.PROVISIONAL,

@@ -635,8 +635,7 @@ class PurchaseEvidenceBundle(BaseModel):
         if self.reconciliation is not None:
             evidence.append(self.reconciliation)
         if any(
-            item.account_id != account_id or item.purchase_id != purchase_id
-            for item in evidence
+            item.account_id != account_id or item.purchase_id != purchase_id for item in evidence
         ):
             raise ValueError("purchase evidence crosses an account or purchase boundary")
         return self
@@ -1068,9 +1067,7 @@ class ModelUsageRecord(BaseModel):
 
 class AiTraceRecord(BaseModel):
     id: str = Field(pattern=r"^trace-[0-9a-f]{64}$")
-    schema_version: Literal["application-visible-ai-trace-v1"] = (
-        "application-visible-ai-trace-v1"
-    )
+    schema_version: Literal["application-visible-ai-trace-v1"] = "application-visible-ai-trace-v1"
     account_id: str = Field(min_length=1, max_length=128)
     event_id: str = Field(min_length=1, max_length=160)
     reservation_id: str = Field(min_length=8, max_length=160)
@@ -1153,10 +1150,7 @@ class PreparationMethodCorrection(BaseModel):
 
 
 MealCorrection = Annotated[
-    WholeMealCorrection
-    | ComponentCorrection
-    | IngredientCorrection
-    | PreparationMethodCorrection,
+    WholeMealCorrection | ComponentCorrection | IngredientCorrection | PreparationMethodCorrection,
     Field(discriminator="scope"),
 ]
 
@@ -1541,11 +1535,7 @@ class ClarificationQuestion(BaseModel):
             raise ValueError("open questions cannot contain a resolution")
         if (
             self.status == QuestionStatus.ANSWERED
-            and (
-                self.response_kind is None
-                or self.response_id is None
-                or self.answered_at is None
-            )
+            and (self.response_kind is None or self.response_id is None or self.answered_at is None)
             # Legacy persisted questions predate typed response fields.
             and (self.answer is None or self.answered_at is None)
         ):

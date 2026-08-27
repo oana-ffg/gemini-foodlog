@@ -34,9 +34,7 @@ async def run_smoke(
     active_context = await active_service.get_active_user_context(context=context)
     unresolved = await active_service.get_unresolved_reviews(context=context)
     active_knowledge_service = knowledge_service or production_knowledge_tools_service()
-    knowledge_index = await active_knowledge_service.list_household_knowledge(
-        context=context
-    )
+    knowledge_index = await active_knowledge_service.list_household_knowledge(context=context)
     selected_knowledge = None
     if knowledge_index.pages:
         selected_knowledge = (
@@ -52,9 +50,7 @@ async def run_smoke(
         "recent_event_ids": [meal.event_id for meal in recent.meals],
         "purchase_context_available": recent_purchases.available,
         "recent_purchase_count": len(recent_purchases.purchases),
-        "recent_purchase_ids": [
-            purchase.purchase_id for purchase in recent_purchases.purchases
-        ],
+        "recent_purchase_ids": [purchase.purchase_id for purchase in recent_purchases.purchases],
         "active_note_count": len(active_context.notes),
         "active_note_ids": [note.note_id for note in active_context.notes],
         "unresolved_meal_count": len(unresolved.meals),
@@ -67,9 +63,7 @@ async def run_smoke(
             selected_knowledge.page_id if selected_knowledge is not None else None
         ),
         "selected_knowledge_revision_id": (
-            selected_knowledge.revision.revision_id
-            if selected_knowledge is not None
-            else None
+            selected_knowledge.revision.revision_id if selected_knowledge is not None else None
         ),
         "model_calls": 0,
     }

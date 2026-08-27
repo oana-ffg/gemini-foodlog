@@ -131,9 +131,7 @@ class KnowledgeToolsService:
             account_id=account_id,
             limit=KNOWLEDGE_TOOL_RESULT_LIMIT,
         )
-        return HouseholdKnowledgeIndexToolResult(
-            pages=[_page_summary(page) for page in pages]
-        )
+        return HouseholdKnowledgeIndexToolResult(pages=[_page_summary(page) for page in pages])
 
     async def read_household_knowledge_page(
         self,

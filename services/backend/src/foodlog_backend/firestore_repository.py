@@ -188,11 +188,7 @@ def _public_capacity_values(
     stored_limit = snapshot.get("account_limit") if snapshot.exists else configured_limit
     if not isinstance(count, int) or isinstance(count, bool) or count < 0:
         raise ValueError("Public account capacity count is invalid")
-    if (
-        not isinstance(stored_limit, int)
-        or isinstance(stored_limit, bool)
-        or stored_limit < 1
-    ):
+    if not isinstance(stored_limit, int) or isinstance(stored_limit, bool) or stored_limit < 1:
         raise ValueError("Public account capacity limit is invalid")
     return count, min(stored_limit, configured_limit)
 
@@ -308,6 +304,7 @@ class FirestoreRepository:
         trial_image_limit = (
             self._trial_image_limit if entitlement_mode == EntitlementMode.TRIAL else None
         )
+
         @firestore.async_transactional
         async def provision(transaction):
             identity_ref = self._identity(owner_user_id)
@@ -405,9 +402,7 @@ class FirestoreRepository:
         for attempt in range(PUBLIC_CAPACITY_OUTER_RETRY_ATTEMPTS):
             try:
                 return await provision(
-                    self._client.transaction(
-                        max_attempts=PUBLIC_CAPACITY_TRANSACTION_MAX_ATTEMPTS
-                    )
+                    self._client.transaction(max_attempts=PUBLIC_CAPACITY_TRANSACTION_MAX_ATTEMPTS)
                 )
             except ValueError as exc:
                 if not str(exc).startswith(TRANSACTION_COMMIT_FAILURE_PREFIX):
@@ -901,9 +896,11 @@ class FirestoreRepository:
                 return []
             if source_document_id == document.id:
                 return items
-            source_normalization_snapshot = await self._collection(
-                document.account_id, "purchase_normalizations"
-            ).document(source_document_id).get(transaction=transaction)
+            source_normalization_snapshot = (
+                await self._collection(document.account_id, "purchase_normalizations")
+                .document(source_document_id)
+                .get(transaction=transaction)
+            )
             if not source_normalization_snapshot.exists:
                 return []
             source_normalization = _model(
@@ -918,10 +915,10 @@ class FirestoreRepository:
                 raise PurchaseNormalizationConflict
             loaded = []
             for ordinal in range(1, source_normalization.item_count + 1):
-                item_snapshot = await self._collection(
-                    document.account_id, "purchase_items"
-                ).document(purchase_item_id(source_document_id, ordinal)).get(
-                    transaction=transaction
+                item_snapshot = (
+                    await self._collection(document.account_id, "purchase_items")
+                    .document(purchase_item_id(source_document_id, ordinal))
+                    .get(transaction=transaction)
                 )
                 if not item_snapshot.exists:
                     raise PurchaseNormalizationConflict
@@ -962,17 +959,21 @@ class FirestoreRepository:
                     raise PurchaseNormalizationConflict
                 persisted_items = []
                 for item in items:
-                    snapshot = await self._collection(
-                        document.account_id, "purchase_items"
-                    ).document(item.id).get(transaction=transaction)
+                    snapshot = (
+                        await self._collection(document.account_id, "purchase_items")
+                        .document(item.id)
+                        .get(transaction=transaction)
+                    )
                     if not snapshot.exists:
                         raise PurchaseNormalizationConflict
                     persisted_items.append(_model(snapshot, PurchaseItem))
                 persisted_charges = []
                 for charge in charges:
-                    snapshot = await self._collection(
-                        document.account_id, "purchase_charges"
-                    ).document(charge.id).get(transaction=transaction)
+                    snapshot = (
+                        await self._collection(document.account_id, "purchase_charges")
+                        .document(charge.id)
+                        .get(transaction=transaction)
+                    )
                     if not snapshot.exists:
                         raise PurchaseNormalizationConflict
                     persisted_charges.append(_model(snapshot, PurchaseCharge))
@@ -1014,16 +1015,12 @@ class FirestoreRepository:
             transaction.create(normalization_ref, _document(normalization))
             for item in items:
                 transaction.create(
-                    self._collection(document.account_id, "purchase_items").document(
-                        item.id
-                    ),
+                    self._collection(document.account_id, "purchase_items").document(item.id),
                     _document(item),
                 )
             for charge in charges:
                 transaction.create(
-                    self._collection(document.account_id, "purchase_charges").document(
-                        charge.id
-                    ),
+                    self._collection(document.account_id, "purchase_charges").document(charge.id),
                     _document(charge),
                 )
             transaction.set(reconciliation_ref, _document(reconciliation))
@@ -1118,32 +1115,23 @@ class FirestoreRepository:
             query = self._collection(account_id, name).where(
                 filter=FieldFilter("purchase_id", "==", purchase.id)
             )
-            return [
-                _model(snapshot, model_type)
-                async for snapshot in query.stream()
-            ]
+            return [_model(snapshot, model_type) async for snapshot in query.stream()]
 
-        documents = await purchase_collection_models(
-            "purchase_documents", PurchaseDocument
-        )
+        documents = await purchase_collection_models("purchase_documents", PurchaseDocument)
         normalizations = await purchase_collection_models(
             "purchase_normalizations", PurchaseDocumentNormalization
         )
         items = await purchase_collection_models("purchase_items", PurchaseItem)
         charges = await purchase_collection_models("purchase_charges", PurchaseCharge)
         reconciliation_snapshot = await (
-            self._collection(account_id, "purchase_reconciliations")
-            .document(purchase.id)
-            .get()
+            self._collection(account_id, "purchase_reconciliations").document(purchase.id).get()
         )
         reconciliation = (
             _model(reconciliation_snapshot, PurchaseReconciliation)
             if reconciliation_snapshot.exists
             else None
         )
-        document_revisions = {
-            document.id: document.revision_number for document in documents
-        }
+        document_revisions = {document.id: document.revision_number for document in documents}
         return PurchaseEvidenceBundle(
             purchase=purchase,
             documents=sorted(documents, key=lambda document: document.revision_number),
@@ -1321,9 +1309,7 @@ class FirestoreRepository:
             launch_mail_policy_version=launch_policy_version,
             launch_mail_updated_at=launch_updated_at,
             waitlist_status=stored_waitlist.status if stored_waitlist else "not_joined",
-            waitlist_policy_version=(
-                stored_waitlist.policy_version if stored_waitlist else None
-            ),
+            waitlist_policy_version=(stored_waitlist.policy_version if stored_waitlist else None),
             waitlist_updated_at=stored_waitlist.updated_at if stored_waitlist else None,
         )
 
@@ -1864,9 +1850,7 @@ class FirestoreRepository:
                 raise CaptureNotFound
             if snapshot.get("status") != CaptureStatus.ACCEPTED.value:
                 return
-            camera_ref = self._collection(account_id, "cameras").document(
-                snapshot.get("camera_id")
-            )
+            camera_ref = self._collection(account_id, "cameras").document(snapshot.get("camera_id"))
             camera_snapshot = await camera_ref.get(transaction=transaction)
             if not camera_snapshot.exists or camera_snapshot.get("account_id") != account_id:
                 raise CameraNotFound
@@ -1898,9 +1882,7 @@ class FirestoreRepository:
                 camera_ref,
                 {
                     "accepted_capture_count": capture_count + 1,
-                    "last_capture_at": max(
-                        filter(None, (previous_capture_at, captured_at))
-                    ),
+                    "last_capture_at": max(filter(None, (previous_capture_at, captured_at))),
                     "updated_at": now,
                 },
             )
@@ -2375,9 +2357,7 @@ class FirestoreRepository:
         query = self._collection(account_id, "captures").where(
             filter=FieldFilter("event_id", "==", event_id)
         )
-        captures = [
-            self._capture_from_snapshot(snapshot, "") async for snapshot in query.stream()
-        ]
+        captures = [self._capture_from_snapshot(snapshot, "") async for snapshot in query.stream()]
         if any(capture.account_id != account_id for capture in captures):
             raise ValueError("Activity event evidence escaped its account scope")
         if len(captures) != event.capture_count:
@@ -2395,9 +2375,7 @@ class FirestoreRepository:
         hypothesis: ActivityMealInferenceV1,
     ) -> MealEntry | None:
         event_ref = self._collection(account_id, "events").document(event_id)
-        job_ref = self._collection(account_id, "jobs").document(
-            event_inference_job_id(event_id)
-        )
+        job_ref = self._collection(account_id, "jobs").document(event_inference_job_id(event_id))
         capture_refs = [
             self._collection(account_id, "captures").document(capture_id)
             for capture_id in hypothesis.source_capture_ids
@@ -2433,15 +2411,11 @@ class FirestoreRepository:
             if len(capture_refs) != event.capture_count:
                 raise ValueError("Activity hypothesis evidence count does not match the event")
             capture_snapshots = [
-                await capture_ref.get(transaction=transaction)
-                for capture_ref in capture_refs
+                await capture_ref.get(transaction=transaction) for capture_ref in capture_refs
             ]
             if any(not snapshot.exists for snapshot in capture_snapshots):
                 raise ValueError("Activity hypothesis references missing event evidence")
-            captures = [
-                self._capture_from_snapshot(snapshot, "")
-                for snapshot in capture_snapshots
-            ]
+            captures = [self._capture_from_snapshot(snapshot, "") for snapshot in capture_snapshots]
             if any(
                 capture.account_id != account_id or capture.event_id != event_id
                 for capture in captures
@@ -2457,9 +2431,7 @@ class FirestoreRepository:
                 existing_meal.account_id != account_id or existing_meal.event_id != event_id
             ):
                 raise CrossAccountAccess
-            revision_number = (
-                existing_meal.revision_number + 1 if existing_meal is not None else 1
-            )
+            revision_number = existing_meal.revision_number + 1 if existing_meal is not None else 1
             created_at = existing_meal.created_at if existing_meal is not None else now
             meal = materialize_activity_hypothesis(
                 event=event,
@@ -2641,9 +2613,7 @@ class FirestoreRepository:
         account_id: str,
         reservation_id: str,
     ) -> ModelUsageRecord | None:
-        snapshot = await (
-            self._collection(account_id, "model_usage").document(reservation_id).get()
-        )
+        snapshot = await self._collection(account_id, "model_usage").document(reservation_id).get()
         if not snapshot.exists:
             return None
         usage = _model(snapshot, ModelUsageRecord)
@@ -2756,12 +2726,10 @@ class FirestoreRepository:
                 stored = trace
             if audit_snapshot.exists:
                 existing_audit = _model(audit_snapshot, AuditEvent)
-                if existing_audit.model_dump(
+                if existing_audit.model_dump(exclude={"created_at"}) != audit.model_dump(
                     exclude={"created_at"}
-                ) != audit.model_dump(exclude={"created_at"}):
-                    raise ValueError(
-                        "audit event identity conflicts with existing evidence"
-                    )
+                ):
+                    raise ValueError("audit event identity conflicts with existing evidence")
             else:
                 transaction.create(audit_ref, _document(audit))
             return stored
@@ -3014,9 +2982,7 @@ class FirestoreRepository:
             predecessor_snapshot = None
             if topic_snapshot is not None and topic_snapshot.exists:
                 predecessor_id = topic_snapshot.get("latest_question_id")
-                predecessor_ref = self._collection(account_id, "questions").document(
-                    predecessor_id
-                )
+                predecessor_ref = self._collection(account_id, "questions").document(predecessor_id)
                 predecessor_snapshot = await predecessor_ref.get(transaction=transaction)
             superseded_snapshot = (
                 await superseded_ref.get(transaction=transaction)
@@ -3048,12 +3014,9 @@ class FirestoreRepository:
                 prior_support_ids = {
                     item.evidence.id for item in predecessor.pattern_supporting_examples
                 }
-                new_support_ids = {
-                    item.evidence.id for item in supporting_examples or []
-                }
+                new_support_ids = {item.evidence.id for item in supporting_examples or []}
                 if (
-                    len(new_support_ids - prior_support_ids)
-                    < PATTERN_RESURFACE_MINIMUM_NEW_SUPPORT
+                    len(new_support_ids - prior_support_ids) < PATTERN_RESURFACE_MINIMUM_NEW_SUPPORT
                     or predecessor.pattern_observation_ended_at is None
                     or observation_ended_at is None
                     or observation_ended_at <= predecessor.pattern_observation_ended_at
@@ -3119,10 +3082,7 @@ class FirestoreRepository:
         query = self._collection(account.id, "meals")
         if status is not None:
             query = query.where(filter=FieldFilter("status", "==", status.value))
-        meals = [
-            _model(snapshot, MealEntry)
-            async for snapshot in query.stream()
-        ]
+        meals = [_model(snapshot, MealEntry) async for snapshot in query.stream()]
         return sorted(
             meals,
             key=lambda item: (item.occurred_at or item.created_at, item.id),
@@ -3289,10 +3249,14 @@ class FirestoreRepository:
         idempotency_key: str,
     ) -> KnowledgeRevisionResult | None:
         revision_id = sha256(idempotency_key.encode()).hexdigest()
-        request_snapshot = await self._collection(
-            account_id,
-            "knowledge_revision_requests",
-        ).document(revision_id).get()
+        request_snapshot = (
+            await self._collection(
+                account_id,
+                "knowledge_revision_requests",
+            )
+            .document(revision_id)
+            .get()
+        )
         if not request_snapshot.exists:
             account_snapshot = await self._account(account_id).get()
             if not account_snapshot.exists:
@@ -3307,9 +3271,9 @@ class FirestoreRepository:
             raise ValueError("knowledge revision idempotency record is incomplete")
         page_ref = self._collection(account_id, "knowledge").document(page_id)
         page_snapshot = await page_ref.get()
-        revision_snapshot = await page_ref.collection("revisions").document(
-            stored_revision_id
-        ).get()
+        revision_snapshot = (
+            await page_ref.collection("revisions").document(stored_revision_id).get()
+        )
         if not page_snapshot.exists or not revision_snapshot.exists:
             raise ValueError("knowledge revision idempotency record is incomplete")
         current_page = _model(page_snapshot, KnowledgePage)
@@ -3342,9 +3306,9 @@ class FirestoreRepository:
         page = _model(page_snapshot, KnowledgePage)
         if page.account_id != account_id:
             raise KnowledgePageNotFound
-        revision_snapshot = await page_ref.collection("revisions").document(
-            page.current_revision_id
-        ).get()
+        revision_snapshot = (
+            await page_ref.collection("revisions").document(page.current_revision_id).get()
+        )
         if not revision_snapshot.exists:
             raise ValueError("current knowledge revision is missing")
         return KnowledgeRevisionResult(
@@ -3373,9 +3337,7 @@ class FirestoreRepository:
                 .order_by("updated_at", direction=firestore.Query.DESCENDING)
                 .limit(limit)
             )
-            pages.extend(
-                [_model(snapshot, KnowledgePage) async for snapshot in query.stream()]
-            )
+            pages.extend([_model(snapshot, KnowledgePage) async for snapshot in query.stream()])
         if any(page.account_id != account_id for page in pages):
             raise KnowledgePageNotFound
         return sorted(
@@ -3400,9 +3362,9 @@ class FirestoreRepository:
         page = _model(page_snapshot, KnowledgePage)
         if page.account_id != account_id or page.lifecycle == KnowledgeLifecycle.RETIRED:
             raise KnowledgePageNotFound
-        revision_snapshot = await page_ref.collection("revisions").document(
-            page.current_revision_id
-        ).get()
+        revision_snapshot = (
+            await page_ref.collection("revisions").document(page.current_revision_id).get()
+        )
         if not revision_snapshot.exists:
             raise ValueError("current knowledge revision is missing")
         revision = _model(revision_snapshot, KnowledgeRevision)
@@ -3456,10 +3418,7 @@ class FirestoreRepository:
                 .limit(limit)
             )
             pages.extend(
-                [
-                    _model(snapshot, KnowledgePage)
-                    async for snapshot in retired_query.stream()
-                ]
+                [_model(snapshot, KnowledgePage) async for snapshot in retired_query.stream()]
             )
         if any(page.account_id != account.id for page in pages):
             raise KnowledgePageNotFound
@@ -3911,9 +3870,7 @@ class FirestoreRepository:
         account = await self.account_for_owner(owner_user_id)
         response_id = sha256(idempotency_key.encode()).hexdigest()
         question_ref = self._collection(account.id, "questions").document(question_id)
-        response_ref = self._collection(account.id, "question_responses").document(
-            response_id
-        )
+        response_ref = self._collection(account.id, "question_responses").document(response_id)
 
         async def record_once() -> QuestionResponseResult:
             transaction = self._client.transaction()
@@ -3980,9 +3937,9 @@ class FirestoreRepository:
                     and question.kind == QuestionKind.EVENT_CLARIFICATION
                     and question.meal_id is not None
                 ):
-                    legacy_feedback_ref = self._collection(
-                        account.id, "feedback"
-                    ).document(response_id)
+                    legacy_feedback_ref = self._collection(account.id, "feedback").document(
+                        response_id
+                    )
                     legacy_revision_ref = (
                         self._collection(account.id, "meals")
                         .document(question.meal_id)
@@ -4063,12 +4020,8 @@ class FirestoreRepository:
                 }:
                     if question.meal_id is None:
                         raise ValueError("event question is missing its meal")
-                    meal_ref = self._collection(account.id, "meals").document(
-                        question.meal_id
-                    )
-                    feedback_ref = self._collection(account.id, "feedback").document(
-                        response_id
-                    )
+                    meal_ref = self._collection(account.id, "meals").document(question.meal_id)
+                    feedback_ref = self._collection(account.id, "feedback").document(response_id)
                     meal_snapshot = await meal_ref.get(transaction=transaction)
                     feedback_snapshot = await feedback_ref.get(transaction=transaction)
                     if not meal_snapshot.exists:
@@ -4254,10 +4207,7 @@ class FirestoreRepository:
             .order_by("created_at", direction=firestore.Query.DESCENDING)
             .limit(limit)
         )
-        return [
-            self._capture_from_snapshot(snapshot, "")
-            async for snapshot in query.stream()
-        ]
+        return [self._capture_from_snapshot(snapshot, "") async for snapshot in query.stream()]
 
     @staticmethod
     def _capture_from_snapshot(snapshot, idempotency_key: str) -> CaptureRecord:

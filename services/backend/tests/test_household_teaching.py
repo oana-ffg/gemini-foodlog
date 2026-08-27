@@ -176,9 +176,7 @@ def test_stable_teaching_is_visible_to_agent_correctable_retireable_and_tenant_s
             headers=OWNER_HEADERS,
         )
         assert source_notes.status_code == 200
-        assert all(
-            note["status"] == UserContextNoteStatus.RETIRED for note in source_notes.json()
-        )
+        assert all(note["status"] == UserContextNoteStatus.RETIRED for note in source_notes.json())
         assert {note["text"] for note in source_notes.json()} >= {
             statement,
             corrected_statement,
@@ -258,9 +256,7 @@ def test_firestore_stable_teaching_saga_preserves_raw_revisions_and_retires_note
             corrected.revision.statement,
         ]
         assert all(note.status == UserContextNoteStatus.RETIRED for note in notes)
-        assert await repository.list_knowledge_pages_for_owner(
-            "firestore-teaching-owner"
-        ) == []
+        assert await repository.list_knowledge_pages_for_owner("firestore-teaching-owner") == []
         assert [
             page.id
             for page in await repository.list_knowledge_pages_for_owner(

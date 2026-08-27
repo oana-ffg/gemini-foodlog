@@ -121,9 +121,7 @@ class FeedbackLearningService:
                         role=KnowledgeEvidenceRole.CONTEXT,
                     ),
                 ),
-                confirmed_sources=(
-                    ConfirmedClaimSource(claim=claim, evidence=feedback_evidence),
-                ),
+                confirmed_sources=(ConfirmedClaimSource(claim=claim, evidence=feedback_evidence),),
                 reason=(
                     "The user explicitly marked this correction explanation as reusable "
                     "future identification guidance."

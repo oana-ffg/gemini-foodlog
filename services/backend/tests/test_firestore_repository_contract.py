@@ -98,9 +98,7 @@ def test_firestore_public_capacity_is_atomic_and_waitlist_is_stable() -> None:
         assert len(admitted) == 4, repr(rejected)
         assert len({account.id for account in admitted}) == 4
         assert len(rejected) == 4
-        assert all(isinstance(error, AccountCapacityReached) for error in rejected), repr(
-            rejected
-        )
+        assert all(isinstance(error, AccountCapacityReached) for error in rejected), repr(rejected)
 
         admitted_owner_id = admitted[0].owner_user_id
         assert await repository.provision_account(admitted_owner_id) == admitted[0]
@@ -234,9 +232,7 @@ def test_firestore_journal_uses_occurrence_time_when_publication_is_delayed() ->
                 idempotency_key=f"journal-order-idempotency-{suffix}",
                 content_type="image/jpeg",
                 content_sha256=sha256(suffix.encode()).hexdigest(),
-                object_key=(
-                    f"accounts/{account.id}/captures/journal-order-capture-{suffix}.jpg"
-                ),
+                object_key=(f"accounts/{account.id}/captures/journal-order-capture-{suffix}.jpg"),
             )
             assert created is True
             captures.append(capture)
@@ -335,10 +331,13 @@ def test_firestore_user_context_notes_preserve_history_and_tenant_scope() -> Non
         )
         assert retired.status == UserContextNoteStatus.RETIRED
         assert await repository.list_user_context_notes("context-contract-owner") == []
-        assert await repository.active_user_context_notes_for_account(
-            account_id=owner.id,
-            active_at=now,
-        ) == []
+        assert (
+            await repository.active_user_context_notes_for_account(
+                account_id=owner.id,
+                active_at=now,
+            )
+            == []
+        )
         assert await repository.list_user_context_notes(
             "context-contract-owner",
             include_inactive=True,
@@ -409,10 +408,13 @@ def test_firestore_ai_trace_index_is_immutable_and_tenant_scoped() -> None:
 
         assert await repository.record_ai_trace(trace) == trace
         assert await repository.record_ai_trace(trace) == trace
-        assert await repository.ai_trace_for_account(
-            account_id=owner.id,
-            trace_id=trace.id,
-        ) == trace
+        assert (
+            await repository.ai_trace_for_account(
+                account_id=owner.id,
+                trace_id=trace.id,
+            )
+            == trace
+        )
         with pytest.raises(AiTraceNotFound):
             await repository.ai_trace_for_account(
                 account_id=foreign.id,
@@ -937,27 +939,25 @@ def test_firestore_knowledge_revisions_are_atomic_provenanced_and_tenant_scoped(
         assert revisions[0].claim == initial_draft.claim
         assert revisions[1].previous_revision_id == revisions[0].id
         assert any(
-            item.kind == KnowledgeEvidenceKind.KNOWLEDGE_REVISION
-            and item.id == revisions[0].id
+            item.kind == KnowledgeEvidenceKind.KNOWLEDGE_REVISION and item.id == revisions[0].id
             for item in revisions[1].evidence
         )
-        assert await repository.knowledge_page_index_for_account(
-            account_id=owner.id
-        ) == [winner.page]
-        assert await repository.active_knowledge_revision_for_account(
-            account_id=owner.id,
-            page_id=winner.page.id,
-        ) == winner
-        assert await repository.knowledge_page_index_for_account(
-            account_id=foreign.id
-        ) == []
+        assert await repository.knowledge_page_index_for_account(account_id=owner.id) == [
+            winner.page
+        ]
+        assert (
+            await repository.active_knowledge_revision_for_account(
+                account_id=owner.id,
+                page_id=winner.page.id,
+            )
+            == winner
+        )
+        assert await repository.knowledge_page_index_for_account(account_id=foreign.id) == []
 
         account_ref = client.collection("accounts").document(owner.id)
         request_documents = [
             snapshot
-            async for snapshot in account_ref.collection(
-                "knowledge_revision_requests"
-            ).stream()
+            async for snapshot in account_ref.collection("knowledge_revision_requests").stream()
         ]
         assert len(request_documents) == 2
         assert all("idempotency_key" not in item.to_dict() for item in request_documents)
@@ -1105,9 +1105,9 @@ def test_firestore_pattern_question_lifecycle_is_atomic_and_tenant_scoped() -> N
             ),
             return_exceptions=True,
         )
-        assert (
-            len([item for item in outcomes if isinstance(item, QuestionResponseResult)]) == 1
-        ), repr(outcomes)
+        assert len([item for item in outcomes if isinstance(item, QuestionResponseResult)]) == 1, (
+            repr(outcomes)
+        )
         failures = [item for item in outcomes if isinstance(item, Exception)]
         assert len(failures) == 1
         assert isinstance(failures[0], QuestionAlreadyAnswered)
@@ -1148,9 +1148,7 @@ def test_firestore_event_publication_atomically_fences_lease_and_revision() -> N
             idempotency_key="event-publication-idempotency",
             content_type="image/jpeg",
             content_sha256="a" * 64,
-            object_key=(
-                f"accounts/{account.id}/captures/event-publication-capture.jpg"
-            ),
+            object_key=(f"accounts/{account.id}/captures/event-publication-capture.jpg"),
             event_id=event.id,
             status=CaptureStatus.STORED,
             created_at=now,
@@ -1171,12 +1169,16 @@ def test_firestore_event_publication_atomically_fences_lease_and_revision() -> N
         account_ref = client.collection("accounts").document(account.id)
         capture_data = capture.model_dump(mode="python", exclude={"idempotency_key"})
         capture_data.update(schema_version=1, idempotency_hash="test-only")
-        await account_ref.collection("events").document(event.id).set(
-            {**event.model_dump(mode="python"), "schema_version": 1}
+        await (
+            account_ref.collection("events")
+            .document(event.id)
+            .set({**event.model_dump(mode="python"), "schema_version": 1})
         )
         await account_ref.collection("captures").document(capture.id).set(capture_data)
-        await account_ref.collection("jobs").document(job.id).set(
-            {**job.model_dump(mode="python"), "schema_version": 1}
+        await (
+            account_ref.collection("jobs")
+            .document(job.id)
+            .set({**job.model_dump(mode="python"), "schema_version": 1})
         )
 
         payload = base_payload()
@@ -1230,8 +1232,8 @@ def test_firestore_event_publication_atomically_fences_lease_and_revision() -> N
         assert questions[0].choices == ["Air-fried steak", "Air-fried lamb"]
         assert questions[0].source_revision_number == 1
         assert await repository.recent_meals_for_account(account_id=account.id) == [meal]
-        unresolved_meals, unresolved_questions = (
-            await repository.unresolved_reviews_for_account(account_id=account.id)
+        unresolved_meals, unresolved_questions = await repository.unresolved_reviews_for_account(
+            account_id=account.id
         )
         assert unresolved_meals == [meal]
         assert unresolved_questions == questions

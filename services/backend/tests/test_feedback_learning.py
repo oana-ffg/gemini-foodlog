@@ -80,9 +80,7 @@ def test_four_feedback_modes_only_learn_from_explicitly_reusable_explanation() -
                     kind=MealFeedbackKind.CORRECT,
                     actual_meal="Steak",
                     explanation="There was no visible cue that could distinguish the cut.",
-                    learning_disposition=(
-                        MealFeedbackLearningDisposition.INSUFFICIENT_INFORMATION
-                    ),
+                    learning_disposition=(MealFeedbackLearningDisposition.INSUFFICIENT_INFORMATION),
                 ),
                 FeedbackLearningOutcome.INSUFFICIENT_INFORMATION,
             ),

@@ -27,9 +27,7 @@ MINIMUM_SUPPORT_RATIO = 0.75
 MAXIMUM_PATTERN_EVIDENCE = 20
 
 _TOKEN_PATTERN = re.compile(r"[\w'-]+", re.UNICODE)
-_VALUE_STOPWORDS = frozenset(
-    {"a", "an", "and", "food", "meal", "or", "the", "usually", "with"}
-)
+_VALUE_STOPWORDS = frozenset({"a", "an", "and", "food", "meal", "or", "the", "usually", "with"})
 _WEEKDAYS = {
     "monday": 0,
     "tuesday": 1,
@@ -77,9 +75,7 @@ def _tokens(value: str) -> set[str]:
 def _meal_tokens(meal: MealEntry) -> set[str]:
     values = [meal.title, *meal.observations, *meal.alternatives]
     for component in meal.components:
-        values.extend(
-            [component.name, *component.ingredients, *component.preparation_methods]
-        )
+        values.extend([component.name, *component.ingredients, *component.preparation_methods])
     return set().union(*(_tokens(value) for value in values))
 
 
@@ -95,9 +91,7 @@ def _local_occurrence(meal: MealEntry) -> datetime:
     occurred_at = meal.occurred_at or meal.created_at
     if meal.occurred_utc_offset_minutes is None:
         raise ValueError("pattern evidence lacks its captured local UTC offset")
-    return occurred_at.astimezone(
-        timezone(timedelta(minutes=meal.occurred_utc_offset_minutes))
-    )
+    return occurred_at.astimezone(timezone(timedelta(minutes=meal.occurred_utc_offset_minutes)))
 
 
 def _recognized_temporal_conditions(claim: KnowledgeClaim) -> set[str]:
@@ -211,34 +205,26 @@ class PatternDetectionService:
                     for item in items
                 ]
                 ratio = len(support) / len(cohort)
-                if (
-                    len(support) < MINIMUM_SUPPORTING_EXAMPLES
-                    or ratio < MINIMUM_SUPPORT_RATIO
-                ):
+                if len(support) < MINIMUM_SUPPORTING_EXAMPLES or ratio < MINIMUM_SUPPORT_RATIO:
                     continue
                 local_support_times = [_local_occurrence(meal) for meal, _ in support]
-                if len(
-                    {
-                        (value.isocalendar().year, value.isocalendar().week)
-                        for value in local_support_times
-                    }
-                ) < MINIMUM_DISTINCT_WEEKS:
+                if (
+                    len(
+                        {
+                            (value.isocalendar().year, value.isocalendar().week)
+                            for value in local_support_times
+                        }
+                    )
+                    < MINIMUM_DISTINCT_WEEKS
+                ):
                     continue
                 if max(local_support_times) - min(local_support_times) < MINIMUM_OBSERVATION_SPAN:
                     continue
-                display_value = " or ".join(
-                    display_labels[label] for label in selected_labels
-                )
+                display_value = " or ".join(display_labels[label] for label in selected_labels)
                 if len(conditions) == 1:
-                    statement = (
-                        f"you usually eat {display_value} on "
-                        f"{conditions[0].title()}s"
-                    )
+                    statement = f"you usually eat {display_value} on {conditions[0].title()}s"
                 else:
-                    statement = (
-                        f"your {conditions[0]} {conditions[1]} is usually "
-                        f"{display_value}"
-                    )
+                    statement = f"your {conditions[0]} {conditions[1]} is usually {display_value}"
                 candidate = PatternCandidate(
                     statement=statement,
                     claim=KnowledgeClaim(
@@ -246,12 +232,8 @@ class PatternDetectionService:
                         value=display_value,
                         conditions=conditions,
                     ),
-                    supporting_revision_ids=tuple(
-                        revision.id for _, revision in support
-                    ),
-                    counterexample_revision_ids=tuple(
-                        revision.id for _, revision in counters
-                    ),
+                    supporting_revision_ids=tuple(revision.id for _, revision in support),
+                    counterexample_revision_ids=tuple(revision.id for _, revision in counters),
                     uncertainty=(
                         "This is a calendar correlation from the retained journal, not a "
                         "confirmed household rule; changed plans and missing events may be "
@@ -286,23 +268,18 @@ class PatternDetectionService:
         if not requested_ids <= set(by_revision_id):
             raise ValueError("pattern candidate cites unavailable meal revision evidence")
         supports = [
-            by_revision_id[revision_id]
-            for revision_id in candidate.supporting_revision_ids
+            by_revision_id[revision_id] for revision_id in candidate.supporting_revision_ids
         ]
         counters = [
-            by_revision_id[revision_id]
-            for revision_id in candidate.counterexample_revision_ids
+            by_revision_id[revision_id] for revision_id in candidate.counterexample_revision_ids
         ]
         if len(supports) < MINIMUM_SUPPORTING_EXAMPLES:
             raise ValueError("pattern candidate has too few supporting examples")
 
         local_support_times = [_local_occurrence(meal) for meal, _ in supports]
-        local_all_times = [
-            _local_occurrence(meal) for meal, _ in (*supports, *counters)
-        ]
+        local_all_times = [_local_occurrence(meal) for meal, _ in (*supports, *counters)]
         support_weeks = {
-            (value.isocalendar().year, value.isocalendar().week)
-            for value in local_support_times
+            (value.isocalendar().year, value.isocalendar().week) for value in local_support_times
         }
         if len(support_weeks) < MINIMUM_DISTINCT_WEEKS:
             raise ValueError("pattern support must span at least three distinct weeks")
@@ -358,9 +335,7 @@ class PatternDetectionService:
             prompt=f"I'm noticing {candidate.statement}. Is that accurate?",
             reason=reason,
             tentative_claim=candidate.statement,
-            evidence=[
-                item.evidence for item in (*supporting_examples, *counterexamples)
-            ],
+            evidence=[item.evidence for item in (*supporting_examples, *counterexamples)],
             pattern_claim=candidate.claim,
             observation_started_at=observation_started_at,
             observation_ended_at=observation_ended_at,

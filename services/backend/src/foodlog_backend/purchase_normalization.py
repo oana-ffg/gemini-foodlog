@@ -337,9 +337,7 @@ def parse_invoice_rows(rows: Iterable[InvoiceRow]) -> ParsedPurchaseDocument:
                 raise ValueError("invoice has an orphaned wrapped unit")
             items[-1] = items[-1].model_copy(
                 update={
-                    "unit_description": " ".join(
-                        filter(None, (items[-1].unit_description, unit))
-                    )
+                    "unit_description": " ".join(filter(None, (items[-1].unit_description, unit)))
                 }
             )
         elif any(cells):
@@ -457,9 +455,7 @@ def reconcile_purchase_items(
         elif ordered_group:
             disposition = PurchaseReconciliationDisposition.REMOVED_OR_UNRESOLVED
         else:
-            disposition = (
-                PurchaseReconciliationDisposition.ADDED_OR_UNRESOLVED_SUBSTITUTION
-            )
+            disposition = PurchaseReconciliationDisposition.ADDED_OR_UNRESOLVED_SUBSTITUTION
         display_item = (delivered_group or ordered_group)[0]
         reconciled.append(
             PurchaseReconciledItem(

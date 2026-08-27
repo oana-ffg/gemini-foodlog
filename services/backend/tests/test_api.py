@@ -397,14 +397,20 @@ def test_audit_events_are_idempotent_private_and_cover_user_visible_operations()
             metadata=metadata,
         )
         capture_id = capture.json()["capture_id"]
-        assert client.get(
-            f"/v1/captures/{capture_id}/image",
-            headers=USER_HEADER,
-        ).status_code == 200
-        assert client.get(
-            f"/v1/captures/{capture_id}/image",
-            headers=USER_HEADER,
-        ).status_code == 200
+        assert (
+            client.get(
+                f"/v1/captures/{capture_id}/image",
+                headers=USER_HEADER,
+            ).status_code
+            == 200
+        )
+        assert (
+            client.get(
+                f"/v1/captures/{capture_id}/image",
+                headers=USER_HEADER,
+            ).status_code
+            == 200
+        )
         meal = client.get("/v1/journal", headers=USER_HEADER).json()[0]
         feedback_request = {
             "headers": {**USER_HEADER, "Idempotency-Key": "audit-feedback-001"},
@@ -433,17 +439,21 @@ def test_audit_events_are_idempotent_private_and_cover_user_visible_operations()
     ]
     assert len({event["id"] for event in events.json()}) == 4
     assert all(event["account_id"] == camera["account_id"] for event in events.json())
-    assert all(set(event) == {
-        "schema_version",
-        "id",
-        "account_id",
-        "action",
-        "actor_kind",
-        "source",
-        "subject_kind",
-        "subject_id",
-        "created_at",
-    } for event in events.json())
+    assert all(
+        set(event)
+        == {
+            "schema_version",
+            "id",
+            "account_id",
+            "action",
+            "actor_kind",
+            "source",
+            "subject_kind",
+            "subject_id",
+            "created_at",
+        }
+        for event in events.json()
+    )
     assert foreign.status_code == 404
 
 
@@ -610,9 +620,7 @@ def test_shared_browser_ingestion_stores_metadata_and_bytes_without_inference() 
         image = (FIXTURES / "synthetic-steak-airfryer.png").read_bytes()
         metadata = {
             **capture_metadata(camera["id"], image),
-            "captured_at": utc_now()
-            .astimezone(timezone(timedelta(hours=2)))
-            .isoformat(),
+            "captured_at": utc_now().astimezone(timezone(timedelta(hours=2))).isoformat(),
         }
         request = shared_capture_request(
             headers={**USER_HEADER, "Idempotency-Key": "shared-browser-capture-0001"},
@@ -1163,9 +1171,7 @@ def test_reusable_correction_applies_one_visible_idempotent_knowledge_revision()
         assert retry.json() == first.json()
         assert first.json()["learning_outcome"] == "knowledge_applied"
         assert first.json()["knowledge"]["revision"]["number"] == 1
-        assert first.json()["knowledge"]["revision"]["statement"] == request["json"][
-            "explanation"
-        ]
+        assert first.json()["knowledge"]["revision"]["statement"] == request["json"]["explanation"]
 
 
 def test_targeted_corrections_preserve_unrelated_meal_structure_and_history() -> None:
@@ -1291,9 +1297,7 @@ def test_targeted_corrections_preserve_unrelated_meal_structure_and_history() ->
         ]
         assert current["observations"] == original_observations
         assert current["revision_number"] == 5
-        revisions = client.get(
-            f"/v1/meals/{meal['id']}/revisions", headers=USER_HEADER
-        ).json()
+        revisions = client.get(f"/v1/meals/{meal['id']}/revisions", headers=USER_HEADER).json()
         assert [revision["number"] for revision in revisions] == [1, 2, 3, 4, 5]
         assert revisions[0]["inference"]["title"] == "Reheated tomato pasta"
         assert revisions[1]["correction"]["scope"] == "ingredient"
@@ -1421,9 +1425,7 @@ def test_not_cooking_disappears_from_journal_and_can_be_reclassified() -> None:
             "not_cooking",
         ]
         assert duplicate_disposition.status_code == 422
-        assert duplicate_disposition.json() == {
-            "detail": "invalid_meal_feedback_transition"
-        }
+        assert duplicate_disposition.json() == {"detail": "invalid_meal_feedback_transition"}
         assert invalid_confirm.status_code == 422
 
         reclassified = client.post(
@@ -1551,9 +1553,7 @@ def test_raw_partial_corrections_are_exact_immutable_and_idempotent() -> None:
             json={"kind": "correct", "actual_meal": "A different value"},
         )
         assert conflict.status_code == 409
-        assert conflict.json() == {
-            "detail": "idempotency_key_reused_with_different_payload"
-        }
+        assert conflict.json() == {"detail": "idempotency_key_reused_with_different_payload"}
         revisions = client.get(
             f"/v1/meals/{meal['id']}/revisions",
             headers=USER_HEADER,
@@ -1665,9 +1665,7 @@ def test_focused_event_question_supports_typed_response_outcomes(
             json={"kind": "reject" if response_payload["kind"] != "reject" else "confirm"},
         )
         assert changed_retry.status_code == 409
-        assert changed_retry.json() == {
-            "detail": "idempotency_key_reused_with_different_payload"
-        }
+        assert changed_retry.json() == {"detail": "idempotency_key_reused_with_different_payload"}
 
 
 @pytest.mark.parametrize("response_kind", ["confirm", "correct", "reject"])
@@ -1763,9 +1761,7 @@ def test_pattern_questions_deduplicate_supersede_and_remain_tenant_scoped() -> N
         assert stale.status_code == 409
         assert stale.json() == {"detail": "question_superseded"}
         assert foreign.status_code == 404
-        assert [question["id"] for question in foreign_list.json()] == [
-            foreign_same_claim.id
-        ]
+        assert [question["id"] for question in foreign_list.json()] == [foreign_same_claim.id]
 
 
 def test_feedback_and_question_access_are_tenant_scoped() -> None:

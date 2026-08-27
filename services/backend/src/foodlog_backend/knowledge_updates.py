@@ -35,11 +35,15 @@ class ConfirmedClaimSource(BaseModel):
 
     @model_validator(mode="after")
     def require_direct_user_support(self) -> ConfirmedClaimSource:
-        if self.evidence.kind not in {
-            KnowledgeEvidenceKind.FEEDBACK,
-            KnowledgeEvidenceKind.QUESTION_RESPONSE,
-            KnowledgeEvidenceKind.USER_CONTEXT_NOTE,
-        } or self.evidence.role != KnowledgeEvidenceRole.SUPPORTS:
+        if (
+            self.evidence.kind
+            not in {
+                KnowledgeEvidenceKind.FEEDBACK,
+                KnowledgeEvidenceKind.QUESTION_RESPONSE,
+                KnowledgeEvidenceKind.USER_CONTEXT_NOTE,
+            }
+            or self.evidence.role != KnowledgeEvidenceRole.SUPPORTS
+        ):
             raise ValueError("confirmed claim scope requires direct supporting user evidence")
         return self
 
@@ -79,11 +83,15 @@ class KnowledgeUpdateProposal(BaseModel):
                 raise ValueError("weak inference must use the agent inference source")
             if self.confirmed_sources:
                 raise ValueError("weak inference cannot claim user-confirmed scope")
-        elif self.intent in {
-            KnowledgeUpdateIntent.CONFIRM,
-            KnowledgeUpdateIntent.CONTRADICT,
-            KnowledgeUpdateIntent.RETIRE,
-        } and self.source not in user_sources:
+        elif (
+            self.intent
+            in {
+                KnowledgeUpdateIntent.CONFIRM,
+                KnowledgeUpdateIntent.CONTRADICT,
+                KnowledgeUpdateIntent.RETIRE,
+            }
+            and self.source not in user_sources
+        ):
             raise ValueError("confirmation, contradiction, and retirement require a user source")
 
         if self.intent == KnowledgeUpdateIntent.CONFIRM and not self.confirmed_sources:
@@ -165,9 +173,7 @@ class HouseholdKnowledgeUpdater:
         return await self.apply(
             account_id=account_id,
             proposal=active_proposal,
-            expected_revision_number=(
-                current.revision.number if current is not None else None
-            ),
+            expected_revision_number=(current.revision.number if current is not None else None),
             idempotency_key=idempotency_key,
         )
 

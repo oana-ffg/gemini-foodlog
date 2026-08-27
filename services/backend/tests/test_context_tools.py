@@ -194,12 +194,8 @@ def test_context_tools_are_bounded_active_provenanced_and_account_scoped() -> No
                 "valid_until": active.valid_until.isoformat(),
             }
         ]
-        assert [meal["meal_id"] for meal in unresolved["meals"]] == [
-            provisional.id
-        ]
-        assert [item["question_id"] for item in unresolved["questions"]] == [
-            question.id
-        ]
+        assert [meal["meal_id"] for meal in unresolved["meals"]] == [provisional.id]
+        assert [item["question_id"] for item in unresolved["questions"]] == [question.id]
         serialized = repr((recent, notes, unresolved))
         assert account.id not in serialized
         assert "account_id" not in serialized

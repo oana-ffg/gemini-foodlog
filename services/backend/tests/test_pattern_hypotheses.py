@@ -57,9 +57,7 @@ async def open_rich_pattern(
         prompt=f"I am noticing {statement}. Is that accurate?",
         reason="Multiple dated meal revisions support this longitudinal hypothesis.",
         tentative_claim=statement,
-        evidence=[
-            item.evidence for item in (*supports, *counterexamples)
-        ],
+        evidence=[item.evidence for item in (*supports, *counterexamples)],
         pattern_claim=claim,
         observation_started_at=START,
         observation_ended_at=ended_at or START + timedelta(days=21),
@@ -119,9 +117,7 @@ def test_rich_pattern_responses_create_scoped_knowledge_and_gate_resurfacing() -
         assert confirmed.status_code == confirmed_retry.status_code == 200
         assert confirmed_retry.json() == confirmed.json()
         confirmed_knowledge = confirmed.json()["knowledge"]
-        assert confirmed_knowledge["revision"]["claim"] == steak_claim.model_dump(
-            mode="json"
-        )
+        assert confirmed_knowledge["revision"]["claim"] == steak_claim.model_dump(mode="json")
         assert confirmed_knowledge["revision"]["lifecycle"] == "confirmed"
         assert confirmed_knowledge["revision"]["belief_strength"] == "strong"
         assert confirmed_knowledge["revision"]["source"] == "question_response"

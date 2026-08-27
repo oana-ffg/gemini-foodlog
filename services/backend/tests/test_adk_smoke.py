@@ -161,24 +161,24 @@ def test_validation_accepts_only_exact_context_ids_returned_by_agent_tools() -> 
         },
     ]
     inference = ActivityMealInferenceV1.model_validate(payload)
-    _validate_source_identities(inference, event_bundle(
-        event_id="event-001", capture_ids=["capture-001"]
-    ), source_ids)
+    _validate_source_identities(
+        inference, event_bundle(event_id="event-001", capture_ids=["capture-001"]), source_ids
+    )
 
     payload["contextual_evidence"][1]["source_id"] = "invented-purchase"
     invented = ActivityMealInferenceV1.model_validate(payload)
     with pytest.raises(RuntimeError, match="invented purchase source ID"):
-        _validate_source_identities(invented, event_bundle(
-            event_id="event-001", capture_ids=["capture-001"]
-        ), source_ids)
+        _validate_source_identities(
+            invented, event_bundle(event_id="event-001", capture_ids=["capture-001"]), source_ids
+        )
 
     payload["contextual_evidence"][1]["source_id"] = "purchase-001"
     payload["contextual_evidence"][2]["source_id"] = "invented-note"
     invented = ActivityMealInferenceV1.model_validate(payload)
     with pytest.raises(RuntimeError, match="invented user_note source ID"):
-        _validate_source_identities(invented, event_bundle(
-            event_id="event-001", capture_ids=["capture-001"]
-        ), source_ids)
+        _validate_source_identities(
+            invented, event_bundle(event_id="event-001", capture_ids=["capture-001"]), source_ids
+        )
 
 
 def test_only_an_explicit_knowledge_page_read_grants_revision_provenance() -> None:
@@ -212,9 +212,7 @@ def test_only_an_explicit_knowledge_page_read_grants_revision_provenance() -> No
         ),
     )
     source_ids = _tool_context_source_ids(tool_event)
-    assert source_ids[ContextSourceKind.HOUSEHOLD_KNOWLEDGE] == {
-        "revision-selected"
-    }
+    assert source_ids[ContextSourceKind.HOUSEHOLD_KNOWLEDGE] == {"revision-selected"}
 
     payload = base_payload()
     payload["contextual_evidence"].append(

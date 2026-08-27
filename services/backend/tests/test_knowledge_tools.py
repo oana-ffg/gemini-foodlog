@@ -132,9 +132,7 @@ def test_knowledge_tools_select_then_read_exact_current_tenant_page() -> None:
             args={},
             tool_context=foreign_context,
         )
-        assert [page["page_id"] for page in foreign_index["pages"]] == [
-            foreign_page.page.id
-        ]
+        assert [page["page_id"] for page in foreign_index["pages"]] == [foreign_page.page.id]
         with pytest.raises(KnowledgePageNotFound):
             await tools["read_household_knowledge_page"].run_async(  # type: ignore[arg-type]
                 args={"page_id": current.page.id},
@@ -157,14 +155,10 @@ def test_knowledge_tool_declarations_expose_only_page_selection() -> None:
         "list_household_knowledge",
         "read_household_knowledge_page",
     ]
-    list_declaration = tools[0]._get_declaration().model_dump(
-        mode="json", exclude_none=True
-    )
+    list_declaration = tools[0]._get_declaration().model_dump(mode="json", exclude_none=True)
     assert "parameters" not in list_declaration
     assert "parameters_json_schema" not in list_declaration
-    read_declaration = tools[1]._get_declaration().model_dump(
-        mode="json", exclude_none=True
-    )
+    read_declaration = tools[1]._get_declaration().model_dump(mode="json", exclude_none=True)
     schema = read_declaration["parameters_json_schema"]
     assert set(schema["properties"]) == {"page_id"}
     assert schema["required"] == ["page_id"]

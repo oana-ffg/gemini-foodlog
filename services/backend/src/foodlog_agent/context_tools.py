@@ -221,9 +221,7 @@ def _recent_meal_summary(meal: MealEntry, revision_id: str) -> RecentMealSummary
             BoundedMealComponentSummary(
                 name=component.name[:160],
                 ingredients=[item[:500] for item in component.ingredients[:40]],
-                preparation_methods=[
-                    item[:500] for item in component.preparation_methods[:20]
-                ],
+                preparation_methods=[item[:500] for item in component.preparation_methods[:20]],
             )
             for component in meal.components[:20]
         ],
@@ -273,8 +271,7 @@ def _open_question_summary(question: ClarificationQuestion) -> OpenQuestionSumma
 
 def _recent_purchase_summary(bundle: PurchaseEvidenceBundle) -> RecentPurchaseSummary:
     normalizations = {
-        normalization.document_id: normalization
-        for normalization in bundle.normalizations
+        normalization.document_id: normalization for normalization in bundle.normalizations
     }
     source_documents = [
         PurchaseSourceDocumentSummary(
@@ -298,16 +295,11 @@ def _recent_purchase_summary(bundle: PurchaseEvidenceBundle) -> RecentPurchaseSu
         for document in bundle.documents
     ]
     evidence_document_id = (
-        bundle.purchase.latest_final_document_id
-        or bundle.purchase.latest_confirmation_document_id
+        bundle.purchase.latest_final_document_id or bundle.purchase.latest_confirmation_document_id
     )
-    evidence_items = [
-        item for item in bundle.items if item.document_id == evidence_document_id
-    ]
+    evidence_items = [item for item in bundle.items if item.document_id == evidence_document_id]
     if not evidence_items:
-        evidence_status: Literal["delivered", "ordered_only", "source_only"] = (
-            "source_only"
-        )
+        evidence_status: Literal["delivered", "ordered_only", "source_only"] = "source_only"
     elif evidence_document_id == bundle.purchase.latest_final_document_id:
         evidence_status = "delivered"
     else:
@@ -347,9 +339,7 @@ def _recent_purchase_summary(bundle: PurchaseEvidenceBundle) -> RecentPurchaseSu
                 )
                 for item in bounded_reconciliation_items
             ],
-            items_truncated=(
-                len(reconciliation.items) > RECENT_PURCHASE_ITEM_LIMIT
-            ),
+            items_truncated=(len(reconciliation.items) > RECENT_PURCHASE_ITEM_LIMIT),
             updated_at=reconciliation.updated_at.isoformat(),
         )
     return RecentPurchaseSummary(
@@ -395,10 +385,7 @@ class ContextToolsService:
             limit=CONTEXT_TOOL_RESULT_LIMIT,
         )
         return RecentMealsToolResult(
-            meals=[
-                _recent_meal_summary(meal, revision.id)
-                for meal, revision in evidence
-            ]
+            meals=[_recent_meal_summary(meal, revision.id) for meal, revision in evidence]
         )
 
     async def get_active_user_context(
@@ -411,9 +398,7 @@ class ContextToolsService:
             account_id=account_id,
             limit=CONTEXT_TOOL_RESULT_LIMIT,
         )
-        return ActiveUserContextToolResult(
-            notes=[_active_context_summary(note) for note in notes]
-        )
+        return ActiveUserContextToolResult(notes=[_active_context_summary(note) for note in notes])
 
     async def get_recent_purchases(
         self,
@@ -516,9 +501,7 @@ async def get_recent_meals(tool_context: ToolContext) -> dict[str, Any]:
     Account scope comes only from trusted session state. Activity discarded as not cooking
     is excluded; returned event and revision IDs are the provenance available for citation.
     """
-    result = await production_context_tools_service().get_recent_meals(
-        context=tool_context
-    )
+    result = await production_context_tools_service().get_recent_meals(context=tool_context)
     return result.model_dump(mode="json")
 
 
@@ -528,9 +511,7 @@ async def get_active_user_context(tool_context: ToolContext) -> dict[str, Any]:
     Account scope comes only from trusted session state. Future, expired, and retired notes
     are excluded; returned note IDs and validity windows are the provenance for citation.
     """
-    result = await production_context_tools_service().get_active_user_context(
-        context=tool_context
-    )
+    result = await production_context_tools_service().get_active_user_context(context=tool_context)
     return result.model_dump(mode="json")
 
 
@@ -540,9 +521,7 @@ async def get_recent_purchases(tool_context: ToolContext) -> dict[str, Any]:
     Account scope comes only from trusted session state. Final receipts are authoritative,
     source provenance is retained, and absent purchase context is explicit.
     """
-    result = await production_context_tools_service().get_recent_purchases(
-        context=tool_context
-    )
+    result = await production_context_tools_service().get_recent_purchases(context=tool_context)
     return result.model_dump(mode="json")
 
 
@@ -552,9 +531,7 @@ async def get_unresolved_reviews(tool_context: ToolContext) -> dict[str, Any]:
     Account scope comes only from trusted session state. Only provisional or contradicted
     meals and open questions are returned, with stable provenance identifiers.
     """
-    result = await production_context_tools_service().get_unresolved_reviews(
-        context=tool_context
-    )
+    result = await production_context_tools_service().get_unresolved_reviews(context=tool_context)
     return result.model_dump(mode="json")
 
 

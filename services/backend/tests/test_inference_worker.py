@@ -121,8 +121,7 @@ def test_completed_inference_retries_pattern_detection_without_reinvoking_model(
         create_image_worker_app(worker_settings(), repository=repository)
     ) as image_client:
         assert (
-            image_client.post("/internal/pubsub/capture-stored", json=envelope).status_code
-            == 204
+            image_client.post("/internal/pubsub/capture-stored", json=envelope).status_code == 204
         )
     capture = repository._captures[capture_id]
     assert capture.event_id is not None

@@ -64,9 +64,7 @@ async def seed_meal(
             capture_id=capture_id,
             event_id=f"event-{capture_id}",
             occurred_at=captured_at,
-            occurred_utc_offset_minutes=int(
-                local_at.utcoffset().total_seconds() // 60
-            ),
+            occurred_utc_offset_minutes=int(local_at.utcoffset().total_seconds() // 60),
             title=title,
             confidence=Confidence.LIKELY,
             components=[],
@@ -216,8 +214,7 @@ def test_detector_uses_the_original_local_day_across_utc_midnight() -> None:
             and question.pattern_claim.conditions == ("thursday",)
         )
         assert all(
-            example.occurred_at.weekday() == 2
-            for example in thursday.pattern_supporting_examples
+            example.occurred_at.weekday() == 2 for example in thursday.pattern_supporting_examples
         )
         assert all(
             example.occurred_utc_offset_minutes == 120

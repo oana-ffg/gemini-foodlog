@@ -77,9 +77,7 @@ class PatternHypothesisService:
             existing = await self._repository.record_knowledge_revision(
                 account_id=account.id,
                 topic_key=topic_key,
-                expected_revision_number=(
-                    current.revision.number if current is not None else None
-                ),
+                expected_revision_number=(current.revision.number if current is not None else None),
                 draft=KnowledgeRevisionDraft(
                     title=" ".join(statement.split())[:200],
                     statement=statement,
@@ -93,8 +91,7 @@ class PatternHypothesisService:
                     source=KnowledgeRevisionSource.QUESTION_RESPONSE,
                     evidence=evidence,
                     reason=(
-                        "The authenticated user confirmed this evidence-backed household "
-                        "pattern."
+                        "The authenticated user confirmed this evidence-backed household pattern."
                         if request.kind == QuestionResponseKind.CONFIRM
                         else "The authenticated user supplied the exact corrected pattern; "
                         "no structured claim was inferred from their wording."

@@ -191,12 +191,8 @@ def _tool_context_source_ids(event: Event) -> dict[ContextSourceKind, set[str]]:
                     source_ids[ContextSourceKind.RECENT_MEAL].add(meal["event_id"])
         elif response.name == "get_recent_purchases":
             for purchase in response.response.get("purchases", []):
-                if isinstance(purchase, dict) and isinstance(
-                    purchase.get("purchase_id"), str
-                ):
-                    source_ids[ContextSourceKind.PURCHASE].add(
-                        purchase["purchase_id"]
-                    )
+                if isinstance(purchase, dict) and isinstance(purchase.get("purchase_id"), str):
+                    source_ids[ContextSourceKind.PURCHASE].add(purchase["purchase_id"])
         elif response.name == "get_active_user_context":
             for note in response.response.get("notes", []):
                 if isinstance(note, dict) and isinstance(note.get("note_id"), str):
@@ -206,12 +202,8 @@ def _tool_context_source_ids(event: Event) -> dict[ContextSourceKind, set[str]]:
             if not isinstance(page, dict):
                 continue
             revision = page.get("revision")
-            if isinstance(revision, dict) and isinstance(
-                revision.get("revision_id"), str
-            ):
-                source_ids[ContextSourceKind.HOUSEHOLD_KNOWLEDGE].add(
-                    revision["revision_id"]
-                )
+            if isinstance(revision, dict) and isinstance(revision.get("revision_id"), str):
+                source_ids[ContextSourceKind.HOUSEHOLD_KNOWLEDGE].add(revision["revision_id"])
     return source_ids
 
 
@@ -352,9 +344,7 @@ async def run_accounted_event_inference(
                     ),
                 ):
                     trace_capture.record_event(adk_event)
-                    for source_kind, identifiers in _tool_context_source_ids(
-                        adk_event
-                    ).items():
+                    for source_kind, identifiers in _tool_context_source_ids(adk_event).items():
                         tool_source_ids[source_kind].update(identifiers)
                     if adk_event.invocation_id or adk_event.model_version:
                         latest_identified_event = adk_event
@@ -366,8 +356,7 @@ async def run_accounted_event_inference(
                     if adk_event.error_code or adk_event.error_message:
                         execution_error_code = adk_event.error_code or "unknown"
                         raise RuntimeError(
-                            f"ADK event failed: {execution_error_code}: "
-                            f"{adk_event.error_message}"
+                            f"ADK event failed: {execution_error_code}: {adk_event.error_message}"
                         )
                     if adk_event.is_final_response():
                         final_event = adk_event

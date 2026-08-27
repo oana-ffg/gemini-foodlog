@@ -207,9 +207,7 @@ def test_reconciliation_preserves_exact_changes_without_inventing_substitution_p
     assert dispositions == {
         "banan": PurchaseReconciliationDisposition.DELIVERED_AS_ORDERED,
         "havredrik": PurchaseReconciliationDisposition.REMOVED_OR_UNRESOLVED,
-        "mandeldrik": (
-            PurchaseReconciliationDisposition.ADDED_OR_UNRESOLVED_SUBSTITUTION
-        ),
+        "mandeldrik": (PurchaseReconciliationDisposition.ADDED_OR_UNRESOLVED_SUBSTITUTION),
         "rødt æble": PurchaseReconciliationDisposition.QUANTITY_CHANGED,
     }
     assert result.unresolved_item_count == 2

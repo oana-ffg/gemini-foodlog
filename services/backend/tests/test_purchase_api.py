@@ -120,9 +120,7 @@ def test_purchase_api_returns_owner_scoped_sanitized_evidence() -> None:
     with TestClient(app) as client:
         listed = client.get("/v1/purchases?limit=1", headers=owner_headers)
         detail = client.get(f"/v1/purchases/{owner_purchase.id}", headers=owner_headers)
-        foreign_detail = client.get(
-            f"/v1/purchases/{owner_purchase.id}", headers=foreign_headers
-        )
+        foreign_detail = client.get(f"/v1/purchases/{owner_purchase.id}", headers=foreign_headers)
         owner_reads_foreign = client.get(
             f"/v1/purchases/{foreign_purchase.id}", headers=owner_headers
         )
@@ -135,9 +133,7 @@ def test_purchase_api_returns_owner_scoped_sanitized_evidence() -> None:
     assert detail.headers["cache-control"] == "private, no-store"
     body = detail.json()
     assert body["id"] == owner_purchase.id
-    assert body["documents"][0]["normalization"]["parser_version"] == (
-        "purchase-api-test-v1"
-    )
+    assert body["documents"][0]["normalization"]["parser_version"] == ("purchase-api-test-v1")
     assert body["documents"][0]["items"][0]["name"] == "Synthetic red apple"
     assert body["documents"][0]["charges"][0]["amount_ore"] == 900
     assert body["reconciliation"]["items"][0]["delivered_quantity"] == 2
@@ -159,9 +155,7 @@ def test_in_memory_purchase_projection_orders_and_hides_foreign_purchases() -> N
         foreign = await seed_purchase(repository, "projection-foreign", "foreign")
 
         purchases = await repository.list_purchases("projection-owner", limit=1)
-        evidence = await repository.purchase_evidence_for_owner(
-            "projection-owner", second.id
-        )
+        evidence = await repository.purchase_evidence_for_owner("projection-owner", second.id)
 
         assert [purchase.id for purchase in purchases] == [second.id]
         assert evidence.purchase.id == second.id
@@ -217,17 +211,12 @@ def test_firestore_purchase_projection_is_account_scoped() -> None:
         assert evidence.purchase.id == owner_purchase.id
         assert len(evidence.documents) == len(evidence.normalizations) == 1
         assert len(evidence.items) == len(evidence.charges) == 1
-        assert [bundle.purchase.id for bundle in recent_evidence] == [
-            owner_purchase.id
-        ]
+        assert [bundle.purchase.id for bundle in recent_evidence] == [owner_purchase.id]
         assert all(
-            bundle.purchase.account_id == owner_purchase.account_id
-            for bundle in recent_evidence
+            bundle.purchase.account_id == owner_purchase.account_id for bundle in recent_evidence
         )
         with pytest.raises(PurchaseNotFound):
-            await repository.purchase_evidence_for_owner(
-                "firestore-owner", foreign_purchase.id
-            )
+            await repository.purchase_evidence_for_owner("firestore-owner", foreign_purchase.id)
         database.close()
 
     asyncio.run(scenario())

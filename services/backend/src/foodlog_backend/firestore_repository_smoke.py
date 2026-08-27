@@ -147,9 +147,7 @@ async def ensure_smoke_fixture(client: AsyncClient) -> None:
             idempotency_key="repository-smoke-event-idempotency-v1",
             content_type="image/jpeg",
             content_sha256="0" * 64,
-            object_key=(
-                f"accounts/{SMOKE_ACCOUNT_ID}/captures/{SMOKE_EVENT_CAPTURE_ID}.jpg"
-            ),
+            object_key=(f"accounts/{SMOKE_ACCOUNT_ID}/captures/{SMOKE_EVENT_CAPTURE_ID}.jpg"),
             event_id=SMOKE_EVENT_ID,
             status=CaptureStatus.STORED,
             created_at=created_at,
@@ -575,14 +573,10 @@ async def run_smoke(repository: Repository) -> dict[str, Any]:
         "published_revision": published_hypothesis.revision_number,
         "knowledge_page_id": initial_knowledge.page.id,
         "knowledge_lifecycle": reinforced_knowledge.page.lifecycle,
-        "knowledge_revision_numbers": [
-            revision.number for revision in knowledge_revisions
-        ],
+        "knowledge_revision_numbers": [revision.number for revision in knowledge_revisions],
         "proposed_knowledge_page_id": proposed_inference.page.id,
         "proposed_knowledge_lifecycle": proposed_confirmation.page.lifecycle,
-        "proposed_knowledge_revision_numbers": [
-            revision.number for revision in proposed_revisions
-        ],
+        "proposed_knowledge_revision_numbers": [revision.number for revision in proposed_revisions],
         "feedback_knowledge_page_id": learning.knowledge.page.id,
         "feedback_knowledge_revision": learning.knowledge.revision.number,
         "knowledge_index_count": len(knowledge_index),

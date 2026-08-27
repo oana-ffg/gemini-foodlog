@@ -95,9 +95,7 @@ class PurchaseDetailView(PurchaseSummaryView):
 
 
 def purchase_summary_view(purchase: Purchase) -> PurchaseSummaryView:
-    return PurchaseSummaryView.model_validate(
-        purchase.model_dump(exclude={"account_id"})
-    )
+    return PurchaseSummaryView.model_validate(purchase.model_dump(exclude={"account_id"}))
 
 
 def _normalization_view(
@@ -150,9 +148,7 @@ def _reconciliation_view(
         final_document_id=reconciliation.final_document_id,
         item_count=reconciliation.item_count,
         unresolved_item_count=reconciliation.unresolved_item_count,
-        has_unresolved_substitution_pairing=(
-            reconciliation.has_unresolved_substitution_pairing
-        ),
+        has_unresolved_substitution_pairing=(reconciliation.has_unresolved_substitution_pairing),
         items=[_reconciled_item_view(item) for item in reconciliation.items],
         updated_at=reconciliation.updated_at,
     )
@@ -160,8 +156,7 @@ def _reconciliation_view(
 
 def purchase_detail_view(bundle: PurchaseEvidenceBundle) -> PurchaseDetailView:
     normalizations = {
-        normalization.document_id: normalization
-        for normalization in bundle.normalizations
+        normalization.document_id: normalization for normalization in bundle.normalizations
     }
     items_by_document: dict[str, list[PurchaseItem]] = {}
     for item in bundle.items:

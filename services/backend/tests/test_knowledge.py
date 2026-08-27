@@ -260,9 +260,7 @@ def test_household_knowledge_lifecycle_is_immutable_idempotent_and_tenant_scoped
         )
 
         current = await repository.knowledge_page_for_owner("knowledge-owner", retired.page.id)
-        revisions = await repository.list_knowledge_revisions(
-            "knowledge-owner", retired.page.id
-        )
+        revisions = await repository.list_knowledge_revisions("knowledge-owner", retired.page.id)
         assert current == retired.page
         assert current.current_revision_number == 5
         assert [revision.number for revision in revisions] == [1, 2, 3, 4, 5]
@@ -295,13 +293,9 @@ def test_household_knowledge_lifecycle_is_immutable_idempotent_and_tenant_scoped
                 idempotency_key="knowledge-reactivate-0001",
             )
         with pytest.raises(KnowledgePageNotFound):
-            await repository.knowledge_page_for_owner(
-                "knowledge-foreign-owner", retired.page.id
-            )
+            await repository.knowledge_page_for_owner("knowledge-foreign-owner", retired.page.id)
         with pytest.raises(KnowledgePageNotFound):
-            await repository.list_knowledge_revisions(
-                "knowledge-foreign-owner", retired.page.id
-            )
+            await repository.list_knowledge_revisions("knowledge-foreign-owner", retired.page.id)
 
     asyncio.run(scenario())
 
@@ -375,9 +369,7 @@ def test_knowledge_page_index_is_bounded_current_and_tenant_scoped() -> None:
             idempotency_key="knowledge-index-retired",
         )
 
-        index = await repository.knowledge_page_index_for_account(
-            account_id=owner.id
-        )
+        index = await repository.knowledge_page_index_for_account(account_id=owner.id)
         assert len(index) == 50
         assert index[0].id == created[-1].page.id
         assert retired.page.id not in {page.id for page in index}
@@ -387,9 +379,7 @@ def test_knowledge_page_index_is_bounded_current_and_tenant_scoped() -> None:
             page_id=created[20].page.id,
         )
         assert selected == created[20]
-        assert await repository.knowledge_page_index_for_account(
-            account_id=foreign.id
-        ) == []
+        assert await repository.knowledge_page_index_for_account(account_id=foreign.id) == []
         with pytest.raises(KnowledgePageNotFound):
             await repository.active_knowledge_revision_for_account(
                 account_id=foreign.id,

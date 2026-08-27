@@ -66,9 +66,7 @@ class SequencedInvoker:
             try:
                 raise InvalidModelOutputError("missing required best_guess")
             except InvalidModelOutputError as cause:
-                raise ModelInvocationExecutionError(
-                    error_code="InvalidModelOutputError"
-                ) from cause
+                raise ModelInvocationExecutionError(error_code="InvalidModelOutputError") from cause
         if outcome != "success":
             raise ModelInvocationExecutionError(error_code=outcome)
         return self.result
@@ -599,9 +597,7 @@ def test_reinference_supersedes_the_old_event_question_and_rejects_stale_respons
             question_status=None,
         )
         replacement = next(item for item in questions if item.status == QuestionStatus.OPEN)
-        superseded = next(
-            item for item in questions if item.status == QuestionStatus.SUPERSEDED
-        )
+        superseded = next(item for item in questions if item.status == QuestionStatus.SUPERSEDED)
         assert superseded.id == old_question.id
         assert superseded.superseded_by_question_id == replacement.id
         with pytest.raises(QuestionSuperseded):

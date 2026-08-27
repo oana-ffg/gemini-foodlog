@@ -116,11 +116,7 @@ def _authentication_passes(message: Message) -> bool:
         *message.get_all("Authentication-Results", []),
         *message.get_all("ARC-Authentication-Results", []),
     ]
-    clauses = [
-        clause.casefold()
-        for value in values
-        for clause in re.split(r";", str(value))
-    ]
+    clauses = [clause.casefold() for value in values for clause in re.split(r";", str(value))]
     dkim_pass = False
     dmarc_pass = False
     for clause in clauses:
