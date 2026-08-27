@@ -62,7 +62,7 @@ def test_trace_request_includes_the_application_owned_prompt_tools_and_schema() 
 
 
 def test_prompt_explicitly_couples_questions_to_uncertain_confidence() -> None:
-    assert PROMPT_VERSION == "food-event-v8"
+    assert PROMPT_VERSION == "food-event-v9"
     assert "call get_current_event_evidence" in INSTRUCTION
     assert "get_recent_meals" in INSTRUCTION
     assert "get_recent_purchases" in INSTRUCTION
@@ -77,6 +77,16 @@ def test_prompt_explicitly_couples_questions_to_uncertain_confidence() -> None:
     assert "harmless ambiguity" in INSTRUCTION
     assert "purchase or time-bounded user-note evidence" in INSTRUCTION
     assert "candidate_labels MUST start with the exact best_guess" in INSTRUCTION
+
+
+def test_prompt_calibrates_specificity_for_degraded_single_frames() -> None:
+    assert "weakest material visual distinction" in INSTRUCTION
+    assert "not positive evidence for a specific" in INSTRUCTION
+    assert "visible distinguishing feature" in INSTRUCTION
+    assert 'return the concrete best guess as "uncertain"' in INSTRUCTION
+    assert "without inferred food labels that the pixels do not establish" in INSTRUCTION
+    assert "itself may support both candidates" in INSTRUCTION
+    assert "materially unresolved distinction" in INSTRUCTION
 
 
 def test_smoke_rejects_context_and_knowledge_ids_absent_from_input() -> None:
