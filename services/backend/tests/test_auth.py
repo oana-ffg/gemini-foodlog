@@ -89,7 +89,10 @@ def test_verified_bearer_token_is_the_only_source_of_user_identity() -> None:
         ("POST", "/v1/accounts"),
         ("POST", "/v1/inbound-mail-address"),
         ("POST", "/v1/consents/launch-mail"),
+        ("GET", "/v1/consents"),
+        ("POST", "/v1/consents/launch-mail/withdraw"),
         ("POST", "/v1/waitlist"),
+        ("POST", "/v1/waitlist/withdraw"),
         ("POST", "/v1/browser-cameras"),
         ("GET", "/v1/cameras"),
         ("POST", "/v1/cameras/camera-id/revoke"),
@@ -283,6 +286,7 @@ def test_launch_mail_consent_records_decline_grant_and_idempotent_retry() -> Non
     headers = {"Authorization": "Bearer valid-id-token"}
     with firebase_test_client(AcceptingTokenVerifier()) as client:
         account = client.post("/v1/accounts", headers=headers)
+        initial_preferences = client.get("/v1/consents", headers=headers)
         declined = client.post(
             "/v1/consents/launch-mail",
             headers=headers,
@@ -298,16 +302,49 @@ def test_launch_mail_consent_records_decline_grant_and_idempotent_retry() -> Non
             headers=headers,
             json={"granted": True},
         )
+        granted_preferences = client.get("/v1/consents", headers=headers)
+        withdrawn = client.post(
+            "/v1/consents/launch-mail/withdraw",
+            headers=headers,
+        )
+        withdrawn_preferences = client.get("/v1/consents", headers=headers)
+        regranted = client.post(
+            "/v1/consents/launch-mail",
+            headers=headers,
+            json={"granted": True},
+        )
+        regranted_preferences = client.get("/v1/consents", headers=headers)
 
     assert account.status_code == 200
-    assert declined.status_code == declined_retry.status_code == granted.status_code == 200
+    assert initial_preferences.status_code == 200
+    assert initial_preferences.json() == {
+        "launch_mail_opt_in": None,
+        "launch_mail_policy_version": None,
+        "launch_mail_updated_at": None,
+        "waitlist_status": "not_joined",
+        "waitlist_policy_version": None,
+        "waitlist_updated_at": None,
+    }
+    assert (
+        declined.status_code
+        == declined_retry.status_code
+        == granted.status_code
+        == withdrawn.status_code
+        == regranted.status_code
+        == 200
+    )
     assert declined.json()["id"] == declined_retry.json()["id"]
+    assert declined.json()["id"] == withdrawn.json()["id"]
     assert declined.json()["id"] != granted.json()["id"]
+    assert granted.json()["id"] == regranted.json()["id"]
     assert declined.json()["granted"] is False
     assert granted.json()["granted"] is True
     assert granted.json()["kind"] == "launch_mail"
     assert granted.json()["policy_version"] == "launch-interest-v1"
     assert granted.json()["email_normalized"] == "user-a@example.test"
+    assert granted_preferences.json()["launch_mail_opt_in"] is True
+    assert withdrawn_preferences.json()["launch_mail_opt_in"] is False
+    assert regranted_preferences.json()["launch_mail_opt_in"] is True
 
 
 def test_launch_mail_consent_requires_account_and_verified_email_claim() -> None:
@@ -362,6 +399,10 @@ def test_waitlist_requires_full_capacity_and_explicit_affirmative_join() -> None
             headers=waiting_headers,
             json={"join": True},
         )
+        missing_withdrawal = client.post(
+            "/v1/waitlist/withdraw",
+            headers=waiting_headers,
+        )
         admitted = client.post("/v1/accounts", headers=admitted_headers)
         capacity_rejection = client.post("/v1/accounts", headers=waiting_headers)
         non_affirmative = client.post(
@@ -379,6 +420,22 @@ def test_waitlist_requires_full_capacity_and_explicit_affirmative_join() -> None
             headers=waiting_headers,
             json={"join": True},
         )
+        active_preferences = client.get("/v1/consents", headers=waiting_headers)
+        withdrawn = client.post(
+            "/v1/waitlist/withdraw",
+            headers=waiting_headers,
+        )
+        withdrawn_retry = client.post(
+            "/v1/waitlist/withdraw",
+            headers=waiting_headers,
+        )
+        withdrawn_preferences = client.get("/v1/consents", headers=waiting_headers)
+        rejoined = client.post(
+            "/v1/waitlist",
+            headers=waiting_headers,
+            json={"join": True},
+        )
+        rejoined_preferences = client.get("/v1/consents", headers=waiting_headers)
         admitted_cannot_join = client.post(
             "/v1/waitlist",
             headers=admitted_headers,
@@ -387,6 +444,7 @@ def test_waitlist_requires_full_capacity_and_explicit_affirmative_join() -> None
 
     assert too_early.status_code == 409
     assert too_early.json() == {"detail": "signup_capacity_available"}
+    assert missing_withdrawal.status_code == 404
     assert admitted.status_code == 200
     assert capacity_rejection.status_code == 409
     assert capacity_rejection.json() == {"detail": "signup_capacity_exhausted"}
@@ -396,6 +454,23 @@ def test_waitlist_requires_full_capacity_and_explicit_affirmative_join() -> None
     assert joined.json()["mailing_list_opt_in"] is True
     assert joined.json()["reason"] == "capacity"
     assert joined.json()["policy_version"] == "capacity-waitlist-v1"
+    assert active_preferences.json()["waitlist_status"] == "active"
+    assert withdrawn.status_code == withdrawn_retry.status_code == 200
+    assert withdrawn.json()["id"] == joined.json()["id"]
+    assert withdrawn.json() == withdrawn_retry.json()
+    assert withdrawn.json()["status"] == "withdrawn"
+    assert withdrawn.json()["mailing_list_opt_in"] is False
+    assert withdrawn.json()["email_normalized"] is None
+    assert withdrawn.json()["withdrawal_count"] == 1
+    assert withdrawn.json()["last_withdrawn_at"] is not None
+    assert withdrawn_preferences.json()["waitlist_status"] == "withdrawn"
+    assert rejoined.status_code == 200
+    assert rejoined.json()["id"] == joined.json()["id"]
+    assert rejoined.json()["status"] == "active"
+    assert rejoined.json()["mailing_list_opt_in"] is True
+    assert rejoined.json()["email_normalized"] == "waiting@example.test"
+    assert rejoined.json()["withdrawal_count"] == 1
+    assert rejoined_preferences.json()["waitlist_status"] == "active"
     assert admitted_cannot_join.status_code == 409
     assert admitted_cannot_join.json() == {"detail": "account_already_provisioned"}
 

@@ -45,6 +45,7 @@ from .errors import (
     RawMailNotFound,
     TrialQuotaExhausted,
     UserContextNoteNotFound,
+    WaitlistEntryNotFound,
     WaitlistUnavailable,
 )
 from .grouping import (
@@ -72,6 +73,7 @@ from .models import (
     ClarificationQuestion,
     ComponentCorrection,
     Confidence,
+    ConsentPreferences,
     DeviceCamera,
     DeviceCredentialRecord,
     DeviceCredentialStatus,
@@ -587,6 +589,18 @@ class Repository(Protocol):
         policy_version: str,
     ) -> WaitlistEntry: ...
 
+    async def consent_preferences(
+        self,
+        *,
+        firebase_uid: str,
+    ) -> ConsentPreferences: ...
+
+    async def withdraw_waitlist(
+        self,
+        *,
+        firebase_uid: str,
+    ) -> WaitlistEntry: ...
+
     async def issue_device_camera(
         self,
         *,
@@ -932,7 +946,8 @@ class InMemoryRepository:
         self._account_by_owner: dict[str, str] = {}
         self._notification_outbox: dict[str, AccountCreatedOutbox] = {}
         self._launch_consents: dict[str, LaunchMailConsent] = {}
-        self._waitlist_by_email_hash: dict[str, WaitlistEntry] = {}
+        self._launch_consent_state_by_owner: dict[str, LaunchMailConsent] = {}
+        self._waitlist_by_identity_hash: dict[str, WaitlistEntry] = {}
         self._inbound_mail_addresses: dict[str, InboundMailAddress] = {}
         self._inbound_mail_routes: dict[str, InboundMailRoute] = {}
         self._published_raw_mail: dict[tuple[str, str], str] = {}
@@ -1577,6 +1592,7 @@ class InMemoryRepository:
         async with self._lock:
             existing = self._launch_consents.get(consent_id)
             if existing:
+                self._launch_consent_state_by_owner[owner_user_id] = existing
                 return existing.model_copy(deep=True)
             consent = LaunchMailConsent(
                 id=consent_id,
@@ -1587,6 +1603,7 @@ class InMemoryRepository:
                 policy_version=policy_version,
             )
             self._launch_consents[consent.id] = consent
+            self._launch_consent_state_by_owner[owner_user_id] = consent
             return consent.model_copy(deep=True)
 
     async def join_waitlist(
@@ -1596,14 +1613,12 @@ class InMemoryRepository:
         email_normalized: str,
         policy_version: str,
     ) -> WaitlistEntry:
-        email_hash = sha256(email_normalized.encode()).hexdigest()
+        waitlist_id = sha256(firebase_uid.encode()).hexdigest()
         async with self._lock:
             if firebase_uid in self._account_by_owner:
                 raise AccountAlreadyProvisioned
-            existing = self._waitlist_by_email_hash.get(email_hash)
-            if existing:
-                if existing.firebase_uid != firebase_uid:
-                    raise CrossAccountAccess
+            existing = self._waitlist_by_identity_hash.get(waitlist_id)
+            if existing and existing.status == "active":
                 return existing.model_copy(deep=True)
             public_account_count = sum(
                 account.entitlement_mode == EntitlementMode.TRIAL
@@ -1611,14 +1626,73 @@ class InMemoryRepository:
             )
             if public_account_count < self._public_account_limit:
                 raise WaitlistUnavailable
-            entry = WaitlistEntry(
-                id=email_hash,
-                firebase_uid=firebase_uid,
-                email_normalized=email_normalized,
-                policy_version=policy_version,
+            now = utc_now()
+            entry = (
+                existing.model_copy(
+                    update={
+                        "email_normalized": email_normalized,
+                        "policy_version": policy_version,
+                        "mailing_list_opt_in": True,
+                        "status": "active",
+                        "updated_at": now,
+                    },
+                )
+                if existing
+                else WaitlistEntry(
+                    id=waitlist_id,
+                    email_normalized=email_normalized,
+                    policy_version=policy_version,
+                    created_at=now,
+                    updated_at=now,
+                )
             )
-            self._waitlist_by_email_hash[email_hash] = entry
+            self._waitlist_by_identity_hash[waitlist_id] = entry
             return entry.model_copy(deep=True)
+
+    async def consent_preferences(
+        self,
+        *,
+        firebase_uid: str,
+    ) -> ConsentPreferences:
+        async with self._lock:
+            launch = self._launch_consent_state_by_owner.get(firebase_uid)
+            waitlist = self._waitlist_by_identity_hash.get(
+                sha256(firebase_uid.encode()).hexdigest()
+            )
+            return ConsentPreferences(
+                launch_mail_opt_in=launch.granted if launch else None,
+                launch_mail_policy_version=launch.policy_version if launch else None,
+                launch_mail_updated_at=launch.created_at if launch else None,
+                waitlist_status=waitlist.status if waitlist else "not_joined",
+                waitlist_policy_version=waitlist.policy_version if waitlist else None,
+                waitlist_updated_at=waitlist.updated_at if waitlist else None,
+            )
+
+    async def withdraw_waitlist(
+        self,
+        *,
+        firebase_uid: str,
+    ) -> WaitlistEntry:
+        waitlist_id = sha256(firebase_uid.encode()).hexdigest()
+        async with self._lock:
+            existing = self._waitlist_by_identity_hash.get(waitlist_id)
+            if existing is None:
+                raise WaitlistEntryNotFound
+            if existing.status == "withdrawn":
+                return existing.model_copy(deep=True)
+            withdrawn_at = utc_now()
+            withdrawn = existing.model_copy(
+                update={
+                    "email_normalized": None,
+                    "mailing_list_opt_in": False,
+                    "status": "withdrawn",
+                    "updated_at": withdrawn_at,
+                    "last_withdrawn_at": withdrawn_at,
+                    "withdrawal_count": existing.withdrawal_count + 1,
+                },
+            )
+            self._waitlist_by_identity_hash[waitlist_id] = withdrawn
+            return withdrawn.model_copy(deep=True)
 
     async def issue_device_camera(
         self,

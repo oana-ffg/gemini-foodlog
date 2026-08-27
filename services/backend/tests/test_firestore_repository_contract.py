@@ -104,6 +104,38 @@ def test_firestore_public_capacity_is_atomic_and_waitlist_is_stable() -> None:
 
         admitted_owner_id = admitted[0].owner_user_id
         assert await repository.provision_account(admitted_owner_id) == admitted[0]
+        initial_preferences = await repository.consent_preferences(
+            firebase_uid=admitted_owner_id,
+        )
+        assert initial_preferences.launch_mail_opt_in is None
+        launch_grant = await repository.record_launch_mail_consent(
+            owner_user_id=admitted_owner_id,
+            email_normalized=f"{admitted_owner_id}@example.test",
+            granted=True,
+            policy_version="launch-interest-v1",
+        )
+        launch_withdrawal = await repository.record_launch_mail_consent(
+            owner_user_id=admitted_owner_id,
+            email_normalized=f"{admitted_owner_id}@example.test",
+            granted=False,
+            policy_version="launch-interest-v1",
+        )
+        assert launch_grant.id != launch_withdrawal.id
+        assert (
+            await repository.consent_preferences(firebase_uid=admitted_owner_id)
+        ).launch_mail_opt_in is False
+        assert (
+            await repository.record_launch_mail_consent(
+                owner_user_id=admitted_owner_id,
+                email_normalized=f"{admitted_owner_id}@example.test",
+                granted=True,
+                policy_version="launch-interest-v1",
+            )
+            == launch_grant
+        )
+        assert (
+            await repository.consent_preferences(firebase_uid=admitted_owner_id)
+        ).launch_mail_opt_in is True
 
         rejected_owner_id = next(
             owner_id
@@ -123,6 +155,35 @@ def test_firestore_public_capacity_is_atomic_and_waitlist_is_stable() -> None:
             )
             == waitlist
         )
+        assert (
+            await repository.consent_preferences(firebase_uid=rejected_owner_id)
+        ).waitlist_status == "active"
+        withdrawn = await repository.withdraw_waitlist(firebase_uid=rejected_owner_id)
+        assert withdrawn.status == "withdrawn"
+        assert withdrawn.email_normalized is None
+        assert withdrawn.mailing_list_opt_in is False
+        assert withdrawn.withdrawal_count == 1
+        assert await repository.withdraw_waitlist(firebase_uid=rejected_owner_id) == withdrawn
+        assert (
+            await repository.consent_preferences(firebase_uid=rejected_owner_id)
+        ).waitlist_status == "withdrawn"
+        waitlist_snapshot = (
+            await client.collection("waitlist")
+            .document(sha256(rejected_owner_id.encode()).hexdigest())
+            .get()
+        )
+        assert waitlist_snapshot.exists
+        assert "firebase_uid" not in waitlist_snapshot.to_dict()
+        assert waitlist_snapshot.get("email_normalized") is None
+        rejoined = await repository.join_waitlist(
+            firebase_uid=rejected_owner_id,
+            email_normalized=f"{rejected_owner_id}@example.test",
+            policy_version="capacity-waitlist-v1",
+        )
+        assert rejoined.id == waitlist.id
+        assert rejoined.status == "active"
+        assert rejoined.withdrawal_count == 1
+        assert rejoined.last_withdrawn_at == withdrawn.last_withdrawn_at
         with pytest.raises(AccountAlreadyProvisioned):
             await repository.join_waitlist(
                 firebase_uid=admitted_owner_id,

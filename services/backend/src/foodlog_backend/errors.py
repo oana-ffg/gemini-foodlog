@@ -18,6 +18,10 @@ class WaitlistUnavailable(FoodLogError):
     pass
 
 
+class WaitlistEntryNotFound(FoodLogError):
+    pass
+
+
 class InboundAddressCollision(FoodLogError):
     pass
 

@@ -626,19 +626,41 @@ class LaunchMailConsent(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class ConsentPreferences(BaseModel):
+    launch_mail_opt_in: bool | None = None
+    launch_mail_policy_version: str | None = None
+    launch_mail_updated_at: datetime | None = None
+    waitlist_status: Literal["not_joined", "active", "withdrawn"] = "not_joined"
+    waitlist_policy_version: str | None = None
+    waitlist_updated_at: datetime | None = None
+
+
 class WaitlistJoinRequest(BaseModel):
     join: Literal[True]
 
 
 class WaitlistEntry(BaseModel):
     id: str
-    firebase_uid: str
-    email_normalized: str
+    email_normalized: str | None
     policy_version: str
     reason: Literal["capacity"] = "capacity"
-    mailing_list_opt_in: Literal[True] = True
-    status: Literal["active"] = "active"
+    mailing_list_opt_in: bool = True
+    status: Literal["active", "withdrawn"] = "active"
     created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    last_withdrawn_at: datetime | None = None
+    withdrawal_count: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def state_fields_are_consistent(self) -> "WaitlistEntry":
+        if self.status == "active":
+            if not self.email_normalized or not self.mailing_list_opt_in:
+                raise ValueError("Active waitlist entries require an opted-in email")
+        elif self.email_normalized is not None or self.mailing_list_opt_in:
+            raise ValueError("Withdrawn waitlist entries cannot retain mailing details")
+        if (self.last_withdrawn_at is None) != (self.withdrawal_count == 0):
+            raise ValueError("Waitlist withdrawal audit fields are inconsistent")
+        return self
 
 
 class BrowserCameraCreate(BaseModel):

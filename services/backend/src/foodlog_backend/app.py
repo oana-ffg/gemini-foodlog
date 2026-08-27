@@ -39,6 +39,7 @@ from .errors import (
     QuestionSuperseded,
     TrialQuotaExhausted,
     UserContextNoteNotFound,
+    WaitlistEntryNotFound,
     WaitlistUnavailable,
 )
 from .feedback_learning import FeedbackLearningService, MealFeedbackLearningResult
@@ -57,6 +58,7 @@ from .models import (
     CaptureAccepted,
     CaptureEnvelopeV1,
     ClarificationQuestion,
+    ConsentPreferences,
     DeviceCamera,
     DeviceCameraCreate,
     DeviceCameraCredentialIssue,
@@ -392,6 +394,10 @@ def create_app(
             media_type="application/json",
         )
 
+    @app.exception_handler(WaitlistEntryNotFound)
+    async def waitlist_entry_missing_handler(*_: object) -> Response:
+        return Response(status_code=status.HTTP_404_NOT_FOUND)
+
     @app.exception_handler(TrialQuotaExhausted)
     async def trial_quota_handler(*_: object) -> Response:
         return Response(
@@ -500,6 +506,28 @@ def create_app(
             policy_version=active_settings.launch_consent_policy_version,
         )
 
+    @app.get("/v1/consents", response_model=ConsentPreferences)
+    async def get_consent_preferences(
+        identity: Annotated[VerifiedIdentity, Depends(request_identity)],
+    ) -> ConsentPreferences:
+        return await container.repository.consent_preferences(
+            firebase_uid=identity.uid,
+        )
+
+    @app.post(
+        "/v1/consents/launch-mail/withdraw",
+        response_model=LaunchMailConsent,
+    )
+    async def withdraw_launch_mail_consent(
+        identity: Annotated[VerifiedIdentity, Depends(request_identity)],
+    ) -> LaunchMailConsent:
+        return await container.repository.record_launch_mail_consent(
+            owner_user_id=identity.uid,
+            email_normalized=verified_email(identity),
+            granted=False,
+            policy_version=active_settings.launch_consent_policy_version,
+        )
+
     @app.post("/v1/waitlist", response_model=WaitlistEntry)
     async def join_waitlist(
         request: WaitlistJoinRequest,
@@ -509,6 +537,14 @@ def create_app(
             firebase_uid=identity.uid,
             email_normalized=verified_email(identity),
             policy_version=active_settings.waitlist_policy_version,
+        )
+
+    @app.post("/v1/waitlist/withdraw", response_model=WaitlistEntry)
+    async def withdraw_waitlist(
+        identity: Annotated[VerifiedIdentity, Depends(request_identity)],
+    ) -> WaitlistEntry:
+        return await container.repository.withdraw_waitlist(
+            firebase_uid=identity.uid,
         )
 
     @app.post("/v1/browser-cameras", response_model=BrowserCamera)

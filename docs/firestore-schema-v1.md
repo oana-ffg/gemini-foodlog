@@ -33,7 +33,7 @@ cameras.
 | `identities/{firebase_uid}` | Login-to-account lookup | `account_id`, `account_class` (`public` or explicitly configured `internal`), `email_normalized`, `email_verified`, `mailing_list_opt_in`, `status`; one document per Firebase UID. |
 | `device_credentials/{sha256_token}` | Camera-token lookup | `account_id`, `camera_id`, `token_version`, `status` (`active` or `revoked`), `issued_at`, nullable `last_used_at`, nullable `expires_at`, nullable `revoked_at`; the raw token is returned only by the issuance response and is never stored. |
 | `inbound_mail_routes/{sha256_recipient}` | Inbound-recipient lookup before the tenant is known | `account_id`, `address_id` (`current`), `status` (`active`), `created_at`; the normalized address itself is not stored globally. |
-| `waitlist/{sha256_email}` | Capacity overflow and product-interest list | `email_normalized`, `firebase_uid`, `reason` (`capacity`), `mailing_list_opt_in` (`true`), `policy_version`, `status` (`active`); one document per normalized verified email and accepted only while public capacity is full. |
+| `waitlist/{sha256_firebase_uid}` | Capacity overflow and product-interest list | While active: verified `email_normalized`, `reason` (`capacity`), `mailing_list_opt_in` (`true`), `policy_version`, and timestamps. Withdrawal immediately sets `status=withdrawn`, clears the email, sets opt-in false, and retains only bounded withdrawal count/time evidence; the raw Firebase UID is never stored in the waitlist record. One document per verified identity is accepted or reactivated only while public capacity is full. |
 
 ## Account root and bounded counters
 
@@ -98,7 +98,7 @@ belong in private Cloud Storage rather than Firestore.
 | `traces/{trace_id}` | Agent-run index | deterministic trace, root-trace, optional parent-trace, event, and model-reservation IDs; model/provider/prompt versions, purpose, retry/evaluation lineage, outcome/error code, started/completed timestamps, latency, token/cost counters, compressed byte size, and immutable GCS `object_key` plus SHA-256. Full application-visible trace content stays in GCS; invocation keys are hashed and secrets or hidden reasoning are forbidden. |
 | `jobs/{job_id}` | Durable asynchronous work state | `kind`, subject ID and revision, status, attempt count, `available_at`, lease token/owner/expiry, last error code/message <= 2,000 chars; payload <= 20 scalar/reference keys. |
 | `exports/{export_id}` | User data-export state | status, requested/completed/expiry timestamps, temporary GCS object key, byte size, SHA-256; object expires after one day. |
-| `consents/{sha256_actor_email_kind_policy_decision}` | Immutable consent change | `kind` (`launch_mail`), `granted`, `policy_version`, `actor_user_id`, `email_normalized`, timestamp; identical retries deduplicate while a changed decision or verified email appends a new event. |
+| `consents/{sha256_actor_email_kind_policy_decision}` | Immutable consent change | `kind` (`launch_mail`), `granted`, `policy_version`, `actor_user_id`, `email_normalized`, timestamp; identical retries deduplicate while a changed decision or verified email appends a new event. The owning identity also holds the current decision and its dedicated update time so withdrawing and later opting in again cannot leave stale state. |
 | `outbox/{message_id}` | Transactional notification/email intent | `kind`, status, dedupe hash, available timestamp, attempt count, recipient identity reference, payload <= 20 scalar/reference keys; no provider secret. |
 
 ## Write invariants

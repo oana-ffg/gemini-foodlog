@@ -43,6 +43,7 @@ from .errors import (
     RawMailNotFound,
     TrialQuotaExhausted,
     UserContextNoteNotFound,
+    WaitlistEntryNotFound,
     WaitlistUnavailable,
 )
 from .grouping import (
@@ -68,6 +69,7 @@ from .models import (
     CaptureRecord,
     CaptureStatus,
     ClarificationQuestion,
+    ConsentPreferences,
     DeviceCamera,
     DeviceCredentialRecord,
     DeviceCredentialStatus,
@@ -1158,6 +1160,7 @@ class FirestoreRepository:
         consent_id = sha256(
             f"{owner_user_id}\0{email_normalized}\0launch_mail\0{policy_version}\0{granted}".encode()
         ).hexdigest()
+        decision_at = utc_now()
         consent = LaunchMailConsent(
             id=consent_id,
             account_id=account.id,
@@ -1165,6 +1168,7 @@ class FirestoreRepository:
             email_normalized=email_normalized,
             granted=granted,
             policy_version=policy_version,
+            created_at=decision_at,
         )
         identity_ref = self._identity(owner_user_id)
         consent_ref = self._collection(account.id, "consents").document(consent.id)
@@ -1181,18 +1185,21 @@ class FirestoreRepository:
             ):
                 raise AccountNotProvisioned
             if existing.exists:
-                return _model(existing, LaunchMailConsent)
-            transaction.create(consent_ref, _document(consent))
+                stored = _model(existing, LaunchMailConsent)
+            else:
+                transaction.create(consent_ref, _document(consent))
+                stored = consent
             transaction.update(
                 identity_ref,
                 {
                     "email_normalized": email_normalized,
                     "mailing_list_opt_in": granted,
                     "mailing_list_policy_version": policy_version,
-                    "updated_at": consent.created_at,
+                    "mailing_list_updated_at": decision_at,
+                    "updated_at": decision_at,
                 },
             )
-            return consent
+            return stored
 
         return await record(transaction)
 
@@ -1203,12 +1210,14 @@ class FirestoreRepository:
         email_normalized: str,
         policy_version: str,
     ) -> WaitlistEntry:
-        entry_id = sha256(email_normalized.encode()).hexdigest()
+        entry_id = sha256(firebase_uid.encode()).hexdigest()
+        now = utc_now()
         entry = WaitlistEntry(
             id=entry_id,
-            firebase_uid=firebase_uid,
             email_normalized=email_normalized,
             policy_version=policy_version,
+            created_at=now,
+            updated_at=now,
         )
         identity_ref = self._identity(firebase_uid)
         waitlist_ref = self._client.collection("waitlist").document(entry.id)
@@ -1227,19 +1236,114 @@ class FirestoreRepository:
                 raise AccountAlreadyProvisioned
             if existing.exists:
                 stored = _model(existing, WaitlistEntry)
-                if stored.firebase_uid != firebase_uid:
-                    raise CrossAccountAccess
-                return stored
+                if stored.status == "active":
+                    if (
+                        stored.email_normalized == email_normalized
+                        and stored.policy_version == policy_version
+                    ):
+                        return stored
+                    refreshed = stored.model_copy(
+                        update={
+                            "email_normalized": email_normalized,
+                            "policy_version": policy_version,
+                            "updated_at": now,
+                        },
+                    )
+                    transaction.set(waitlist_ref, _document(refreshed))
+                    return refreshed
             count, limit = _public_capacity_values(
                 capacity,
                 configured_limit=self._public_account_limit,
             )
             if count < limit:
                 raise WaitlistUnavailable
+            if existing.exists:
+                reactivated = stored.model_copy(
+                    update={
+                        "email_normalized": email_normalized,
+                        "policy_version": policy_version,
+                        "mailing_list_opt_in": True,
+                        "status": "active",
+                        "updated_at": now,
+                    },
+                )
+                transaction.set(waitlist_ref, _document(reactivated))
+                return reactivated
             transaction.create(waitlist_ref, _document(entry))
             return entry
 
         return await join(transaction)
+
+    async def consent_preferences(
+        self,
+        *,
+        firebase_uid: str,
+    ) -> ConsentPreferences:
+        identity, waitlist = await asyncio.gather(
+            self._identity(firebase_uid).get(),
+            self._client.collection("waitlist")
+            .document(sha256(firebase_uid.encode()).hexdigest())
+            .get(),
+        )
+        launch_opt_in: bool | None = None
+        launch_policy_version: str | None = None
+        launch_updated_at: datetime | None = None
+        if identity.exists and identity.get("status") == "active":
+            identity_data = identity.to_dict() or {}
+            raw_opt_in = identity_data.get("mailing_list_opt_in")
+            if isinstance(raw_opt_in, bool):
+                launch_opt_in = raw_opt_in
+            raw_policy_version = identity_data.get("mailing_list_policy_version")
+            if isinstance(raw_policy_version, str):
+                launch_policy_version = raw_policy_version
+            raw_updated_at = identity_data.get("mailing_list_updated_at")
+            if isinstance(raw_updated_at, datetime):
+                launch_updated_at = raw_updated_at
+        stored_waitlist = _model(waitlist, WaitlistEntry) if waitlist.exists else None
+        return ConsentPreferences(
+            launch_mail_opt_in=launch_opt_in,
+            launch_mail_policy_version=launch_policy_version,
+            launch_mail_updated_at=launch_updated_at,
+            waitlist_status=stored_waitlist.status if stored_waitlist else "not_joined",
+            waitlist_policy_version=(
+                stored_waitlist.policy_version if stored_waitlist else None
+            ),
+            waitlist_updated_at=stored_waitlist.updated_at if stored_waitlist else None,
+        )
+
+    async def withdraw_waitlist(
+        self,
+        *,
+        firebase_uid: str,
+    ) -> WaitlistEntry:
+        waitlist_ref = self._client.collection("waitlist").document(
+            sha256(firebase_uid.encode()).hexdigest()
+        )
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def withdraw(transaction):
+            snapshot = await waitlist_ref.get(transaction=transaction)
+            if not snapshot.exists:
+                raise WaitlistEntryNotFound
+            stored = _model(snapshot, WaitlistEntry)
+            if stored.status == "withdrawn":
+                return stored
+            withdrawn_at = utc_now()
+            withdrawn = stored.model_copy(
+                update={
+                    "email_normalized": None,
+                    "mailing_list_opt_in": False,
+                    "status": "withdrawn",
+                    "updated_at": withdrawn_at,
+                    "last_withdrawn_at": withdrawn_at,
+                    "withdrawal_count": stored.withdrawal_count + 1,
+                },
+            )
+            transaction.set(waitlist_ref, _document(withdrawn))
+            return withdrawn
+
+        return await withdraw(transaction)
 
     async def issue_device_camera(
         self,
