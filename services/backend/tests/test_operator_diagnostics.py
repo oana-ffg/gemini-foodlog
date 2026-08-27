@@ -276,3 +276,35 @@ def test_cloud_log_reader_fails_closed_on_unknown_payload_fields() -> None:
             account_id="account-a",
             event_id="event-a",
         )
+
+
+def test_cloud_log_reader_normalizes_integral_protobuf_numbers_only() -> None:
+    entry = SimpleNamespace(
+        payload={
+            "schema": "foodlog_operational_event_v1",
+            "severity": "INFO",
+            "event": "event_processed",
+            "account_id": "account-a",
+            "event_id": "event-a",
+            "delivery_attempt": 2.0,
+        },
+        timestamp=utc_now(),
+        severity="INFO",
+        log_name="projects/project-a/logs/stdout",
+        resource=SimpleNamespace(type="cloud_run_revision"),
+    )
+
+    safe = CloudLoggingDiagnosticReader._safe_entry(
+        entry,
+        account_id="account-a",
+        event_id="event-a",
+    )
+    assert safe.fields["delivery_attempt"] == 2
+
+    entry.payload["delivery_attempt"] = 2.5
+    with pytest.raises(ValueError, match="unsafe type"):
+        CloudLoggingDiagnosticReader._safe_entry(
+            entry,
+            account_id="account-a",
+            event_id="event-a",
+        )

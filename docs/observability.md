@@ -40,6 +40,15 @@ Application operational logs remain in the normal Cloud Logging retention path.
 Full model requests, responses, and tool traces stay in the private trace bucket and
 are never copied into these metrics.
 
+Operator diagnostics additionally enable Data Access audit records for Storage
+reads/writes and Cloud Logging reads. The four routine data-plane service accounts
+are exempt, so normal API, camera, and worker activity cannot turn this into an
+unbounded audit stream. Exceptional operator and deployment access is retained with
+Google's authenticated principal and remains variable log ingestion under the same
+DKK 400 gross-spend budget; it is not treated as a free signal. Firestore Native
+does not accept a service-level Data Access audit config, so the diagnostic writes a
+scoped immutable application audit event before any Firestore evidence read.
+
 ## Verification contract
 
 Metric filters are tested against emitted JSON records before deployment. After

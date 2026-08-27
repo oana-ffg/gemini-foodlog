@@ -226,6 +226,8 @@ class CloudLoggingDiagnosticReader:
         fields: dict[str, str | int] = {}
         for key in sorted(set(payload) & SAFE_FIELDS):
             value = payload[key]
+            if isinstance(value, float) and value.is_integer():
+                value = int(value)
             if isinstance(value, bool) or not isinstance(value, str | int):
                 raise ValueError(f"diagnostic log field {key} has an unsafe type")
             fields[key] = value

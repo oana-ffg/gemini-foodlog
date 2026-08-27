@@ -12,9 +12,12 @@ Every run requires an exact account ID, exact event ID, and one of four purposes
 `development_verification`. The command appends a unique immutable
 `operator.diagnostic_read` audit event before it attempts to read the selected
 event. Retrying the same explicit session ID is idempotent; a new run gets a new
-session ID and therefore a new audit record. Google Cloud Audit Logs remain the
-authoritative record of the Google principal whose ADC performed the Firestore,
-Storage, and Logging reads.
+session ID and therefore a new audit record. Terraform enables Google Data Access
+auditing for operator Storage reads/writes and Cloud Logging reads; the four
+high-volume runtime identities are explicitly exempt, while operator and deployment
+principals are retained. Firestore Native does not support a service-level Data
+Access audit config, so the immutable application event is the Firestore access
+record and the correlated Storage/Logging audit entries identify the ADC principal.
 
 The command returns only:
 
@@ -47,5 +50,5 @@ Run this only from Oana's authenticated workstation. Do not redirect the JSON to
 shared file or paste it into public issue trackers. A successful run must show the
 requested account/event IDs, a nonempty audit event ID, matching Firestore and GCS
 metadata, verified trace redaction/integrity, and only allowlisted logs. The command
-must then be corroborated by reading the new immutable audit record and the Google
-Cloud audit trail rather than treating terminal output alone as proof.
+must then be corroborated by reading the new immutable audit record and the Storage
+and Logging Data Access trail rather than treating terminal output alone as proof.
