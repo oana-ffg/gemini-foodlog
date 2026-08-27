@@ -835,8 +835,10 @@ def create_app(
     @app.get("/v1/meals/{meal_id}/revisions", response_model=list[MealRevision])
     async def list_meal_revisions(
         meal_id: str,
+        response: Response,
         user_id: str = Depends(request_user_id),
     ) -> list[MealRevision]:
+        response.headers["Cache-Control"] = "private, no-store"
         return await container.repository.list_meal_revisions(user_id, meal_id)
 
     @app.post(

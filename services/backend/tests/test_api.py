@@ -1349,6 +1349,7 @@ def test_not_cooking_disappears_from_journal_and_can_be_reclassified() -> None:
         assert [item["id"] for item in discarded_activity.json()] == [meal["id"]]
         assert discarded_activity.json()[0]["status"] == "not_cooking"
         assert revisions.status_code == 200
+        assert revisions.headers["cache-control"] == "private, no-store"
         assert [item["status"] for item in revisions.json()] == [
             "provisional",
             "not_cooking",
