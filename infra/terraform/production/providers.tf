@@ -46,6 +46,7 @@ locals {
     "appengine.googleapis.com",
     "apikeys.googleapis.com",
     "cloudbuild.googleapis.com",
+    "billingbudgets.googleapis.com",
     "firestore.googleapis.com",
     "firebase.googleapis.com",
     "firebaseappcheck.googleapis.com",
