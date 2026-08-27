@@ -160,6 +160,100 @@ export interface QuestionAnswerResult {
   revision: MealRevision;
 }
 
+export type KnowledgeLifecycle =
+  | "inferred"
+  | "reinforced"
+  | "confirmed"
+  | "contradicted"
+  | "retired";
+export type KnowledgeBeliefStrength = "weak" | "moderate" | "strong";
+export type KnowledgeRevisionSource =
+  | "agent_inference"
+  | "user_feedback"
+  | "user_statement"
+  | "question_response";
+export type KnowledgeEvidenceKind =
+  | "capture"
+  | "meal_revision"
+  | "feedback"
+  | "question_response"
+  | "purchase_document"
+  | "user_context_note"
+  | "knowledge_revision";
+export type KnowledgeEvidenceRole = "supports" | "contradicts" | "context";
+
+export interface KnowledgeClaim {
+  dimension: string;
+  value: string;
+  conditions: string[];
+}
+
+export interface KnowledgeEvidenceReference {
+  kind: KnowledgeEvidenceKind;
+  id: string;
+  role: KnowledgeEvidenceRole;
+  note: string | null;
+}
+
+export interface KnowledgePage {
+  id: string;
+  account_id: string;
+  topic_key: string;
+  title: string;
+  statement: string;
+  claim: KnowledgeClaim | null;
+  lifecycle: KnowledgeLifecycle;
+  belief_strength: KnowledgeBeliefStrength;
+  current_revision_number: number;
+  current_revision_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeRevision {
+  id: string;
+  account_id: string;
+  page_id: string;
+  number: number;
+  title: string;
+  statement: string;
+  claim: KnowledgeClaim | null;
+  lifecycle: KnowledgeLifecycle;
+  belief_strength: KnowledgeBeliefStrength;
+  source: KnowledgeRevisionSource;
+  evidence: KnowledgeEvidenceReference[];
+  reason: string;
+  base_revision_number: number | null;
+  previous_revision_id: string | null;
+  created_at: string;
+}
+
+export interface KnowledgePageHistory {
+  page: KnowledgePage;
+  revisions: KnowledgeRevision[];
+}
+
+export interface UserContextNote {
+  id: string;
+  account_id: string;
+  author_user_id: string;
+  text: string;
+  valid_from: string | null;
+  valid_until: string | null;
+  status: "active" | "retired";
+  created_at: string;
+  retired_at: string | null;
+}
+
+export interface KnowledgeRevisionResult {
+  page: KnowledgePage;
+  revision: KnowledgeRevision;
+}
+
+export interface StableKnowledgeTeachingResult extends KnowledgeRevisionResult {
+  source_note: UserContextNote;
+}
+
 export interface CaptureAccepted {
   capture_id: string;
   accepted_image_count: number;
@@ -371,6 +465,75 @@ export function answerQuestion(
         "Idempotency-Key": idempotencyKey,
       },
       body: JSON.stringify({ answer, learning_tip: learningTip }),
+    },
+  );
+}
+
+export function listKnowledge(includeRetired = false): Promise<KnowledgePage[]> {
+  const query = includeRetired ? "?include_retired=true" : "";
+  return apiRequest<KnowledgePage[]>(`/v1/knowledge${query}`);
+}
+
+export function getKnowledgePage(pageId: string): Promise<KnowledgePageHistory> {
+  return apiRequest<KnowledgePageHistory>(
+    `/v1/knowledge/${encodeURIComponent(pageId)}`,
+  );
+}
+
+export function teachKnowledge(
+  statement: string,
+  idempotencyKey: string,
+): Promise<StableKnowledgeTeachingResult> {
+  return apiRequest<StableKnowledgeTeachingResult>("/v1/knowledge", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify({ statement }),
+  });
+}
+
+export function correctKnowledge(
+  pageId: string,
+  statement: string,
+  expectedRevisionNumber: number,
+  idempotencyKey: string,
+): Promise<StableKnowledgeTeachingResult> {
+  return apiRequest<StableKnowledgeTeachingResult>(
+    `/v1/knowledge/${encodeURIComponent(pageId)}/correct`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify({
+        statement,
+        expected_revision_number: expectedRevisionNumber,
+      }),
+    },
+  );
+}
+
+export function retireKnowledge(
+  pageId: string,
+  expectedRevisionNumber: number,
+  reason: string | undefined,
+  idempotencyKey: string,
+): Promise<KnowledgeRevisionResult> {
+  return apiRequest<KnowledgeRevisionResult>(
+    `/v1/knowledge/${encodeURIComponent(pageId)}/retire`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify({
+        expected_revision_number: expectedRevisionNumber,
+        reason,
+      }),
     },
   );
 }

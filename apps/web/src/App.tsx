@@ -399,7 +399,10 @@ function App() {
               : account?.trial_image_limit ?? 200} images
           </strong>
         </div>
-        <Link className="camera-link" to="/camera">Open the phone camera page</Link>
+        <nav className="hero-links" aria-label="FoodLog tools">
+          <Link to="/knowledge">Open the household wiki</Link>
+          <Link to="/camera">Open the phone camera page</Link>
+        </nav>
       </header>
 
       {consentPreferences ? (

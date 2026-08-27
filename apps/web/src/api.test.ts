@@ -10,13 +10,18 @@ vi.mock("./firebase", () => firebase);
 
 import {
   AuthenticationRequiredError,
+  correctKnowledge,
   createDeviceCamera,
+  getKnowledgePage,
   getConsentPreferences,
   joinWaitlist,
   listCameras,
+  listKnowledge,
   provisionAccount,
   recordLaunchMailConsent,
+  retireKnowledge,
   revokeCamera,
+  teachKnowledge,
   uploadCapture,
   withdrawLaunchMailConsent,
   withdrawWaitlist,
@@ -196,6 +201,43 @@ describe("authenticated API client", () => {
     expect((fetchMock.mock.calls[1][1] as RequestInit).body).toBe(
       JSON.stringify({ name: "ESP kitchen camera" }),
     );
+  });
+
+  it("uses the authenticated household-wiki CRUD and history routes", async () => {
+    firebase.auth.currentUser = {
+      getIdToken: vi.fn().mockResolvedValue("firebase-id-token"),
+    };
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse({})));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listKnowledge(true);
+    await getKnowledgePage("page/one");
+    await teachKnowledge("The sink-side basket usually means steak.", "teach-key-0001");
+    await correctKnowledge("page/one", "It can also mean chicken.", 2, "correct-key-0001");
+    await retireKnowledge("page/one", 3, "No longer reliable.", "retire-key-0001");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://127.0.0.1:8080/v1/knowledge?include_retired=true",
+      "http://127.0.0.1:8080/v1/knowledge/page%2Fone",
+      "http://127.0.0.1:8080/v1/knowledge",
+      "http://127.0.0.1:8080/v1/knowledge/page%2Fone/correct",
+      "http://127.0.0.1:8080/v1/knowledge/page%2Fone/retire",
+    ]);
+    const teachInit = fetchMock.mock.calls[2][1] as RequestInit;
+    const correctInit = fetchMock.mock.calls[3][1] as RequestInit;
+    const retireInit = fetchMock.mock.calls[4][1] as RequestInit;
+    expect(new Headers(teachInit.headers).get("Idempotency-Key")).toBe("teach-key-0001");
+    expect(teachInit.body).toBe(JSON.stringify({
+      statement: "The sink-side basket usually means steak.",
+    }));
+    expect(correctInit.body).toBe(JSON.stringify({
+      statement: "It can also mean chicken.",
+      expected_revision_number: 2,
+    }));
+    expect(retireInit.body).toBe(JSON.stringify({
+      expected_revision_number: 3,
+      reason: "No longer reliable.",
+    }));
   });
 
   it("uploads browser snapshots through the shared capture envelope", async () => {
