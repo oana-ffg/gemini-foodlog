@@ -29,6 +29,7 @@ from .errors import (
     InvalidMealFeedbackTransition,
     JobIdentityConflict,
     KnowledgePageNotFound,
+    KnowledgeRevisionConflict,
     MealNotFound,
     ModelSpendLimitExceeded,
     ModelSpendReservationConflict,
@@ -159,6 +160,8 @@ from .repository import (
 ENTITLEMENT_MODE_VALUES = frozenset(item.value for item in EntitlementMode)
 PUBLIC_CAPACITY_TRANSACTION_MAX_ATTEMPTS = 10
 PUBLIC_CAPACITY_OUTER_RETRY_ATTEMPTS = 4
+KNOWLEDGE_TRANSACTION_MAX_ATTEMPTS = 10
+KNOWLEDGE_OUTER_RETRY_ATTEMPTS = 5
 TRANSACTION_COMMIT_FAILURE_PREFIX = "Failed to commit transaction in "
 
 
@@ -180,8 +183,8 @@ def _public_capacity_values(
     return count, min(stored_limit, configured_limit)
 
 
-def _capacity_retry_delay(owner_user_id: str, attempt: int) -> float:
-    jitter_bytes = sha256(f"{owner_user_id}:{attempt}".encode()).digest()[:2]
+def _transaction_retry_delay(identity: str, attempt: int) -> float:
+    jitter_bytes = sha256(f"{identity}:{attempt}".encode()).digest()[:2]
     jitter = int.from_bytes(jitter_bytes) / 65535 * 0.05
     return min(0.025 * (2**attempt), 0.2) + jitter
 
@@ -409,7 +412,7 @@ class FirestoreRepository:
                         raise AccountCapacityReached from None
                 if attempt + 1 == PUBLIC_CAPACITY_OUTER_RETRY_ATTEMPTS:
                     raise
-                await asyncio.sleep(_capacity_retry_delay(owner_user_id, attempt))
+                await asyncio.sleep(_transaction_retry_delay(owner_user_id, attempt))
 
         raise AssertionError("Public capacity retry loop did not return or raise")
 
@@ -1172,7 +1175,6 @@ class FirestoreRepository:
         )
         identity_ref = self._identity(owner_user_id)
         consent_ref = self._collection(account.id, "consents").document(consent.id)
-        transaction = self._client.transaction()
 
         @firestore.async_transactional
         async def record(transaction):
@@ -1201,7 +1203,7 @@ class FirestoreRepository:
             )
             return stored
 
-        return await record(transaction)
+        return await record(self._client.transaction())
 
     async def join_waitlist(
         self,
@@ -2921,7 +2923,6 @@ class FirestoreRepository:
         request_ref = self._collection(account_id, "knowledge_revision_requests").document(
             revision_id
         )
-        transaction = self._client.transaction()
 
         @firestore.async_transactional
         async def record(transaction):
@@ -3005,7 +3006,32 @@ class FirestoreRepository:
             )
             return KnowledgeRevisionResult(page=page, revision=revision)
 
-        return await record(transaction)
+        for attempt in range(KNOWLEDGE_OUTER_RETRY_ATTEMPTS):
+            try:
+                return await record(
+                    self._client.transaction(max_attempts=KNOWLEDGE_TRANSACTION_MAX_ATTEMPTS)
+                )
+            except ValueError as error:
+                if not str(error).startswith(TRANSACTION_COMMIT_FAILURE_PREFIX):
+                    raise
+
+                committed = await self.knowledge_revision_result_for_request(
+                    account_id=account_id,
+                    idempotency_key=idempotency_key,
+                )
+                if committed is not None:
+                    return committed
+
+                current_snapshot = await page_ref.get()
+                if current_snapshot.exists:
+                    current_page = _model(current_snapshot, KnowledgePage)
+                    if current_page.current_revision_number != expected_revision_number:
+                        raise KnowledgeRevisionConflict from None
+                if attempt + 1 == KNOWLEDGE_OUTER_RETRY_ATTEMPTS:
+                    raise
+                await asyncio.sleep(_transaction_retry_delay(revision_id, attempt))
+
+        raise AssertionError("Knowledge transaction retry loop did not return or raise")
 
     async def knowledge_revision_result_for_request(
         self,
