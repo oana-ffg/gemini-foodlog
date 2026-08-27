@@ -83,14 +83,43 @@ def test_verified_bearer_token_is_the_only_source_of_user_identity() -> None:
     assert response.json()["owner_user_id"] == "firebase-user-a"
 
 
-def test_unverified_email_cannot_reach_any_private_route() -> None:
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/v1/accounts"),
+        ("POST", "/v1/inbound-mail-address"),
+        ("POST", "/v1/consents/launch-mail"),
+        ("POST", "/v1/waitlist"),
+        ("POST", "/v1/browser-cameras"),
+        ("GET", "/v1/cameras"),
+        ("POST", "/v1/cameras/camera-id/revoke"),
+        ("POST", "/v1/device-cameras"),
+        ("POST", "/v1/device-cameras/camera-id/revoke"),
+        ("POST", "/v1/captures"),
+        ("GET", "/v1/journal"),
+        ("GET", "/v1/purchases"),
+        ("GET", "/v1/purchases/purchase-id"),
+        ("GET", "/v1/meals/meal-id/revisions"),
+        ("POST", "/v1/meals/meal-id/feedback"),
+        ("GET", "/v1/questions"),
+        ("POST", "/v1/context-notes"),
+        ("GET", "/v1/context-notes"),
+        ("POST", "/v1/context-notes/note-id/retire"),
+        ("POST", "/v1/questions/question-id/answer"),
+        ("POST", "/v1/questions/question-id/responses"),
+        ("GET", "/v1/captures/capture-id/image"),
+    ],
+)
+def test_unverified_email_cannot_reach_any_user_authenticated_route(
+    method: str,
+    path: str,
+) -> None:
     headers = {"Authorization": "Bearer unverified-id-token"}
     with firebase_test_client(UnverifiedTokenVerifier()) as client:
-        account = client.post("/v1/accounts", headers=headers)
-        journal = client.get("/v1/journal", headers=headers)
+        response = client.request(method, path, headers=headers)
 
-    assert account.status_code == journal.status_code == 403
-    assert account.json() == journal.json() == {"detail": "email_verification_required"}
+    assert response.status_code == 403
+    assert response.json() == {"detail": "email_verification_required"}
 
 
 @pytest.mark.parametrize(
