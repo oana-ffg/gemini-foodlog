@@ -83,6 +83,14 @@ def _meal_tokens(meal: MealEntry) -> set[str]:
     return set().union(*(_tokens(value) for value in values))
 
 
+def _value_label_token_sets(value: str) -> tuple[set[str], ...]:
+    return tuple(
+        tokens
+        for label in re.split(r"\s+or\s+", value, flags=re.IGNORECASE)
+        if (tokens := _tokens(label) - _VALUE_STOPWORDS)
+    )
+
+
 def _local_occurrence(meal: MealEntry) -> datetime:
     occurred_at = meal.occurred_at or meal.created_at
     if meal.occurred_utc_offset_minutes is None:
@@ -312,15 +320,21 @@ class PatternDetectionService:
         ):
             raise ValueError("cited evidence falls outside the claimed temporal cohort")
 
-        value_tokens = _tokens(candidate.claim.value) - _VALUE_STOPWORDS
-        if not value_tokens:
+        value_label_tokens = _value_label_token_sets(candidate.claim.value)
+        if not value_label_tokens:
             raise ValueError("pattern claim value has no testable meal label")
-        if not all(value_tokens & _meal_tokens(meal) for meal, _ in supports):
+        if not all(
+            any(label_tokens <= _meal_tokens(meal) for label_tokens in value_label_tokens)
+            for meal, _ in supports
+        ):
             raise ValueError("supporting meals do not visibly match the claim value")
-        if any(value_tokens & _meal_tokens(meal) for meal, _ in counters):
+        if any(
+            any(label_tokens <= _meal_tokens(meal) for label_tokens in value_label_tokens)
+            for meal, _ in counters
+        ):
             raise ValueError("counterexamples visibly match the claim value")
         statement_tokens = _tokens(candidate.statement)
-        if not value_tokens & statement_tokens:
+        if not any(label_tokens <= statement_tokens for label_tokens in value_label_tokens):
             raise ValueError("pattern statement does not name its claimed meal value")
 
         supporting_examples = [_example(meal, revision) for meal, revision in supports]

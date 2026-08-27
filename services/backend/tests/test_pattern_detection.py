@@ -160,6 +160,39 @@ def test_detector_proposes_thursday_pattern_with_counterexample_and_deduplicates
     asyncio.run(scenario())
 
 
+def test_detector_distinguishes_labels_that_share_descriptive_prefixes() -> None:
+    async def scenario() -> None:
+        repository, account_id, camera_id = await repository_with_owner()
+        for day, title in (
+            (6, "Synthetic smoke Steak"),
+            (13, "Synthetic smoke Steak"),
+            (20, "Synthetic smoke Steak"),
+            (27, "Synthetic smoke Chicken"),
+        ):
+            await seed_meal(
+                repository,
+                account_id=account_id,
+                owner_user_id="pattern-owner",
+                camera_id=camera_id,
+                title=title,
+                local_at=local_time(day),
+            )
+        questions = await PatternDetectionService(repository).detect_and_propose(
+            account_id=account_id,
+            max_proposals=5,
+        )
+        thursday = next(
+            question
+            for question in questions
+            if question.pattern_claim is not None
+            and question.pattern_claim.value == "synthetic smoke steak"
+        )
+        assert len(thursday.pattern_supporting_examples) == 3
+        assert len(thursday.pattern_counterexamples) == 1
+
+    asyncio.run(scenario())
+
+
 def test_detector_uses_the_original_local_day_across_utc_midnight() -> None:
     async def scenario() -> None:
         repository, account_id, camera_id = await repository_with_owner()

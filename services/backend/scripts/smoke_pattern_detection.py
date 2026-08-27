@@ -14,6 +14,15 @@ from PIL import Image
 
 from foodlog_backend.firestore_repository import FirestoreRepository
 from foodlog_backend.grouping import CaptureGroupingService, GroupingPolicy
+from foodlog_backend.inference_schema import (
+    ActivityMealInferenceV1,
+    DirectObservation,
+    ImageEvidenceLink,
+    InferenceConfidence,
+    InferenceKind,
+    InferenceMealComponent,
+    UserAction,
+)
 from foodlog_backend.models import (
     CaptureEnvelopeV1,
     Confidence,
@@ -123,29 +132,72 @@ async def seed_synthetic_meal(
         worker_id="synthetic-pattern-smoke",
     )
     assert grouped is not None
-    await complete_without_inference(
-        repository,
+    event, captures = await repository.event_evidence_for_account(
+        account_id=account.id,
+        event_id=grouped.event.id,
+    )
+    lease_id = str(uuid4())
+    lease_owner = "synthetic-pattern-smoke-publication"
+    claimed = await repository.claim_job(
         account_id=account.id,
         job_id=grouped.inference_job.id,
-        subject_revision=grouped.inference_job.subject_revision,
+        expected_subject_revision=grouped.inference_job.subject_revision,
+        lease_id=lease_id,
+        lease_owner=lease_owner,
+        lease_expires_at=utc_now() + timedelta(minutes=5),
     )
-    return await repository.save_meal(
+    assert claimed is not None
+    published = await repository.publish_event_inference(
         account_id=account.id,
-        meal=MealEntry(
-            id=str(uuid4()),
-            account_id=account.id,
-            capture_id=capture.id,
-            event_id=grouped.event.id,
-            occurred_at=captured_at,
-            occurred_utc_offset_minutes=120,
-            title=title,
-            confidence=Confidence.LIKELY,
-            components=[],
-            observations=[f"{SYNTHETIC_MARKER} retained evidence."],
+        event_id=event.id,
+        expected_event_revision=event.current_revision,
+        lease_id=lease_id,
+        lease_owner=lease_owner,
+        hypothesis=ActivityMealInferenceV1(
+            schema_version="activity-meal-inference-v1",
+            event_id=event.id,
+            source_capture_ids=[item.id for item in captures],
+            kind=InferenceKind.TENTATIVE_MEAL,
+            best_guess=title,
+            confidence=InferenceConfidence.LIKELY,
+            components=[
+                InferenceMealComponent(
+                    id="synthetic_meal",
+                    name=title,
+                    ingredients=[title],
+                    preparation_methods=[],
+                    confidence=InferenceConfidence.LIKELY,
+                    alternatives=[],
+                    evidence_ids=["synthetic_observation"],
+                )
+            ],
+            direct_observations=[
+                DirectObservation(
+                    id="synthetic_observation",
+                    description=f"{SYNTHETIC_MARKER} retained evidence.",
+                    image_evidence=[
+                        ImageEvidenceLink(capture_id=item.id) for item in captures
+                    ],
+                )
+            ],
+            contextual_evidence=[],
+            assumptions=[],
+            deductions=[],
             alternatives=[],
             rationale="Synthetic no-model production detector smoke.",
+            allowed_actions=[
+                UserAction.CONFIRM_GUESS,
+                UserAction.CORRECT,
+                UserAction.DISCARD_NOT_COOKING,
+            ],
         ),
     )
+    assert published is not None
+    assert published.title == title
+    assert published.confidence == Confidence.LIKELY
+    assert published.occurred_at == captured_at
+    assert published.occurred_utc_offset_minutes == 120
+    return published
 
 
 async def recover_incomplete_smoke_captures(
@@ -225,6 +277,21 @@ async def smoke(args: argparse.Namespace) -> None:
             grouping,
             account_id=account.id,
         )
+        recovered_meal_count = 0
+        for meal in await repository.list_meals(owner_user_id):
+            if SYNTHETIC_MARKER not in meal.title:
+                continue
+            await repository.record_meal_feedback(
+                owner_user_id=owner_user_id,
+                meal_id=meal.id,
+                request=MealFeedbackRequest(
+                    kind=MealFeedbackKind.NOT_COOKING,
+                    base_revision_number=meal.revision_number,
+                    explanation="Recovered synthetic detector smoke cleanup.",
+                ),
+                idempotency_key=f"pattern-recovery-meal-cleanup-{meal.id}",
+            )
+            recovered_meal_count += 1
         with httpx.Client(
             base_url=args.api_url,
             headers={
@@ -268,7 +335,13 @@ async def smoke(args: argparse.Namespace) -> None:
                 f"{SYNTHETIC_MARKER} Steak",
                 f"{SYNTHETIC_MARKER} Steak",
             )
-            first_thursday = datetime(2026, 7, 2, 18, tzinfo=LOCAL_TIMEZONE)
+            first_thursday = datetime(
+                2026,
+                7,
+                9 if recovered_capture_ids else 2,
+                18,
+                tzinfo=LOCAL_TIMEZONE,
+            )
             meals: list[MealEntry] = []
             original_question = None
             resurfaced_question = None
@@ -381,6 +454,7 @@ async def smoke(args: argparse.Namespace) -> None:
         print("rejected_resurface_threshold=2")
         print("synthetic_meals_discarded=true")
         print(f"recovered_incomplete_capture_count={len(recovered_capture_ids)}")
+        print(f"recovered_active_meal_count={recovered_meal_count}")
         print("model_spend_ledger_unchanged=true")
         print("model_calls=0")
     finally:
