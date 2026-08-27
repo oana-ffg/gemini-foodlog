@@ -5599,6 +5599,22 @@
             }
           },
           {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/QuestionKind"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
             "in": "header",
             "name": "authorization",
             "required": false,

@@ -3,12 +3,11 @@ import { Link } from "react-router-dom";
 import {
   ApiError,
   AuthenticationRequiredError,
-  answerQuestion,
   getConsentPreferences,
   listActivities,
   listJournal,
   listMealRevisions,
-  listOpenQuestions,
+  listOpenPatternQuestions,
   listProcessing,
   listPurchases,
   provisionAccount,
@@ -21,8 +20,13 @@ import {
   type MealRevision,
   type MealStatus,
 } from "./api";
-import { ActivityImageViewer, ActivityRationale } from "./ActivityDetail";
+import {
+  ActivityFocusedQuestion,
+  ActivityImageViewer,
+  ActivityRationale,
+} from "./ActivityDetail";
 import MealFeedbackControls, { CorrectionSummary } from "./MealFeedbackControls";
+import PatternQuestionCard from "./PatternQuestionCard";
 import { SessionControls, useAuth } from "./auth";
 import { CapacityWaitlist, LaunchMailConsentControls } from "./ConsentControls";
 import {
@@ -132,6 +136,11 @@ function JournalCard({ entry, onChanged, onNotice }: JournalCardProps) {
           inference={entry}
           hypothesis={entry.activity_hypothesis}
           onSelectCapture={setSelectedCaptureId}
+          includeQuestion={false}
+        />
+        <ActivityFocusedQuestion
+          inference={entry}
+          hypothesis={entry.activity_hypothesis}
         />
 
         <MealFeedbackControls
@@ -149,73 +158,6 @@ function JournalCard({ entry, onChanged, onNotice }: JournalCardProps) {
   );
 }
 
-interface QuestionCardProps {
-  question: ClarificationQuestion;
-  onChanged: () => Promise<void>;
-}
-
-function QuestionCard({ question, onChanged }: QuestionCardProps) {
-  const [answer, setAnswer] = useState("");
-  const [learningTip, setLearningTip] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string>();
-
-  const submit = async () => {
-    const trimmedAnswer = answer.trim();
-    if (!trimmedAnswer) {
-      setMessage("Please tell FoodLog what the meal or ingredient was.");
-      return;
-    }
-    setBusy(true);
-    setMessage("Applying your answer…");
-    try {
-      await answerQuestion(
-        question.id,
-        trimmedAnswer,
-        learningTip.trim() || undefined,
-        crypto.randomUUID(),
-      );
-      await onChanged();
-    } catch (error: unknown) {
-      setMessage(error instanceof Error ? error.message : "Could not save the answer");
-      setBusy(false);
-    }
-  };
-
-  return (
-    <article className="question-card">
-      <div>
-        <p className="section-kicker">Needs your context</p>
-        <h3>{question.prompt}</h3>
-        <p>{question.reason}</p>
-      </div>
-      <div className="question-form">
-        <label>
-          Your answer
-          <input
-            value={answer}
-            onChange={(event) => setAnswer(event.target.value)}
-            maxLength={200}
-          />
-        </label>
-        <label>
-          Optional tip for next time
-          <textarea
-            value={learningTip}
-            onChange={(event) => setLearningTip(event.target.value)}
-            maxLength={2000}
-            rows={3}
-          />
-        </label>
-        <button type="button" onClick={submit} disabled={busy}>
-          {busy ? "Saving…" : "Answer and update journal"}
-        </button>
-        {message ? <p className="form-message" role="status">{message}</p> : null}
-      </div>
-    </article>
-  );
-}
-
 function App() {
   const { user } = useAuth();
   const firebaseUid = user?.uid;
@@ -224,13 +166,14 @@ function App() {
   const [capacityReached, setCapacityReached] = useState(false);
   const [journal, setJournal] = useState<MealEntry[]>([]);
   const [discardedActivities, setDiscardedActivities] = useState<MealEntry[]>([]);
-  const [questions, setQuestions] = useState<ClarificationQuestion[]>([]);
+  const [patternQuestions, setPatternQuestions] = useState<ClarificationQuestion[]>([]);
   const [processing, setProcessing] = useState<CaptureProcessing[]>();
   const [processingUnavailable, setProcessingUnavailable] = useState(false);
   const [purchaseContext, setPurchaseContext] = useState<PurchaseContextState>("loading");
   const [sessionStale, setSessionStale] = useState(false);
   const [loadMessage, setLoadMessage] = useState("Loading your private journal…");
   const [journalNotice, setJournalNotice] = useState<string>();
+  const [patternNotice, setPatternNotice] = useState<string>();
   const orderedJournal = useMemo(() => chronologicalJournal(journal), [journal]);
   const orderedDiscardedActivities = useMemo(
     () => chronologicalJournal(discardedActivities),
@@ -264,7 +207,7 @@ function App() {
       const [entries, activities, openQuestions, processingResult, purchasesResult] = await Promise.all([
         listJournal(),
         listActivities("not_cooking"),
-        listOpenQuestions(),
+        listOpenPatternQuestions(),
         listProcessing().then(
           (value) => ({ value }),
           (error: unknown) => ({ error }),
@@ -286,7 +229,7 @@ function App() {
       );
       setAccount(currentAccount);
       setConsentPreferences(currentConsent);
-      setQuestions(openQuestions);
+      setPatternQuestions(openQuestions);
       if ("value" in processingResult) {
         setProcessing(processingResult.value);
       } else {
@@ -308,7 +251,7 @@ function App() {
         setAccount(undefined);
         setJournal([]);
         setDiscardedActivities([]);
-        setQuestions([]);
+        setPatternQuestions([]);
         setConsentPreferences(await getConsentPreferences());
         setCapacityReached(true);
         setLoadMessage("");
@@ -380,15 +323,25 @@ function App() {
       <section className="questions" aria-labelledby="questions-title">
         <div className="section-heading">
           <div>
-            <p className="section-kicker">Clarification inbox</p>
-            <h2 id="questions-title">Questions worth answering</h2>
+            <p className="section-kicker">Agent observations</p>
+            <h2 id="questions-title">Patterns FoodLog wants you to check</h2>
           </div>
-          <span className="question-count">{questions.length} open</span>
+          <span className="question-count">{patternQuestions.length} open</span>
         </div>
-        {questions.length === 0 ? (
-          <p className="empty-state">Nothing needs your attention right now.</p>
-        ) : questions.map((question) => (
-          <QuestionCard key={question.id} question={question} onChanged={refreshWorkspace} />
+        <p className="section-intro">
+          These are longitudinal observations, not unidentified meals. Event-specific
+          uncertainty stays on the matching timeline card.
+        </p>
+        {patternNotice ? <p className="journal-notice" role="status">{patternNotice}</p> : null}
+        {patternQuestions.length === 0 ? (
+          <p className="empty-state">FoodLog has not gathered enough evidence for a pattern yet.</p>
+        ) : patternQuestions.map((question) => (
+          <PatternQuestionCard
+            key={question.id}
+            question={question}
+            onChanged={refreshWorkspace}
+            onNotice={setPatternNotice}
+          />
         ))}
       </section>
 

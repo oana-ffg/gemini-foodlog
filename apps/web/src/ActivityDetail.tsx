@@ -241,16 +241,38 @@ interface ActivityRationaleProps {
   inference: MealInferenceSummary;
   hypothesis: ActivityMealInference | null;
   onSelectCapture?: (captureId: string) => void;
+  includeQuestion?: boolean;
 }
 
 function EvidenceIds({ ids }: { ids: string[] }) {
   return ids.length > 0 ? <small>Evidence: {ids.join(", ")}</small> : null;
 }
 
+export function ActivityFocusedQuestion({
+  inference,
+  hypothesis,
+}: Pick<ActivityRationaleProps, "inference" | "hypothesis">) {
+  const prompt = hypothesis?.question?.prompt ?? inference.clarification_question;
+  if (!prompt) return null;
+  const reason = hypothesis?.question?.justification ?? inference.clarification_reason;
+  return (
+    <aside className="event-question" aria-label="Focused question about this event">
+      <p className="section-kicker">Question about this event</p>
+      <h4>{prompt}</h4>
+      {reason ? <p>{reason}</p> : null}
+      {hypothesis?.question ? (
+        <EvidenceIds ids={hypothesis.question.evidence_ids} />
+      ) : null}
+      <small>Use the activity actions below to confirm the guess or give the exact correction.</small>
+    </aside>
+  );
+}
+
 export function ActivityRationale({
   inference,
   hypothesis,
   onSelectCapture,
+  includeQuestion = true,
 }: ActivityRationaleProps) {
   if (!hypothesis) {
     return (
@@ -412,7 +434,7 @@ export function ActivityRationale({
         ) : <p>No named alternative was supported.</p>}
       </section>
 
-      {hypothesis.question ? (
+      {includeQuestion && hypothesis.question ? (
         <section>
           <h4>Focused question</h4>
           <p>{hypothesis.question.prompt}</p>

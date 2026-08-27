@@ -85,6 +85,7 @@ from .models import (
     MealStatus,
     QuestionAnswerRequest,
     QuestionAnswerResult,
+    QuestionKind,
     QuestionResponseRequest,
     QuestionResponseResult,
     QuestionStatus,
@@ -860,13 +861,19 @@ def create_app(
 
     @app.get("/v1/questions", response_model=list[ClarificationQuestion])
     async def list_questions(
+        response: Response,
         question_status: QuestionStatus | None = QuestionStatus.OPEN,
+        question_kind: Annotated[QuestionKind | None, Query(alias="kind")] = None,
         user_id: str = Depends(request_user_id),
     ) -> list[ClarificationQuestion]:
-        return await container.repository.list_questions(
+        response.headers["Cache-Control"] = "private, no-store"
+        questions = await container.repository.list_questions(
             user_id,
             question_status=question_status,
         )
+        if question_kind is None:
+            return questions
+        return [question for question in questions if question.kind == question_kind]
 
     @app.post(
         "/v1/context-notes",

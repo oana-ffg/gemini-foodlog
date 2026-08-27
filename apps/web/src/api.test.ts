@@ -20,6 +20,7 @@ import {
   listCameras,
   listContextNotes,
   listKnowledge,
+  listOpenPatternQuestions,
   listProcessing,
   listPurchases,
   provisionAccount,
@@ -27,6 +28,7 @@ import {
   retireKnowledge,
   retireContextNote,
   revokeCamera,
+  respondToPatternQuestion,
   submitMealFeedback,
   teachKnowledge,
   uploadCapture,
@@ -131,6 +133,38 @@ describe("authenticated API client", () => {
       "http://127.0.0.1:8080/v1/processing?limit=12",
       "http://127.0.0.1:8080/v1/purchases?limit=1",
     ]);
+  });
+
+  it("loads only pattern observations and sends typed pattern responses", async () => {
+    firebase.auth.currentUser = {
+      getIdToken: vi.fn().mockResolvedValue("firebase-id-token"),
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse({}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listOpenPatternQuestions();
+    await respondToPatternQuestion("pattern/question", {
+      kind: "correct",
+      correction: "Thursday dinner is often steak, but not every week.",
+      explanation: "It depends on what was delivered that week.",
+    }, "pattern-response-key-0001");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://127.0.0.1:8080/v1/questions?kind=pattern_hypothesis",
+      "http://127.0.0.1:8080/v1/questions/pattern%2Fquestion/responses",
+    ]);
+    const responseInit = fetchMock.mock.calls[1][1] as RequestInit;
+    expect(responseInit.method).toBe("POST");
+    expect(new Headers(responseInit.headers).get("Idempotency-Key")).toBe(
+      "pattern-response-key-0001",
+    );
+    expect(responseInit.body).toBe(JSON.stringify({
+      kind: "correct",
+      correction: "Thursday dinner is often steak, but not every week.",
+      explanation: "It depends on what was delivered that week.",
+    }));
   });
 
   it("loads complete activity history and sends revision-bound targeted correction", async () => {

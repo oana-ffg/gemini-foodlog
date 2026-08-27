@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import {
   ActivityImageViewer,
+  ActivityFocusedQuestion,
   ActivityRationale,
 } from "./ActivityDetail";
 import type { ActivityMealInference, MealInferenceSummary } from "./api";
@@ -155,5 +156,27 @@ describe("activity detail", () => {
     expect(html).toContain("Duck");
     expect(html).toContain("predates structured evidence provenance");
     expect(html).not.toContain("Context used");
+  });
+
+  it("keeps a focused event question on its matching activity instead of the pattern feed", () => {
+    const structuredHtml = renderToStaticMarkup(
+      <ActivityFocusedQuestion inference={summary} hypothesis={hypothesis} />,
+    );
+    const legacyHtml = renderToStaticMarkup(
+      <ActivityFocusedQuestion
+        inference={{
+          ...summary,
+          clarification_question: "Was this steak or duck?",
+          clarification_reason: "The distant angle leaves the meat colour ambiguous.",
+        }}
+        hypothesis={null}
+      />,
+    );
+
+    expect(structuredHtml).toContain("Question about this event");
+    expect(structuredHtml).toContain("Was this beef steak or duck breast?");
+    expect(structuredHtml).toContain("obs_meat");
+    expect(legacyHtml).toContain("Was this steak or duck?");
+    expect(legacyHtml).toContain("distant angle");
   });
 });

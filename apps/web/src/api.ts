@@ -256,6 +256,21 @@ export interface MealFeedbackInput {
   learning_disposition?: "reusable" | "insufficient_information";
 }
 
+export interface MealFeedback {
+  id: string;
+  account_id: string;
+  meal_id: string;
+  kind: MealFeedbackKind;
+  actual_meal: string | null;
+  explanation: string | null;
+  correction: MealCorrection | null;
+  base_revision_number: number | null;
+  learning_disposition: "reusable" | "insufficient_information" | null;
+  idempotency_key: string;
+  question_id: string | null;
+  created_at: string;
+}
+
 export interface MealFeedbackResult {
   revision: MealRevision;
   learning_outcome:
@@ -272,20 +287,80 @@ export interface MealFeedbackResult {
   } | null;
 }
 
+export type QuestionKind = "event_clarification" | "pattern_hypothesis";
+export type QuestionStatus = "open" | "answered" | "superseded";
+export type QuestionResponseKind = "confirm" | "correct" | "reject";
+export type QuestionEvidenceKind =
+  | "capture"
+  | "meal_revision"
+  | "purchase_document"
+  | "knowledge_revision"
+  | "question"
+  | "inference_evidence";
+
+export interface QuestionEvidenceReference {
+  kind: QuestionEvidenceKind;
+  id: string;
+}
+
+export interface PatternEvidenceExample {
+  evidence: QuestionEvidenceReference;
+  occurred_at: string;
+  occurred_utc_offset_minutes: number | null;
+  summary: string;
+}
+
 export interface ClarificationQuestion {
   id: string;
-  meal_id: string;
+  account_id: string;
+  kind: QuestionKind;
+  meal_id: string | null;
+  event_id: string | null;
   prompt: string;
   reason: string;
-  status: "open" | "answered";
+  evidence: QuestionEvidenceReference[];
+  choices: string[];
+  tentative_claim: string | null;
+  pattern_claim: KnowledgeClaim | null;
+  pattern_observation_started_at: string | null;
+  pattern_observation_ended_at: string | null;
+  pattern_supporting_examples: PatternEvidenceExample[];
+  pattern_counterexamples: PatternEvidenceExample[];
+  pattern_prompt_version: string | null;
+  pattern_uncertainty: string | null;
+  pattern_evidence_hash: string | null;
+  pattern_topic_key: string | null;
+  predecessor_question_id: string | null;
+  source_revision_number: number | null;
+  status: QuestionStatus;
   answer: string | null;
   learning_tip: string | null;
+  response_kind: QuestionResponseKind | null;
+  response_id: string | null;
+  superseded_by_question_id: string | null;
+  created_at: string;
+  answered_at: string | null;
+  superseded_at: string | null;
+}
+
+export interface QuestionResponse {
+  id: string;
+  account_id: string;
+  question_id: string;
+  kind: QuestionResponseKind;
+  correction: string | null;
+  explanation: string | null;
+  idempotency_key: string;
+  feedback_id: string | null;
   created_at: string;
 }
 
-export interface QuestionAnswerResult {
+export interface QuestionResponseResult {
   question: ClarificationQuestion;
-  revision: MealRevision;
+  response: QuestionResponse;
+  feedback: MealFeedback | null;
+  revision: MealRevision | null;
+  knowledge: KnowledgeRevisionResult | null;
 }
 
 export type KnowledgeLifecycle =
@@ -602,8 +677,10 @@ export function listActivities(status?: MealStatus): Promise<MealEntry[]> {
   return apiRequest<MealEntry[]>(`/v1/activities${query}`);
 }
 
-export function listOpenQuestions(): Promise<ClarificationQuestion[]> {
-  return apiRequest<ClarificationQuestion[]>("/v1/questions");
+export function listOpenPatternQuestions(): Promise<ClarificationQuestion[]> {
+  return apiRequest<ClarificationQuestion[]>(
+    "/v1/questions?kind=pattern_hypothesis",
+  );
 }
 
 export function listMealRevisions(mealId: string): Promise<MealRevision[]> {
@@ -630,21 +707,24 @@ export function submitMealFeedback(
   );
 }
 
-export function answerQuestion(
+export function respondToPatternQuestion(
   questionId: string,
-  answer: string,
-  learningTip: string | undefined,
+  input: {
+    kind: QuestionResponseKind;
+    correction?: string;
+    explanation?: string;
+  },
   idempotencyKey: string,
-): Promise<QuestionAnswerResult> {
-  return apiRequest<QuestionAnswerResult>(
-    `/v1/questions/${encodeURIComponent(questionId)}/answer`,
+): Promise<QuestionResponseResult> {
+  return apiRequest<QuestionResponseResult>(
+    `/v1/questions/${encodeURIComponent(questionId)}/responses`,
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Idempotency-Key": idempotencyKey,
       },
-      body: JSON.stringify({ answer, learning_tip: learningTip }),
+      body: JSON.stringify(input),
     },
   );
 }

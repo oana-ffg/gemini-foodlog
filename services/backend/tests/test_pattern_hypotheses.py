@@ -97,6 +97,19 @@ def test_rich_pattern_responses_create_scoped_knowledge_and_gate_resurfacing() -
         assert len(steak.pattern_supporting_examples) == 3
         assert len(steak.pattern_counterexamples) == 1
 
+        pattern_feed = client.get(
+            "/v1/questions?kind=pattern_hypothesis",
+            headers=OWNER_HEADERS,
+        )
+        assert pattern_feed.status_code == 200
+        assert pattern_feed.headers["cache-control"] == "private, no-store"
+        assert [question["id"] for question in pattern_feed.json()] == [steak.id]
+        invalid_kind = client.get(
+            "/v1/questions?kind=meal_guess",
+            headers=OWNER_HEADERS,
+        )
+        assert invalid_kind.status_code == 422
+
         request = {
             "headers": {**OWNER_HEADERS, "Idempotency-Key": "rich-pattern-confirm-0001"},
             "json": {"kind": "confirm", "explanation": "Thursday is our steak night."},
