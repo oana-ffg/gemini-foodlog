@@ -11,15 +11,18 @@ vi.mock("./firebase", () => firebase);
 import {
   AuthenticationRequiredError,
   correctKnowledge,
+  createContextNote,
   createDeviceCamera,
   getKnowledgePage,
   getConsentPreferences,
   joinWaitlist,
   listCameras,
+  listContextNotes,
   listKnowledge,
   provisionAccount,
   recordLaunchMailConsent,
   retireKnowledge,
+  retireContextNote,
   revokeCamera,
   teachKnowledge,
   uploadCapture,
@@ -238,6 +241,36 @@ describe("authenticated API client", () => {
       expected_revision_number: 3,
       reason: "No longer reliable.",
     }));
+  });
+
+  it("uses immutable context-note create, history, and retirement routes", async () => {
+    firebase.auth.currentUser = {
+      getIdToken: vi.fn().mockResolvedValue("firebase-id-token"),
+    };
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse({})));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await createContextNote({
+      text: "My MIL brought duck for tomorrow.",
+      valid_from: "2026-08-28T00:00:00Z",
+      valid_until: "2026-08-29T00:00:00Z",
+    }, "context-key-0001");
+    await listContextNotes(true);
+    await retireContextNote("note/one");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://127.0.0.1:8080/v1/context-notes",
+      "http://127.0.0.1:8080/v1/context-notes?include_inactive=true",
+      "http://127.0.0.1:8080/v1/context-notes/note%2Fone/retire",
+    ]);
+    const createInit = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(new Headers(createInit.headers).get("Idempotency-Key")).toBe("context-key-0001");
+    expect(createInit.body).toBe(JSON.stringify({
+      text: "My MIL brought duck for tomorrow.",
+      valid_from: "2026-08-28T00:00:00Z",
+      valid_until: "2026-08-29T00:00:00Z",
+    }));
+    expect((fetchMock.mock.calls[2][1] as RequestInit).method).toBe("POST");
   });
 
   it("uploads browser snapshots through the shared capture envelope", async () => {

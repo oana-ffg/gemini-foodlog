@@ -254,6 +254,12 @@ export interface StableKnowledgeTeachingResult extends KnowledgeRevisionResult {
   source_note: UserContextNote;
 }
 
+export interface UserContextNoteInput {
+  text: string;
+  valid_from?: string;
+  valid_until?: string;
+}
+
 export interface CaptureAccepted {
   capture_id: string;
   accepted_image_count: number;
@@ -535,6 +541,32 @@ export function retireKnowledge(
         reason,
       }),
     },
+  );
+}
+
+export function createContextNote(
+  input: UserContextNoteInput,
+  idempotencyKey: string,
+): Promise<UserContextNote> {
+  return apiRequest<UserContextNote>("/v1/context-notes", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify(input),
+  });
+}
+
+export function listContextNotes(includeInactive = false): Promise<UserContextNote[]> {
+  const query = includeInactive ? "?include_inactive=true" : "";
+  return apiRequest<UserContextNote[]>(`/v1/context-notes${query}`);
+}
+
+export function retireContextNote(noteId: string): Promise<UserContextNote> {
+  return apiRequest<UserContextNote>(
+    `/v1/context-notes/${encodeURIComponent(noteId)}/retire`,
+    { method: "POST" },
   );
 }
 

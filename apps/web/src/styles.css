@@ -386,6 +386,57 @@ summary { cursor: pointer; font-weight: 700; }
 .knowledge-evidence code { overflow-wrap: anywhere; color: #45604e; }
 .knowledge-evidence p { grid-column: 1 / -1; margin: 0; font-size: .86rem; }
 
+.context-page {
+  width: min(1120px, calc(100% - 36px));
+  margin: 0 auto;
+  padding: 48px 0 96px;
+}
+.context-page__header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 48px;
+  margin-bottom: 40px;
+}
+.context-page__header h1 { font-size: clamp(3rem, 7vw, 6rem); }
+.context-page__header p:not(.eyebrow) { max-width: 700px; color: #555d57; line-height: 1.6; }
+.context-page__account { display: grid; flex: 0 0 auto; justify-items: end; gap: 12px; }
+.context-page__account > a { color: #315c44; font-weight: 700; }
+.context-composer {
+  display: grid;
+  grid-template-columns: minmax(260px, .76fr) minmax(380px, 1.24fr);
+  gap: 48px;
+  padding: 34px;
+  border-radius: 22px;
+  color: #f7f5ee;
+  background: #24352c;
+  box-shadow: 0 18px 54px rgba(31, 37, 33, .13);
+}
+.context-composer h2 { margin: 0 0 12px; font-size: 2rem; letter-spacing: -.035em; }
+.context-composer p:not(.section-kicker) { color: #cdd6d0; line-height: 1.6; }
+.context-composer form { display: grid; gap: 16px; }
+.context-composer label { display: grid; gap: 8px; font-size: .88rem; font-weight: 700; }
+.context-composer select { width: 100%; padding: 12px 14px; border: 1px solid #c8c4b8; border-radius: 10px; color: #1f2521; background: #fff; font: inherit; }
+.context-custom-window { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.context-message { margin: 22px 0 0; background: #fffdf8; }
+.context-list { padding-top: 64px; }
+.context-list h2 { margin: 0; font-size: clamp(2rem, 4vw, 3.4rem); line-height: 1.05; letter-spacing: -.04em; }
+.context-note { margin-bottom: 16px; padding: 28px; border-radius: 18px; background: #fffdf8; box-shadow: 0 10px 30px rgba(31, 37, 33, .07); }
+.context-note__text { margin: 20px 0; font-size: 1.18rem; line-height: 1.6; }
+.context-note__meta { display: grid; grid-template-columns: 1.4fr .6fr; gap: 10px; }
+.context-note__meta > div { padding: 13px 14px; border-radius: 11px; background: #f4f1e8; }
+.context-note__meta dt { color: #777d78; font-size: .72rem; font-weight: 700; text-transform: uppercase; }
+.context-note__meta dd { margin: 5px 0 0; line-height: 1.45; }
+.context-confirmation { margin-top: 18px; padding: 18px; border-radius: 13px; background: #f4f1e8; }
+.context-confirmation p { margin: 0 0 14px; color: #555d57; line-height: 1.5; }
+.context-phase { padding: 6px 10px; border-radius: 999px; font-size: .78rem; font-weight: 700; text-transform: capitalize; }
+.context-phase--active { color: #1f5f3f; background: #dcecdf; }
+.context-phase--scheduled { color: #345f75; background: #dceaf0; }
+.context-phase--expired, .context-phase--retired { color: #6f382e; background: #f2d9d2; }
+.context-history { margin-top: 32px; padding-top: 24px; border-top: 1px solid #d7d2c6; }
+.context-history__list { margin-top: 24px; }
+.context-history__list h2 { margin: 0 0 20px; }
+
 @media (max-width: 800px) {
   .app-shell { padding-top: 36px; }
   .hero, .consent-card, .capture-panel, .question-card, .journal-card, .manual-camera { grid-template-columns: 1fr; }
@@ -412,4 +463,10 @@ summary { cursor: pointer; font-weight: 700; }
   .knowledge-claim { grid-template-columns: 1fr; }
   .knowledge-evidence li { grid-template-columns: 1fr; }
   .knowledge-evidence p { grid-column: 1; }
+  .context-page { padding-top: 28px; }
+  .context-page__header { display: grid; }
+  .context-page__account { justify-items: start; }
+  .context-page__account .session-controls { justify-items: start; }
+  .context-composer { grid-template-columns: 1fr; padding: 24px; }
+  .context-custom-window, .context-note__meta { grid-template-columns: 1fr; }
 }

@@ -400,6 +400,7 @@ function App() {
           </strong>
         </div>
         <nav className="hero-links" aria-label="FoodLog tools">
+          <Link to="/context">Tell FoodLog something</Link>
           <Link to="/knowledge">Open the household wiki</Link>
           <Link to="/camera">Open the phone camera page</Link>
         </nav>
