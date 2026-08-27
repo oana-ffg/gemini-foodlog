@@ -671,6 +671,13 @@ class Repository(Protocol):
 
     async def mark_processed(self, *, account_id: str, capture_id: str) -> None: ...
 
+    async def capture_for_account(
+        self,
+        *,
+        account_id: str,
+        capture_id: str,
+    ) -> CaptureRecord: ...
+
     async def enqueue_job(self, job: DurableJob) -> DurableJob: ...
 
     async def job_for_account(self, account_id: str, job_id: str) -> DurableJob | None: ...
@@ -2023,6 +2030,18 @@ class InMemoryRepository:
             if not capture or capture.account_id != account_id:
                 raise CaptureNotFound
             capture.status = CaptureStatus.PROCESSED
+
+    async def capture_for_account(
+        self,
+        *,
+        account_id: str,
+        capture_id: str,
+    ) -> CaptureRecord:
+        async with self._lock:
+            capture = self._captures.get(capture_id)
+            if capture is None or capture.account_id != account_id:
+                raise CaptureNotFound
+            return capture.model_copy(deep=True)
 
     @staticmethod
     def _updated_job(job: DurableJob, **updates: object) -> DurableJob:

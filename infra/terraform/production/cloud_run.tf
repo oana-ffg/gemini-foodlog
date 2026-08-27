@@ -69,7 +69,20 @@ locals {
     FOODLOG_IMAGE_GROUPING_REOPEN_SECONDS = "7200"
     FOODLOG_IMAGE_PUBLIC_ACCOUNT_LIMIT    = "25"
     FOODLOG_IMAGE_TRIAL_IMAGE_LIMIT       = "200"
-    FOODLOG_TRACE_BUCKET                  = google_storage_bucket.retained["traces"].name
+  }
+
+  inference_runtime_environment = {
+    FOODLOG_INFERENCE_ENVIRONMENT                  = var.environment
+    FOODLOG_INFERENCE_GCP_PROJECT_ID               = var.project_id
+    FOODLOG_INFERENCE_MODEL_SPEND_LIMIT_DKK_MICROS = tostring(local.model_spend_limit_dkk_micros)
+    FOODLOG_INFERENCE_PUBLIC_ACCOUNT_LIMIT         = "25"
+    FOODLOG_INFERENCE_TRIAL_IMAGE_LIMIT            = "200"
+    FOODLOG_MEDIA_BUCKET                           = google_storage_bucket.retained["media"].name
+    FOODLOG_MODEL                                  = "gemini-3.6-flash"
+    FOODLOG_TRACE_BUCKET                           = google_storage_bucket.retained["traces"].name
+    GOOGLE_CLOUD_LOCATION                          = "eu"
+    GOOGLE_CLOUD_PROJECT                           = var.project_id
+    GOOGLE_GENAI_USE_VERTEXAI                      = "true"
   }
 
   mail_worker_runtime_environment = {
@@ -648,6 +661,114 @@ resource "google_cloud_run_v2_service_iam_member" "image_invoker" {
   member   = "serviceAccount:${google_service_account.runtime["worker"].email}"
 }
 
+resource "google_cloud_run_v2_service" "inference" {
+  project  = var.project_id
+  name     = "foodlog-inference"
+  location = var.region
+
+  deletion_protection = true
+  ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+
+  labels = merge(local.common_labels, {
+    component = "inference"
+  })
+
+  template {
+    service_account                  = google_service_account.runtime["worker"].email
+    timeout                          = "300s"
+    max_instance_request_concurrency = 1
+
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 1
+    }
+
+    containers {
+      name    = "inference"
+      image   = var.api_container_image
+      command = ["uvicorn"]
+      args = [
+        "foodlog_backend.inference_worker_main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8080",
+      ]
+
+      ports {
+        name           = "http1"
+        container_port = 8080
+      }
+
+      resources {
+        limits = {
+          cpu    = "1"
+          memory = "1Gi"
+        }
+
+        cpu_idle          = true
+        startup_cpu_boost = false
+      }
+
+      dynamic "env" {
+        for_each = local.inference_runtime_environment
+
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+
+      startup_probe {
+        initial_delay_seconds = 0
+        timeout_seconds       = 5
+        period_seconds        = 5
+        failure_threshold     = 12
+
+        http_get {
+          path = "/health"
+          port = 8080
+        }
+      }
+
+      liveness_probe {
+        initial_delay_seconds = 10
+        timeout_seconds       = 5
+        period_seconds        = 30
+        failure_threshold     = 3
+
+        http_get {
+          path = "/health"
+          port = 8080
+        }
+      }
+    }
+  }
+
+  traffic {
+    type    = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
+    percent = 100
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [
+    google_project_iam_member.worker_vertex_model_invoker,
+    google_storage_bucket_iam_policy.retained["media"],
+    google_storage_bucket_iam_policy.retained["traces"],
+  ]
+}
+
+resource "google_cloud_run_v2_service_iam_member" "inference_invoker" {
+  project  = var.project_id
+  location = google_cloud_run_v2_service.inference.location
+  name     = google_cloud_run_v2_service.inference.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.runtime["worker"].email}"
+}
+
 resource "google_cloud_run_v2_service" "mail_worker" {
   project  = var.project_id
   name     = "foodlog-mail-worker"
@@ -907,6 +1028,11 @@ output "notification_service_url" {
 output "image_service_url" {
   description = "Private Pub/Sub-authenticated capture-grouping worker URL."
   value       = google_cloud_run_v2_service.image.uri
+}
+
+output "inference_service_url" {
+  description = "Private Pub/Sub-authenticated Gemini event-inference worker URL."
+  value       = google_cloud_run_v2_service.inference.uri
 }
 
 output "mail_worker_service_url" {

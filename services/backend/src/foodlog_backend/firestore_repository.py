@@ -1910,6 +1910,20 @@ class FirestoreRepository:
         )
         await batch.commit()
 
+    async def capture_for_account(
+        self,
+        *,
+        account_id: str,
+        capture_id: str,
+    ) -> CaptureRecord:
+        snapshot = await self._collection(account_id, "captures").document(capture_id).get()
+        if not snapshot.exists:
+            raise CaptureNotFound
+        capture = self._capture_from_snapshot(snapshot, "")
+        if capture.account_id != account_id:
+            raise CrossAccountAccess
+        return capture
+
     async def enqueue_job(self, job: DurableJob) -> DurableJob:
         validate_enqueueable_job(job)
         job_ref = self._collection(job.account_id, "jobs").document(job.id)

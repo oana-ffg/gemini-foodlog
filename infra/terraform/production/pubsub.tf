@@ -147,6 +147,46 @@ resource "google_pubsub_subscription" "consumer" {
   }
 }
 
+# Every immutable capture event is independently delivered to the inference
+# worker. This fan-out is the durable handoff: a grouping retry or service crash
+# cannot strand an event between Firestore and a second best-effort publication.
+resource "google_pubsub_subscription" "inference_consumer" {
+  project                    = var.project_id
+  name                       = "foodlog-inference-consumer"
+  topic                      = google_pubsub_topic.events["image"].id
+  ack_deadline_seconds       = 600
+  message_retention_duration = "604800s"
+  retain_acked_messages      = false
+  deletion_policy            = "PREVENT"
+
+  expiration_policy {
+    ttl = ""
+  }
+
+  retry_policy {
+    minimum_backoff = "30s"
+    maximum_backoff = "600s"
+  }
+
+  dead_letter_policy {
+    dead_letter_topic     = google_pubsub_topic.dead_letter["image"].id
+    max_delivery_attempts = 20
+  }
+
+  push_config {
+    push_endpoint = "${google_cloud_run_v2_service.inference.uri}/internal/pubsub/capture-stored"
+
+    oidc_token {
+      service_account_email = google_service_account.runtime["worker"].email
+      audience              = google_cloud_run_v2_service.inference.uri
+    }
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 # A subscription is required on every dead-letter topic so forwarded messages are
 # retained for explicit inspection and replay rather than discarded on publication.
 resource "google_pubsub_subscription" "dead_letter_inspection" {
@@ -205,6 +245,13 @@ resource "google_pubsub_subscription_iam_member" "dead_letter_forwarder" {
   member       = google_project_service_identity.pubsub.member
 }
 
+resource "google_pubsub_subscription_iam_member" "inference_dead_letter_forwarder" {
+  project      = var.project_id
+  subscription = google_pubsub_subscription.inference_consumer.name
+  role         = "roles/pubsub.subscriber"
+  member       = google_project_service_identity.pubsub.member
+}
+
 resource "google_pubsub_subscription_iam_member" "runtime_consumer" {
   for_each = local.pubsub_streams
 
@@ -214,6 +261,13 @@ resource "google_pubsub_subscription_iam_member" "runtime_consumer" {
   member = (
     "serviceAccount:${google_service_account.runtime[each.value.consumer_account].email}"
   )
+}
+
+resource "google_pubsub_subscription_iam_member" "inference_runtime_consumer" {
+  project      = var.project_id
+  subscription = google_pubsub_subscription.inference_consumer.name
+  role         = "roles/pubsub.subscriber"
+  member       = "serviceAccount:${google_service_account.runtime["worker"].email}"
 }
 
 output "pubsub_topic_ids" {
@@ -234,4 +288,9 @@ output "pubsub_subscription_ids" {
       dead_letter_inspection = google_pubsub_subscription.dead_letter_inspection[key].id
     }
   }
+}
+
+output "inference_subscription_id" {
+  description = "Durable stored-capture fan-out subscription for event inference."
+  value       = google_pubsub_subscription.inference_consumer.id
 }
