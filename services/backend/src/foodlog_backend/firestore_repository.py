@@ -36,6 +36,7 @@ from .errors import (
     ModelUsageExceedsReservation,
     PurchaseIdentityConflict,
     PurchaseNormalizationConflict,
+    PurchaseNotFound,
     QuestionAlreadyAnswered,
     QuestionNotFound,
     QuestionSuperseded,
@@ -100,6 +101,7 @@ from .models import (
     PurchaseDocumentCandidate,
     PurchaseDocumentKind,
     PurchaseDocumentNormalization,
+    PurchaseEvidenceBundle,
     PurchaseIdentityAlias,
     PurchaseIdentityResult,
     PurchaseItem,
@@ -149,6 +151,7 @@ from .repository import (
     validate_knowledge_revision,
     validate_purchase_document_retry,
     validate_purchase_identity_alias,
+    validate_purchase_list_limit,
 )
 
 ENTITLEMENT_MODE_VALUES = frozenset(item.value for item in EntitlementMode)
@@ -971,6 +974,90 @@ class FirestoreRepository:
             )
 
         return await normalize(transaction)
+
+    async def list_purchases(
+        self,
+        owner_user_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[Purchase]:
+        validate_purchase_list_limit(limit)
+        account = await self.account_for_owner(owner_user_id)
+        query = (
+            self._collection(account.id, "purchases")
+            .order_by("updated_at", direction=firestore.Query.DESCENDING)
+            .limit(limit)
+        )
+        purchases = [_model(snapshot, Purchase) async for snapshot in query.stream()]
+        if any(purchase.account_id != account.id for purchase in purchases):
+            raise PurchaseNotFound
+        return purchases
+
+    async def purchase_evidence_for_owner(
+        self,
+        owner_user_id: str,
+        purchase_id: str,
+    ) -> PurchaseEvidenceBundle:
+        account = await self.account_for_owner(owner_user_id)
+        purchase_snapshot = await (
+            self._collection(account.id, "purchases").document(purchase_id).get()
+        )
+        if not purchase_snapshot.exists:
+            raise PurchaseNotFound
+        purchase = _model(purchase_snapshot, Purchase)
+        if purchase.account_id != account.id:
+            raise PurchaseNotFound
+
+        async def purchase_collection_models(name: str, model_type):
+            query = self._collection(account.id, name).where(
+                filter=FieldFilter("purchase_id", "==", purchase_id)
+            )
+            return [
+                _model(snapshot, model_type)
+                async for snapshot in query.stream()
+            ]
+
+        documents = await purchase_collection_models(
+            "purchase_documents", PurchaseDocument
+        )
+        normalizations = await purchase_collection_models(
+            "purchase_normalizations", PurchaseDocumentNormalization
+        )
+        items = await purchase_collection_models("purchase_items", PurchaseItem)
+        charges = await purchase_collection_models("purchase_charges", PurchaseCharge)
+        reconciliation_snapshot = await (
+            self._collection(account.id, "purchase_reconciliations")
+            .document(purchase_id)
+            .get()
+        )
+        reconciliation = (
+            _model(reconciliation_snapshot, PurchaseReconciliation)
+            if reconciliation_snapshot.exists
+            else None
+        )
+        document_revisions = {
+            document.id: document.revision_number for document in documents
+        }
+        return PurchaseEvidenceBundle(
+            purchase=purchase,
+            documents=sorted(documents, key=lambda document: document.revision_number),
+            normalizations=sorted(
+                normalizations,
+                key=lambda normalization: normalization.document_revision_number,
+            ),
+            items=sorted(
+                items,
+                key=lambda item: (item.document_revision_number, item.ordinal),
+            ),
+            charges=sorted(
+                charges,
+                key=lambda charge: (
+                    document_revisions.get(charge.document_id, 0),
+                    charge.kind.value,
+                ),
+            ),
+            reconciliation=reconciliation,
+        )
 
     async def record_launch_mail_consent(
         self,

@@ -6,7 +6,7 @@ from io import BytesIO
 from secrets import compare_digest, token_urlsafe
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Form, Header, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, Form, Header, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from PIL import Image
@@ -33,6 +33,7 @@ from .errors import (
     InvalidMealFeedbackTransition,
     MealNotFound,
     MealRevisionConflict,
+    PurchaseNotFound,
     QuestionAlreadyAnswered,
     QuestionNotFound,
     QuestionSuperseded,
@@ -83,6 +84,12 @@ from .notifications import (
     InMemoryNotificationPublisher,
     NotificationPublisher,
     PubSubNotificationPublisher,
+)
+from .purchase_views import (
+    PurchaseDetailView,
+    PurchaseSummaryView,
+    purchase_detail_view,
+    purchase_summary_view,
 )
 from .repository import InMemoryRepository, Repository
 from .service import CaptureService
@@ -403,6 +410,7 @@ def create_app(
     app.add_exception_handler(CameraNotFound, resource_missing_handler)
     app.add_exception_handler(CaptureNotFound, resource_missing_handler)
     app.add_exception_handler(MealNotFound, resource_missing_handler)
+    app.add_exception_handler(PurchaseNotFound, resource_missing_handler)
     app.add_exception_handler(QuestionNotFound, resource_missing_handler)
     app.add_exception_handler(UserContextNoteNotFound, resource_missing_handler)
 
@@ -657,6 +665,29 @@ def create_app(
     @app.get("/v1/journal", response_model=list[MealEntry])
     async def list_journal(user_id: str = Depends(request_user_id)) -> list[MealEntry]:
         return await container.repository.list_meals(user_id)
+
+    @app.get("/v1/purchases", response_model=list[PurchaseSummaryView])
+    async def list_purchases(
+        response: Response,
+        limit: Annotated[int, Query(ge=1, le=50)] = 20,
+        user_id: str = Depends(request_user_id),
+    ) -> list[PurchaseSummaryView]:
+        response.headers["Cache-Control"] = "private, no-store"
+        purchases = await container.repository.list_purchases(user_id, limit=limit)
+        return [purchase_summary_view(purchase) for purchase in purchases]
+
+    @app.get("/v1/purchases/{purchase_id}", response_model=PurchaseDetailView)
+    async def get_purchase(
+        purchase_id: str,
+        response: Response,
+        user_id: str = Depends(request_user_id),
+    ) -> PurchaseDetailView:
+        response.headers["Cache-Control"] = "private, no-store"
+        evidence = await container.repository.purchase_evidence_for_owner(
+            user_id,
+            purchase_id,
+        )
+        return purchase_detail_view(evidence)
 
     @app.get("/v1/meals/{meal_id}/revisions", response_model=list[MealRevision])
     async def list_meal_revisions(

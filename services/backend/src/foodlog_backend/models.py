@@ -552,6 +552,36 @@ class PurchaseNormalizationResult(BaseModel):
     duplicate: bool
 
 
+class PurchaseEvidenceBundle(BaseModel):
+    """Complete account-internal evidence for one normalized purchase."""
+
+    purchase: Purchase
+    documents: list[PurchaseDocument]
+    normalizations: list[PurchaseDocumentNormalization]
+    items: list[PurchaseItem]
+    charges: list[PurchaseCharge]
+    reconciliation: PurchaseReconciliation | None = None
+
+    @model_validator(mode="after")
+    def evidence_is_tenant_and_purchase_consistent(self) -> "PurchaseEvidenceBundle":
+        account_id = self.purchase.account_id
+        purchase_id = self.purchase.id
+        evidence = [
+            *self.documents,
+            *self.normalizations,
+            *self.items,
+            *self.charges,
+        ]
+        if self.reconciliation is not None:
+            evidence.append(self.reconciliation)
+        if any(
+            item.account_id != account_id or item.purchase_id != purchase_id
+            for item in evidence
+        ):
+            raise ValueError("purchase evidence crosses an account or purchase boundary")
+        return self
+
+
 class AccountCreatedOutbox(BaseModel):
     id: str = Field(min_length=1, max_length=160)
     account_id: str

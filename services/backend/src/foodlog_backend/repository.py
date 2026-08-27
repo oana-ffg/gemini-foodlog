@@ -38,6 +38,7 @@ from .errors import (
     PurchaseDocumentConflict,
     PurchaseIdentityConflict,
     PurchaseNormalizationConflict,
+    PurchaseNotFound,
     QuestionAlreadyAnswered,
     QuestionNotFound,
     QuestionSuperseded,
@@ -109,6 +110,7 @@ from .models import (
     PurchaseDocumentCandidate,
     PurchaseDocumentKind,
     PurchaseDocumentNormalization,
+    PurchaseEvidenceBundle,
     PurchaseIdentityAlias,
     PurchaseIdentityResult,
     PurchaseItem,
@@ -156,6 +158,11 @@ def user_context_note_request_hash(request: UserContextNoteCreate) -> str:
 
 def user_context_note_id(account_id: str, idempotency_key: str) -> str:
     return sha256(f"user-context-note-v1:{account_id}:{idempotency_key}".encode()).hexdigest()
+
+
+def validate_purchase_list_limit(limit: int) -> None:
+    if not 1 <= limit <= 50:
+        raise ValueError("purchase list limit must be between 1 and 50")
 
 
 def normalize_knowledge_topic(value: str) -> str:
@@ -542,6 +549,19 @@ class Repository(Protocol):
         document: PurchaseDocument,
         parsed: ParsedPurchaseDocument,
     ) -> PurchaseNormalizationResult: ...
+
+    async def list_purchases(
+        self,
+        owner_user_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[Purchase]: ...
+
+    async def purchase_evidence_for_owner(
+        self,
+        owner_user_id: str,
+        purchase_id: str,
+    ) -> PurchaseEvidenceBundle: ...
 
     async def record_launch_mail_consent(
         self,
@@ -1418,6 +1438,91 @@ class InMemoryRepository:
                 reconciliation=reconciliation.model_copy(deep=True),
                 duplicate=False,
             )
+
+    async def list_purchases(
+        self,
+        owner_user_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[Purchase]:
+        validate_purchase_list_limit(limit)
+        account = await self.account_for_owner(owner_user_id)
+        async with self._lock:
+            purchases = sorted(
+                (
+                    purchase
+                    for (account_id, _), purchase in self._purchases.items()
+                    if account_id == account.id
+                ),
+                key=lambda purchase: purchase.updated_at,
+                reverse=True,
+            )
+            return [purchase.model_copy(deep=True) for purchase in purchases[:limit]]
+
+    async def purchase_evidence_for_owner(
+        self,
+        owner_user_id: str,
+        purchase_id: str,
+    ) -> PurchaseEvidenceBundle:
+        account = await self.account_for_owner(owner_user_id)
+        async with self._lock:
+            purchase = self._purchases.get((account.id, purchase_id))
+            if purchase is None:
+                raise PurchaseNotFound
+            documents = sorted(
+                (
+                    document
+                    for (account_id, _), document in self._purchase_documents.items()
+                    if account_id == account.id and document.purchase_id == purchase_id
+                ),
+                key=lambda document: document.revision_number,
+            )
+            document_ids = {document.id for document in documents}
+            normalizations = sorted(
+                (
+                    normalization
+                    for (account_id, _), normalization in (
+                        self._purchase_normalizations.items()
+                    )
+                    if account_id == account.id
+                    and normalization.purchase_id == purchase_id
+                    and normalization.document_id in document_ids
+                ),
+                key=lambda normalization: normalization.document_revision_number,
+            )
+            items = sorted(
+                (
+                    item
+                    for (account_id, _), item in self._purchase_items.items()
+                    if account_id == account.id and item.purchase_id == purchase_id
+                ),
+                key=lambda item: (item.document_revision_number, item.ordinal),
+            )
+            document_revisions = {
+                document.id: document.revision_number for document in documents
+            }
+            charges = sorted(
+                (
+                    charge
+                    for (account_id, _), charge in self._purchase_charges.items()
+                    if account_id == account.id and charge.purchase_id == purchase_id
+                ),
+                key=lambda charge: (
+                    document_revisions.get(charge.document_id, 0),
+                    charge.kind.value,
+                ),
+            )
+            reconciliation = self._purchase_reconciliations.get(
+                (account.id, purchase_id)
+            )
+            return PurchaseEvidenceBundle(
+                purchase=purchase,
+                documents=documents,
+                normalizations=normalizations,
+                items=items,
+                charges=charges,
+                reconciliation=reconciliation,
+            ).model_copy(deep=True)
 
     async def record_launch_mail_consent(
         self,

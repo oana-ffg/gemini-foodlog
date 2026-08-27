@@ -2150,6 +2150,540 @@
         "title": "PreparationMethodCorrection",
         "type": "object"
       },
+      "PurchaseChargeKind": {
+        "enum": [
+          "items_subtotal",
+          "deposit",
+          "packing_fee",
+          "delivery_fee",
+          "card_fee",
+          "total"
+        ],
+        "title": "PurchaseChargeKind",
+        "type": "string"
+      },
+      "PurchaseChargeView": {
+        "properties": {
+          "amount_ore": {
+            "title": "Amount Ore",
+            "type": "integer"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PurchaseChargeKind"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "amount_ore",
+          "description"
+        ],
+        "title": "PurchaseChargeView",
+        "type": "object"
+      },
+      "PurchaseDetailView": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/PurchaseDocumentView"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "latest_confirmation_document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Confirmation Document Id"
+          },
+          "latest_final_document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Final Document Id"
+          },
+          "merchant": {
+            "title": "Merchant",
+            "type": "string"
+          },
+          "reconciliation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PurchaseReconciliationView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision_count": {
+            "title": "Revision Count",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "merchant",
+          "revision_count",
+          "latest_confirmation_document_id",
+          "latest_final_document_id",
+          "created_at",
+          "updated_at",
+          "documents",
+          "reconciliation"
+        ],
+        "title": "PurchaseDetailView",
+        "type": "object"
+      },
+      "PurchaseDocumentKind": {
+        "enum": [
+          "unknown",
+          "order_confirmation",
+          "final_receipt"
+        ],
+        "title": "PurchaseDocumentKind",
+        "type": "string"
+      },
+      "PurchaseDocumentView": {
+        "properties": {
+          "charges": {
+            "items": {
+              "$ref": "#/components/schemas/PurchaseChargeView"
+            },
+            "title": "Charges",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "invoice_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Reference"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PurchaseItemView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PurchaseDocumentKind"
+          },
+          "normalization": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PurchaseNormalizationView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "order_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Reference"
+          },
+          "revision_number": {
+            "title": "Revision Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "revision_number",
+          "order_reference",
+          "invoice_reference",
+          "created_at",
+          "normalization",
+          "items",
+          "charges"
+        ],
+        "title": "PurchaseDocumentView",
+        "type": "object"
+      },
+      "PurchaseItemDisposition": {
+        "enum": [
+          "ordered",
+          "delivered"
+        ],
+        "title": "PurchaseItemDisposition",
+        "type": "string"
+      },
+      "PurchaseItemView": {
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "disposition": {
+            "$ref": "#/components/schemas/PurchaseItemDisposition"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "included_discount_ore": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Included Discount Ore"
+          },
+          "line_total_ore": {
+            "title": "Line Total Ore",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "normalized_name": {
+            "title": "Normalized Name",
+            "type": "string"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "unit_description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Description"
+          },
+          "unit_price_ore": {
+            "title": "Unit Price Ore",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "ordinal",
+          "name",
+          "normalized_name",
+          "disposition",
+          "quantity",
+          "category",
+          "unit_description",
+          "unit_price_ore",
+          "included_discount_ore",
+          "line_total_ore"
+        ],
+        "title": "PurchaseItemView",
+        "type": "object"
+      },
+      "PurchaseNormalizationView": {
+        "properties": {
+          "charge_count": {
+            "title": "Charge Count",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "included_vat_ore": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Included Vat Ore"
+          },
+          "item_count": {
+            "title": "Item Count",
+            "type": "integer"
+          },
+          "parser_version": {
+            "title": "Parser Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "parser_version",
+          "item_count",
+          "charge_count",
+          "included_vat_ore",
+          "created_at"
+        ],
+        "title": "PurchaseNormalizationView",
+        "type": "object"
+      },
+      "PurchaseReconciledItemView": {
+        "properties": {
+          "confirmation_item_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Confirmation Item Ids",
+            "type": "array"
+          },
+          "delivered_quantity": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivered Quantity"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "disposition": {
+            "$ref": "#/components/schemas/PurchaseReconciliationDisposition"
+          },
+          "final_item_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Final Item Ids",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "normalized_name": {
+            "title": "Normalized Name",
+            "type": "string"
+          },
+          "ordered_quantity": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ordered Quantity"
+          }
+        },
+        "required": [
+          "id",
+          "normalized_name",
+          "display_name",
+          "disposition",
+          "ordered_quantity",
+          "delivered_quantity",
+          "confirmation_item_ids",
+          "final_item_ids"
+        ],
+        "title": "PurchaseReconciledItemView",
+        "type": "object"
+      },
+      "PurchaseReconciliationDisposition": {
+        "enum": [
+          "delivered_as_ordered",
+          "quantity_changed",
+          "removed_or_unresolved",
+          "added_or_unresolved_substitution"
+        ],
+        "title": "PurchaseReconciliationDisposition",
+        "type": "string"
+      },
+      "PurchaseReconciliationView": {
+        "properties": {
+          "confirmation_document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmation Document Id"
+          },
+          "final_document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final Document Id"
+          },
+          "has_unresolved_substitution_pairing": {
+            "title": "Has Unresolved Substitution Pairing",
+            "type": "boolean"
+          },
+          "item_count": {
+            "title": "Item Count",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PurchaseReconciledItemView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "unresolved_item_count": {
+            "title": "Unresolved Item Count",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirmation_document_id",
+          "final_document_id",
+          "item_count",
+          "unresolved_item_count",
+          "has_unresolved_substitution_pairing",
+          "items",
+          "updated_at"
+        ],
+        "title": "PurchaseReconciliationView",
+        "type": "object"
+      },
+      "PurchaseSummaryView": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "latest_confirmation_document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Confirmation Document Id"
+          },
+          "latest_final_document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Final Document Id"
+          },
+          "merchant": {
+            "title": "Merchant",
+            "type": "string"
+          },
+          "revision_count": {
+            "title": "Revision Count",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "merchant",
+          "revision_count",
+          "latest_confirmation_document_id",
+          "latest_final_document_id",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "PurchaseSummaryView",
+        "type": "object"
+      },
       "QuestionAnswerRequest": {
         "properties": {
           "answer": {
@@ -3726,6 +4260,123 @@
           }
         },
         "summary": "List Meal Revisions"
+      }
+    },
+    "/v1/purchases": {
+      "get": {
+        "operationId": "list_purchases_v1_purchases_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PurchaseSummaryView"
+                  },
+                  "title": "Response List Purchases V1 Purchases Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Purchases"
+      }
+    },
+    "/v1/purchases/{purchase_id}": {
+      "get": {
+        "operationId": "get_purchase_v1_purchases__purchase_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "purchase_id",
+            "required": true,
+            "schema": {
+              "title": "Purchase Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurchaseDetailView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Purchase"
       }
     },
     "/v1/questions": {

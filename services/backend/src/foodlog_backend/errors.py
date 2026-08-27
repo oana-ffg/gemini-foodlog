@@ -46,6 +46,10 @@ class PurchaseNormalizationConflict(FoodLogError):
     pass
 
 
+class PurchaseNotFound(FoodLogError):
+    pass
+
+
 class DeviceCredentialCollision(FoodLogError):
     pass
 
