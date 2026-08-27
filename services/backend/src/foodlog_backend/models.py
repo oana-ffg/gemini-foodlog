@@ -1270,6 +1270,34 @@ class KnowledgeRevisionResult(BaseModel):
     revision: KnowledgeRevision
 
 
+class StableKnowledgeTeachingCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    statement: str = Field(min_length=1, max_length=2_000)
+
+
+class StableKnowledgeCorrectionCreate(StableKnowledgeTeachingCreate):
+    expected_revision_number: int = Field(ge=1)
+
+
+class StableKnowledgeRetirementCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    expected_revision_number: int = Field(ge=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=2_000)
+
+
+class StableKnowledgeTeachingResult(BaseModel):
+    source_note: UserContextNote
+    page: KnowledgePage
+    revision: KnowledgeRevision
+
+
+class KnowledgePageHistory(BaseModel):
+    page: KnowledgePage
+    revisions: list[KnowledgeRevision]
+
+
 class QuestionEvidenceReference(BaseModel):
     kind: QuestionEvidenceKind
     id: str = Field(min_length=1, max_length=200)

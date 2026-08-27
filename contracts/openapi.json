@@ -1398,6 +1398,26 @@
         "title": "KnowledgePage",
         "type": "object"
       },
+      "KnowledgePageHistory": {
+        "properties": {
+          "page": {
+            "$ref": "#/components/schemas/KnowledgePage"
+          },
+          "revisions": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeRevision"
+            },
+            "title": "Revisions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "page",
+          "revisions"
+        ],
+        "title": "KnowledgePageHistory",
+        "type": "object"
+      },
       "KnowledgeRevision": {
         "additionalProperties": false,
         "properties": {
@@ -3082,6 +3102,92 @@
         "title": "ReasoningAssumption",
         "type": "object"
       },
+      "StableKnowledgeCorrectionCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision_number": {
+            "minimum": 1.0,
+            "title": "Expected Revision Number",
+            "type": "integer"
+          },
+          "statement": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Statement",
+            "type": "string"
+          }
+        },
+        "required": [
+          "statement",
+          "expected_revision_number"
+        ],
+        "title": "StableKnowledgeCorrectionCreate",
+        "type": "object"
+      },
+      "StableKnowledgeRetirementCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision_number": {
+            "minimum": 1.0,
+            "title": "Expected Revision Number",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "expected_revision_number"
+        ],
+        "title": "StableKnowledgeRetirementCreate",
+        "type": "object"
+      },
+      "StableKnowledgeTeachingCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "statement": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Statement",
+            "type": "string"
+          }
+        },
+        "required": [
+          "statement"
+        ],
+        "title": "StableKnowledgeTeachingCreate",
+        "type": "object"
+      },
+      "StableKnowledgeTeachingResult": {
+        "properties": {
+          "page": {
+            "$ref": "#/components/schemas/KnowledgePage"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/KnowledgeRevision"
+          },
+          "source_note": {
+            "$ref": "#/components/schemas/UserContextNote"
+          }
+        },
+        "required": [
+          "source_note",
+          "page",
+          "revision"
+        ],
+        "title": "StableKnowledgeTeachingResult",
+        "type": "object"
+      },
       "UserAction": {
         "enum": [
           "confirm_guess",
@@ -4353,6 +4459,350 @@
           }
         },
         "summary": "List Journal"
+      }
+    },
+    "/v1/knowledge": {
+      "get": {
+        "operationId": "list_household_knowledge_v1_knowledge_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_retired",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Retired",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/KnowledgePage"
+                  },
+                  "title": "Response List Household Knowledge V1 Knowledge Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Household Knowledge"
+      },
+      "post": {
+        "operationId": "teach_household_knowledge_v1_knowledge_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StableKnowledgeTeachingCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StableKnowledgeTeachingResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Teach Household Knowledge"
+      }
+    },
+    "/v1/knowledge/{page_id}": {
+      "get": {
+        "operationId": "get_household_knowledge_v1_knowledge__page_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "page_id",
+            "required": true,
+            "schema": {
+              "title": "Page Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgePageHistory"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Household Knowledge"
+      }
+    },
+    "/v1/knowledge/{page_id}/correct": {
+      "post": {
+        "operationId": "correct_household_knowledge_v1_knowledge__page_id__correct_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "page_id",
+            "required": true,
+            "schema": {
+              "title": "Page Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StableKnowledgeCorrectionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StableKnowledgeTeachingResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Correct Household Knowledge"
+      }
+    },
+    "/v1/knowledge/{page_id}/retire": {
+      "post": {
+        "operationId": "retire_household_knowledge_v1_knowledge__page_id__retire_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "page_id",
+            "required": true,
+            "schema": {
+              "title": "Page Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StableKnowledgeRetirementCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeRevisionResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retire Household Knowledge"
       }
     },
     "/v1/meals/{meal_id}/feedback": {

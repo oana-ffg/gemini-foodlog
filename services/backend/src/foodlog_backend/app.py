@@ -29,8 +29,12 @@ from .errors import (
     IdempotencyConflict,
     InboundAddressGenerationFailed,
     InvalidDeviceCredential,
+    InvalidKnowledgeProvenance,
+    InvalidKnowledgeTransition,
     InvalidMealCorrectionTarget,
     InvalidMealFeedbackTransition,
+    KnowledgePageNotFound,
+    KnowledgeRevisionConflict,
     MealNotFound,
     MealRevisionConflict,
     PurchaseNotFound,
@@ -44,6 +48,7 @@ from .errors import (
 )
 from .feedback_learning import FeedbackLearningService, MealFeedbackLearningResult
 from .firestore_repository import FirestoreRepository
+from .household_teaching import HouseholdTeachingService
 from .image_events import (
     CaptureEventPublisher,
     InMemoryCaptureEventPublisher,
@@ -64,6 +69,9 @@ from .models import (
     DeviceCameraCredentialIssue,
     DeviceSession,
     InboundMailAddress,
+    KnowledgePage,
+    KnowledgePageHistory,
+    KnowledgeRevisionResult,
     LaunchMailConsent,
     LaunchMailConsentRequest,
     MealEntry,
@@ -74,6 +82,10 @@ from .models import (
     QuestionResponseRequest,
     QuestionResponseResult,
     QuestionStatus,
+    StableKnowledgeCorrectionCreate,
+    StableKnowledgeRetirementCreate,
+    StableKnowledgeTeachingCreate,
+    StableKnowledgeTeachingResult,
     UserContextNote,
     UserContextNoteCreate,
     VerifiedDeviceIdentity,
@@ -159,6 +171,7 @@ class Container:
     capture_event_publisher: CaptureEventPublisher
     inbound_mail_address_service: InboundMailAddressService
     feedback_learning_service: FeedbackLearningService
+    household_teaching_service: HouseholdTeachingService
 
 
 def create_app(
@@ -235,6 +248,7 @@ def create_app(
             domain=active_settings.inbound_mail_domain,
         ),
         feedback_learning_service=FeedbackLearningService(repository),
+        household_teaching_service=HouseholdTeachingService(repository),
     )
     app = FastAPI(title="Gemini FoodLog API", version="0.1.0")
     app.state.container = container
@@ -419,6 +433,7 @@ def create_app(
     app.add_exception_handler(PurchaseNotFound, resource_missing_handler)
     app.add_exception_handler(QuestionNotFound, resource_missing_handler)
     app.add_exception_handler(UserContextNoteNotFound, resource_missing_handler)
+    app.add_exception_handler(KnowledgePageNotFound, resource_missing_handler)
 
     @app.exception_handler(CrossAccountAccess)
     async def cross_account_handler(*_: object) -> Response:
@@ -439,6 +454,24 @@ def create_app(
             content='{"detail":"meal_revision_changed"}',
             media_type="application/json",
         )
+
+    @app.exception_handler(KnowledgeRevisionConflict)
+    async def knowledge_revision_conflict_handler(*_: object) -> Response:
+        return Response(
+            status_code=status.HTTP_409_CONFLICT,
+            content='{"detail":"knowledge_revision_changed"}',
+            media_type="application/json",
+        )
+
+    async def invalid_knowledge_update_handler(*_: object) -> Response:
+        return Response(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content='{"detail":"invalid_knowledge_update"}',
+            media_type="application/json",
+        )
+
+    app.add_exception_handler(InvalidKnowledgeTransition, invalid_knowledge_update_handler)
+    app.add_exception_handler(InvalidKnowledgeProvenance, invalid_knowledge_update_handler)
 
     @app.exception_handler(InvalidMealCorrectionTarget)
     async def invalid_meal_correction_target_handler(*_: object) -> Response:
@@ -796,6 +829,88 @@ def create_app(
         return await container.repository.retire_user_context_note(
             owner_user_id=user_id,
             note_id=note_id,
+        )
+
+    @app.post(
+        "/v1/knowledge",
+        response_model=StableKnowledgeTeachingResult,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def teach_household_knowledge(
+        request: StableKnowledgeTeachingCreate,
+        response: Response,
+        idempotency_key: str = Header(min_length=8, max_length=128),
+        user_id: str = Depends(request_user_id),
+    ) -> StableKnowledgeTeachingResult:
+        response.headers["Cache-Control"] = "private, no-store"
+        return await container.household_teaching_service.teach(
+            owner_user_id=user_id,
+            request=request,
+            idempotency_key=idempotency_key,
+        )
+
+    @app.get("/v1/knowledge", response_model=list[KnowledgePage])
+    async def list_household_knowledge(
+        response: Response,
+        include_retired: bool = False,
+        limit: int = Query(default=50, ge=1, le=100),
+        user_id: str = Depends(request_user_id),
+    ) -> list[KnowledgePage]:
+        response.headers["Cache-Control"] = "private, no-store"
+        return await container.repository.list_knowledge_pages_for_owner(
+            user_id,
+            include_retired=include_retired,
+            limit=limit,
+        )
+
+    @app.get("/v1/knowledge/{page_id}", response_model=KnowledgePageHistory)
+    async def get_household_knowledge(
+        page_id: str,
+        response: Response,
+        user_id: str = Depends(request_user_id),
+    ) -> KnowledgePageHistory:
+        response.headers["Cache-Control"] = "private, no-store"
+        return await container.household_teaching_service.page_history(
+            owner_user_id=user_id,
+            page_id=page_id,
+        )
+
+    @app.post(
+        "/v1/knowledge/{page_id}/correct",
+        response_model=StableKnowledgeTeachingResult,
+    )
+    async def correct_household_knowledge(
+        page_id: str,
+        request: StableKnowledgeCorrectionCreate,
+        response: Response,
+        idempotency_key: str = Header(min_length=8, max_length=128),
+        user_id: str = Depends(request_user_id),
+    ) -> StableKnowledgeTeachingResult:
+        response.headers["Cache-Control"] = "private, no-store"
+        return await container.household_teaching_service.correct(
+            owner_user_id=user_id,
+            page_id=page_id,
+            request=request,
+            idempotency_key=idempotency_key,
+        )
+
+    @app.post(
+        "/v1/knowledge/{page_id}/retire",
+        response_model=KnowledgeRevisionResult,
+    )
+    async def retire_household_knowledge(
+        page_id: str,
+        request: StableKnowledgeRetirementCreate,
+        response: Response,
+        idempotency_key: str = Header(min_length=8, max_length=128),
+        user_id: str = Depends(request_user_id),
+    ) -> KnowledgeRevisionResult:
+        response.headers["Cache-Control"] = "private, no-store"
+        return await container.household_teaching_service.retire(
+            owner_user_id=user_id,
+            page_id=page_id,
+            request=request,
+            idempotency_key=idempotency_key,
         )
 
     @app.post(

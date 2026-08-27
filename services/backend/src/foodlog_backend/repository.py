@@ -839,6 +839,14 @@ class Repository(Protocol):
         page_id: str,
     ) -> KnowledgePage: ...
 
+    async def list_knowledge_pages_for_owner(
+        self,
+        owner_user_id: str,
+        *,
+        include_retired: bool = False,
+        limit: int = 50,
+    ) -> list[KnowledgePage]: ...
+
     async def list_knowledge_revisions(
         self,
         owner_user_id: str,
@@ -2907,6 +2915,32 @@ class InMemoryRepository:
             if page is None or page.account_id != account.id:
                 raise KnowledgePageNotFound
             return page.model_copy(deep=True)
+
+    async def list_knowledge_pages_for_owner(
+        self,
+        owner_user_id: str,
+        *,
+        include_retired: bool = False,
+        limit: int = 50,
+    ) -> list[KnowledgePage]:
+        if not 1 <= limit <= 100:
+            raise ValueError("knowledge page limit must be between 1 and 100")
+        account = await self.account_for_owner(owner_user_id)
+        async with self._lock:
+            pages = [
+                page
+                for page in self._knowledge_pages.values()
+                if page.account_id == account.id
+                and (include_retired or page.lifecycle != KnowledgeLifecycle.RETIRED)
+            ]
+            return [
+                page.model_copy(deep=True)
+                for page in sorted(
+                    pages,
+                    key=lambda item: (item.updated_at, item.id),
+                    reverse=True,
+                )[:limit]
+            ]
 
     async def list_knowledge_revisions(
         self,

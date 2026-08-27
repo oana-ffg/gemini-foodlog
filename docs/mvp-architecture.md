@@ -542,6 +542,21 @@ The observations feed is not a clarification inbox and does not contain generic 
 
 Users can teach or correct household knowledge outside a particular meal through a natural-language input. Stable statements may become versioned wiki knowledge. Temporary statements, such as a visitor bringing duck that may be cooked tomorrow, remain time-bounded context unless the user or later evidence supports promotion to a durable pattern. The raw wording is preserved, and the UI shows the resulting change and offers correction or retirement without requiring redundant approval of knowledge the user just deliberately supplied.
 
+The stable-teaching API treats the user's deliberate choice of the household-wiki flow as the
+authority signal; it does not ask a model to paraphrase or semantically broaden the statement.
+It preserves the exact trimmed wording in a strong, confirmed `user_statement` revision and uses
+only a literal excerpt as the page title. A deterministic hash of the normalized initial wording
+provides the page topic identity. Corrections append another exact user-statement revision against
+an expected base revision, while retirement appends a terminal retired revision. The agent's
+bounded wiki list/read tools can select and cite the current revision, but retired pages disappear
+from agent context while remaining owner-readable with their full history.
+
+To retain independent raw provenance without leaking a stable statement into the temporary-context
+tool, teaching and correction first create an immutable no-window user note, link it as supporting
+evidence, and retire it immediately after the wiki transaction. Each step is idempotent. If the
+workflow is interrupted, repeating the same request resumes the existing note and revision rather
+than duplicating either; an incomplete note remains inspectable instead of losing the user's words.
+
 The proactive-context API stores each submitted statement as an immutable,
 account-scoped note with its authenticated author, creation time, and optional
 offset-aware start/end window. Active reads exclude a note before its start, at or

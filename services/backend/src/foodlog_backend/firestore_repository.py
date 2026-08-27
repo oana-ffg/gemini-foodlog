@@ -3223,6 +3223,47 @@ class FirestoreRepository:
             raise KnowledgePageNotFound
         return page
 
+    async def list_knowledge_pages_for_owner(
+        self,
+        owner_user_id: str,
+        *,
+        include_retired: bool = False,
+        limit: int = 50,
+    ) -> list[KnowledgePage]:
+        if not 1 <= limit <= 100:
+            raise ValueError("knowledge page limit must be between 1 and 100")
+        account = await self.account_for_owner(owner_user_id)
+        pages = await self.knowledge_page_index_for_account(
+            account_id=account.id,
+            limit=limit,
+        )
+        if include_retired:
+            retired_query = (
+                self._collection(account.id, "knowledge")
+                .where(
+                    filter=FieldFilter(
+                        "lifecycle",
+                        "==",
+                        KnowledgeLifecycle.RETIRED.value,
+                    )
+                )
+                .order_by("updated_at", direction=firestore.Query.DESCENDING)
+                .limit(limit)
+            )
+            pages.extend(
+                [
+                    _model(snapshot, KnowledgePage)
+                    async for snapshot in retired_query.stream()
+                ]
+            )
+        if any(page.account_id != account.id for page in pages):
+            raise KnowledgePageNotFound
+        return sorted(
+            pages,
+            key=lambda item: (item.updated_at, item.id),
+            reverse=True,
+        )[:limit]
+
     async def list_knowledge_revisions(
         self,
         owner_user_id: str,
