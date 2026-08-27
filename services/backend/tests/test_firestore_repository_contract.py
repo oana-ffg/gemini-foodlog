@@ -208,6 +208,79 @@ def test_firestore_public_capacity_is_atomic_and_waitlist_is_stable() -> None:
     "FIRESTORE_EMULATOR_HOST" not in os.environ,
     reason="requires the Firestore emulator",
 )
+def test_firestore_journal_uses_occurrence_time_when_publication_is_delayed() -> None:
+    async def scenario() -> None:
+        project_id = f"gemini-foodlog-journal-order-{uuid4().hex}"
+        client = AsyncClient(project=project_id)
+        repository = FirestoreRepository(
+            project_id=project_id,
+            public_account_limit=25,
+            trial_image_limit=200,
+            client=client,
+        )
+        owner_user_id = "journal-order-owner"
+        account = await repository.provision_account(owner_user_id)
+        camera = await repository.create_browser_camera(
+            owner_user_id,
+            "Kitchen",
+            "journal-order-browser-0001",
+        )
+        captures = []
+        for suffix in ("older", "newer"):
+            capture, _, created = await repository.reserve_capture(
+                capture_id=f"journal-order-capture-{suffix}",
+                account=account,
+                camera=camera,
+                idempotency_key=f"journal-order-idempotency-{suffix}",
+                content_type="image/jpeg",
+                content_sha256=sha256(suffix.encode()).hexdigest(),
+                object_key=(
+                    f"accounts/{account.id}/captures/journal-order-capture-{suffix}.jpg"
+                ),
+            )
+            assert created is True
+            captures.append(capture)
+
+        base = utc_now()
+        shared = {
+            "account_id": account.id,
+            "confidence": Confidence.UNCERTAIN,
+            "components": [],
+            "observations": ["Journal ordering fixture."],
+            "alternatives": [],
+            "rationale": "Only occurrence-time ordering is under test.",
+        }
+        older = MealEntry(
+            **shared,
+            id="journal-order-meal-older",
+            capture_id=captures[0].id,
+            title="Older occurrence published last",
+            occurred_at=base,
+            created_at=base + timedelta(hours=2),
+        )
+        newer = MealEntry(
+            **shared,
+            id="journal-order-meal-newer",
+            capture_id=captures[1].id,
+            title="Newer occurrence published first",
+            occurred_at=base + timedelta(hours=1),
+            created_at=base + timedelta(hours=1, minutes=30),
+        )
+        await repository.save_meal(account_id=account.id, meal=older)
+        await repository.save_meal(account_id=account.id, meal=newer)
+
+        journal = await repository.list_meals(owner_user_id)
+
+        assert [item.id for item in journal] == [newer.id, older.id]
+        client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.skipif(
+    "FIRESTORE_EMULATOR_HOST" not in os.environ,
+    reason="requires the Firestore emulator",
+)
 def test_firestore_user_context_notes_preserve_history_and_tenant_scope() -> None:
     async def scenario() -> None:
         project_id = f"gemini-foodlog-context-note-contract-{uuid4().hex}"

@@ -2705,7 +2705,11 @@ class InMemoryRepository:
             )
             return [
                 meal.model_copy(deep=True)
-                for meal in sorted(meals, key=lambda item: item.created_at, reverse=True)
+                for meal in sorted(
+                    meals,
+                    key=lambda item: (item.occurred_at or item.created_at, item.id),
+                    reverse=True,
+                )
             ]
 
     async def meal_for_owner(self, owner_user_id: str, meal_id: str) -> MealEntry:

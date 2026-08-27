@@ -86,6 +86,8 @@ export interface MealEntry {
   id: string;
   account_id: string;
   capture_id: string;
+  event_id: string | null;
+  occurred_at: string | null;
   status: MealStatus;
   confidence: Confidence;
   title: string;

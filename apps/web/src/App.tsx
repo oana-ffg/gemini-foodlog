@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ApiError,
@@ -24,6 +24,7 @@ import {
   clearSignupLaunchMailIntent,
   readSignupLaunchMailIntent,
 } from "./signupIntent";
+import { chronologicalJournal, mealOccurrence } from "./journal";
 
 interface JournalCardProps {
   entry: MealEntry;
@@ -159,8 +160,8 @@ function JournalCard({ entry, onChanged }: JournalCardProps) {
             </span>
             <StatusBadge status={entry.status} />
           </div>
-          <time dateTime={entry.created_at}>
-            {new Date(entry.created_at).toLocaleString()}
+          <time dateTime={mealOccurrence(entry)}>
+            {new Date(mealOccurrence(entry)).toLocaleString()}
           </time>
         </div>
         <h3>{entry.title}</h3>
@@ -314,6 +315,7 @@ function App() {
   const [journal, setJournal] = useState<MealEntry[]>([]);
   const [questions, setQuestions] = useState<ClarificationQuestion[]>([]);
   const [loadMessage, setLoadMessage] = useState("Loading your private journal…");
+  const orderedJournal = useMemo(() => chronologicalJournal(journal), [journal]);
 
   const refreshWorkspace = useCallback(async () => {
     setLoadMessage("Loading your private journal…");
@@ -390,7 +392,7 @@ function App() {
           inferred, and gets better when you correct it.
         </p>
         <div className="usage">
-          <span>Local vertical slice</span>
+          <span>Private account</span>
           <strong>
             {account?.accepted_image_count ?? 0} / {account?.entitlement_mode === "unlimited"
               ? "Unlimited"
@@ -427,8 +429,8 @@ function App() {
       <section className="journal" aria-labelledby="journal-title">
         <div className="section-heading">
           <div>
-            <p className="section-kicker">Evidence-aware timeline</p>
-            <h2 id="journal-title">What FoodLog thinks happened</h2>
+            <p className="section-kicker">Newest kitchen event first</p>
+            <h2 id="journal-title">Your food timeline</h2>
           </div>
           <button type="button" className="button--quiet" onClick={refreshWorkspace}>
             Refresh
@@ -436,7 +438,7 @@ function App() {
         </div>
         {journal.length === 0 ? (
           <p className="empty-state">No kitchen event has been analysed yet.</p>
-        ) : journal.map((entry) => (
+        ) : orderedJournal.map((entry) => (
           <JournalCard key={entry.id} entry={entry} onChanged={refreshWorkspace} />
         ))}
       </section>

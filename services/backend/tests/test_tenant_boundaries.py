@@ -156,6 +156,51 @@ def test_derived_records_cannot_attach_to_another_accounts_capture_or_meal() -> 
     asyncio.run(scenario())
 
 
+def test_journal_is_ordered_by_kitchen_occurrence_not_delayed_publication() -> None:
+    async def scenario() -> None:
+        repository = build_repository()
+        account = await repository.provision_account("chronological-owner")
+        camera = await repository.create_browser_camera(
+            "chronological-owner", "Kitchen", "chronological-browser-0001"
+        )
+        older_capture = await reserve_capture(
+            repository,
+            account=account,
+            camera=camera,
+            suffix="chronological-older",
+        )
+        newer_capture = await reserve_capture(
+            repository,
+            account=account,
+            camera=camera,
+            suffix="chronological-newer",
+        )
+        base = utc_now()
+        older = meal_for(
+            account_id=account.id,
+            capture_id=older_capture.id,
+            suffix="older-occurrence-published-last",
+        ).model_copy(update={"occurred_at": base, "created_at": base + timedelta(hours=2)})
+        newer = meal_for(
+            account_id=account.id,
+            capture_id=newer_capture.id,
+            suffix="newer-occurrence-published-first",
+        ).model_copy(
+            update={
+                "occurred_at": base + timedelta(hours=1),
+                "created_at": base + timedelta(hours=1, minutes=30),
+            }
+        )
+        await repository.save_meal(account_id=account.id, meal=older)
+        await repository.save_meal(account_id=account.id, meal=newer)
+
+        journal = await repository.list_meals("chronological-owner")
+
+        assert [item.id for item in journal] == [newer.id, older.id]
+
+    asyncio.run(scenario())
+
+
 def test_worker_jobs_and_grouping_are_keyed_by_account_and_fail_closed() -> None:
     async def scenario() -> None:
         repository = build_repository()

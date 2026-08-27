@@ -2899,11 +2899,16 @@ class FirestoreRepository:
 
     async def list_meals(self, owner_user_id: str) -> list[MealEntry]:
         account = await self.account_for_owner(owner_user_id)
-        query = self._collection(account.id, "meals").order_by(
-            "created_at", direction=firestore.Query.DESCENDING
+        meals = [
+            _model(snapshot, MealEntry)
+            async for snapshot in self._collection(account.id, "meals").stream()
+        ]
+        visible_meals = [meal for meal in meals if meal.status != MealStatus.NOT_COOKING]
+        return sorted(
+            visible_meals,
+            key=lambda item: (item.occurred_at or item.created_at, item.id),
+            reverse=True,
         )
-        meals = [_model(snapshot, MealEntry) async for snapshot in query.stream()]
-        return [meal for meal in meals if meal.status != MealStatus.NOT_COOKING]
 
     async def meal_for_owner(self, owner_user_id: str, meal_id: str) -> MealEntry:
         account = await self.account_for_owner(owner_user_id)
