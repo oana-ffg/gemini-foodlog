@@ -209,13 +209,50 @@ export interface MealRevision {
   source: MealRevisionSource;
   inference: MealInferenceSummary;
   activity_hypothesis: ActivityMealInference | null;
+  feedback_id: string | null;
+  base_revision_number: number | null;
+  correction: MealCorrection | null;
   created_at: string;
 }
+
+export interface WholeMealCorrection {
+  scope: "meal";
+  title: string;
+  components?: MealComponent[];
+}
+
+export interface ComponentCorrection {
+  scope: "component";
+  component_index: number;
+  replacement: MealComponent;
+}
+
+export interface IngredientCorrection {
+  scope: "ingredient";
+  component_index: number;
+  ingredient_index: number;
+  replacement: string;
+}
+
+export interface PreparationMethodCorrection {
+  scope: "preparation_method";
+  component_index: number;
+  preparation_method_index: number;
+  replacement: string;
+}
+
+export type MealCorrection =
+  | WholeMealCorrection
+  | ComponentCorrection
+  | IngredientCorrection
+  | PreparationMethodCorrection;
 
 export interface MealFeedbackInput {
   kind: MealFeedbackKind;
   actual_meal?: string;
   explanation?: string;
+  correction?: MealCorrection;
+  base_revision_number?: number;
   learning_disposition?: "reusable" | "insufficient_information";
 }
 
@@ -558,6 +595,11 @@ export function createDeviceCamera(name: string): Promise<DeviceCameraCredential
 
 export function listJournal(): Promise<MealEntry[]> {
   return apiRequest<MealEntry[]>("/v1/journal");
+}
+
+export function listActivities(status?: MealStatus): Promise<MealEntry[]> {
+  const query = status ? `?status=${encodeURIComponent(status)}` : "";
+  return apiRequest<MealEntry[]>(`/v1/activities${query}`);
 }
 
 export function listOpenQuestions(): Promise<ClarificationQuestion[]> {

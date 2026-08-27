@@ -5,6 +5,7 @@ import {
   AuthenticationRequiredError,
   answerQuestion,
   getConsentPreferences,
+  listActivities,
   listJournal,
   listMealRevisions,
   listOpenQuestions,
@@ -12,7 +13,6 @@ import {
   listPurchases,
   provisionAccount,
   recordLaunchMailConsent,
-  submitMealFeedback,
   type Account,
   type CaptureProcessing,
   type ClarificationQuestion,
@@ -22,6 +22,7 @@ import {
   type MealStatus,
 } from "./api";
 import { ActivityImageViewer, ActivityRationale } from "./ActivityDetail";
+import MealFeedbackControls, { CorrectionSummary } from "./MealFeedbackControls";
 import { SessionControls, useAuth } from "./auth";
 import { CapacityWaitlist, LaunchMailConsentControls } from "./ConsentControls";
 import {
@@ -34,6 +35,7 @@ import { SystemStatus, type PurchaseContextState } from "./SystemStatus";
 interface JournalCardProps {
   entry: MealEntry;
   onChanged: () => Promise<void>;
+  onNotice: (message: string) => void;
 }
 
 function StatusBadge({ status }: { status: MealStatus }) {
@@ -82,6 +84,14 @@ function RevisionHistory({ mealId, revisionCount }: { mealId: string; revisionCo
                 inference={revision.inference}
                 hypothesis={revision.activity_hypothesis}
               />
+              {revision.correction ? (
+                <CorrectionSummary correction={revision.correction} />
+              ) : null}
+              {revision.base_revision_number !== null ? (
+                <small className="revision__base">
+                  Changed from revision {revision.base_revision_number}
+                </small>
+              ) : null}
             </article>
           ))}
         </div>
@@ -90,62 +100,12 @@ function RevisionHistory({ mealId, revisionCount }: { mealId: string; revisionCo
   );
 }
 
-function JournalCard({ entry, onChanged }: JournalCardProps) {
-  const [correcting, setCorrecting] = useState(false);
-  const [actualMeal, setActualMeal] = useState("");
-  const [explanation, setExplanation] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string>();
+function JournalCard({ entry, onChanged, onNotice }: JournalCardProps) {
   const captureIds = entry.activity_hypothesis?.source_capture_ids ?? [entry.capture_id];
   const [selectedCaptureId, setSelectedCaptureId] = useState(entry.capture_id);
   const visibleCaptureId = captureIds.includes(selectedCaptureId)
     ? selectedCaptureId
     : captureIds[0] ?? entry.capture_id;
-
-  const confirm = async () => {
-    setBusy(true);
-    setMessage("Saving confirmation…");
-    try {
-      await submitMealFeedback(entry.id, { kind: "confirm" }, crypto.randomUUID());
-      await onChanged();
-      setMessage("Confirmed. The original inference remains in the history.");
-    } catch (error: unknown) {
-      setMessage(error instanceof Error ? error.message : "Could not save confirmation");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const correct = async () => {
-    setBusy(true);
-    setMessage("Saving correction…");
-    try {
-      const trimmedMeal = actualMeal.trim();
-      const trimmedExplanation = explanation.trim();
-      await submitMealFeedback(
-        entry.id,
-        {
-          kind: "correct",
-          actual_meal: trimmedMeal || undefined,
-          explanation: trimmedExplanation || undefined,
-        },
-        crypto.randomUUID(),
-      );
-      setCorrecting(false);
-      setActualMeal("");
-      setExplanation("");
-      await onChanged();
-      setMessage(
-        trimmedMeal
-          ? "Correction saved with the original inference intact."
-          : "Marked wrong and unresolved. You can add the meal later.",
-      );
-    } catch (error: unknown) {
-      setMessage(error instanceof Error ? error.message : "Could not save correction");
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <article className="journal-card">
@@ -174,57 +134,11 @@ function JournalCard({ entry, onChanged }: JournalCardProps) {
           onSelectCapture={setSelectedCaptureId}
         />
 
-        <div className="feedback-actions" aria-label="Meal feedback">
-          {entry.status === "provisional" ? (
-            <button type="button" onClick={confirm} disabled={busy}>Looks right</button>
-          ) : null}
-          <button
-            type="button"
-            className="button--quiet"
-            onClick={() => setCorrecting((current) => !current)}
-            disabled={busy}
-          >
-            {entry.status === "contradicted" ? "Add the actual meal" : "Correct it"}
-          </button>
-        </div>
-
-        {correcting ? (
-          <div className="feedback-form">
-            <p>
-              The complete rationale above will remain in history. Give either answer,
-              both, or leave both blank to mark this wrong but unresolved.
-            </p>
-            <label>
-              What was it actually?
-              <input
-                value={actualMeal}
-                onChange={(event) => setActualMeal(event.target.value)}
-                maxLength={200}
-              />
-            </label>
-            <label>
-              Why was the reasoning wrong, and how could FoodLog tell next time?
-              <textarea
-                value={explanation}
-                onChange={(event) => setExplanation(event.target.value)}
-                maxLength={2000}
-                rows={4}
-              />
-            </label>
-            <div className="button-row button-row--compact">
-              <button type="button" onClick={correct} disabled={busy}>Save correction</button>
-              <button
-                type="button"
-                className="button--quiet"
-                onClick={() => setCorrecting(false)}
-                disabled={busy}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        ) : null}
-        {message ? <p className="form-message" role="status">{message}</p> : null}
+        <MealFeedbackControls
+          entry={entry}
+          onChanged={onChanged}
+          onNotice={onNotice}
+        />
         <RevisionHistory
           key={entry.revision_number}
           mealId={entry.id}
@@ -309,13 +223,19 @@ function App() {
   const [consentPreferences, setConsentPreferences] = useState<ConsentPreferences>();
   const [capacityReached, setCapacityReached] = useState(false);
   const [journal, setJournal] = useState<MealEntry[]>([]);
+  const [discardedActivities, setDiscardedActivities] = useState<MealEntry[]>([]);
   const [questions, setQuestions] = useState<ClarificationQuestion[]>([]);
   const [processing, setProcessing] = useState<CaptureProcessing[]>();
   const [processingUnavailable, setProcessingUnavailable] = useState(false);
   const [purchaseContext, setPurchaseContext] = useState<PurchaseContextState>("loading");
   const [sessionStale, setSessionStale] = useState(false);
   const [loadMessage, setLoadMessage] = useState("Loading your private journal…");
+  const [journalNotice, setJournalNotice] = useState<string>();
   const orderedJournal = useMemo(() => chronologicalJournal(journal), [journal]);
+  const orderedDiscardedActivities = useMemo(
+    () => chronologicalJournal(discardedActivities),
+    [discardedActivities],
+  );
 
   const refreshWorkspace = useCallback(async () => {
     setLoadMessage("Loading your private journal…");
@@ -341,8 +261,9 @@ function App() {
         }
         clearSignupLaunchMailIntent(firebaseUid);
       }
-      const [entries, openQuestions, processingResult, purchasesResult] = await Promise.all([
+      const [entries, activities, openQuestions, processingResult, purchasesResult] = await Promise.all([
         listJournal(),
+        listActivities("not_cooking"),
         listOpenQuestions(),
         listProcessing().then(
           (value) => ({ value }),
@@ -360,6 +281,9 @@ function App() {
         throw purchasesResult.error;
       }
       setJournal(entries);
+      setDiscardedActivities(
+        activities.filter((activity) => activity.status === "not_cooking"),
+      );
       setAccount(currentAccount);
       setConsentPreferences(currentConsent);
       setQuestions(openQuestions);
@@ -383,6 +307,7 @@ function App() {
       ) {
         setAccount(undefined);
         setJournal([]);
+        setDiscardedActivities([]);
         setQuestions([]);
         setConsentPreferences(await getConsentPreferences());
         setCapacityReached(true);
@@ -477,10 +402,40 @@ function App() {
             Refresh
           </button>
         </div>
+        {journalNotice ? <p className="journal-notice" role="status">{journalNotice}</p> : null}
         {journal.length === 0 ? (
           <p className="empty-state">No kitchen event has been analysed yet.</p>
         ) : orderedJournal.map((entry) => (
-          <JournalCard key={entry.id} entry={entry} onChanged={refreshWorkspace} />
+          <JournalCard
+            key={entry.id}
+            entry={entry}
+            onChanged={refreshWorkspace}
+            onNotice={setJournalNotice}
+          />
+        ))}
+      </section>
+
+      <section className="discarded-activities" aria-labelledby="discarded-title">
+        <div className="section-heading">
+          <div>
+            <p className="section-kicker">Preserved, but not food</p>
+            <h2 id="discarded-title">Discarded non-cooking activity</h2>
+          </div>
+          <span className="question-count">{discardedActivities.length} saved</span>
+        </div>
+        <p className="section-intro">
+          These events stay out of your food timeline. Their evidence and revision history
+          remain available so you can reclassify a mistake.
+        </p>
+        {discardedActivities.length === 0 ? (
+          <p className="empty-state">No activity has been discarded as not cooking.</p>
+        ) : orderedDiscardedActivities.map((entry) => (
+          <JournalCard
+            key={entry.id}
+            entry={entry}
+            onChanged={refreshWorkspace}
+            onNotice={setJournalNotice}
+          />
         ))}
       </section>
     </main>

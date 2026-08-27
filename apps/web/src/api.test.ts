@@ -16,6 +16,7 @@ import {
   getKnowledgePage,
   getConsentPreferences,
   joinWaitlist,
+  listActivities,
   listCameras,
   listContextNotes,
   listKnowledge,
@@ -26,6 +27,7 @@ import {
   retireKnowledge,
   retireContextNote,
   revokeCamera,
+  submitMealFeedback,
   teachKnowledge,
   uploadCapture,
   withdrawLaunchMailConsent,
@@ -129,6 +131,58 @@ describe("authenticated API client", () => {
       "http://127.0.0.1:8080/v1/processing?limit=12",
       "http://127.0.0.1:8080/v1/purchases?limit=1",
     ]);
+  });
+
+  it("loads complete activity history and sends revision-bound targeted correction", async () => {
+    firebase.auth.currentUser = {
+      getIdToken: vi.fn().mockResolvedValue("firebase-id-token"),
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse({}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listActivities("not_cooking");
+    await submitMealFeedback("meal/one", {
+      kind: "correct",
+      correction: {
+        scope: "component",
+        component_index: 1,
+        replacement: {
+          name: "Duck breast",
+          ingredients: ["duck"],
+          preparation_methods: ["air frying"],
+        },
+      },
+      base_revision_number: 4,
+      explanation: "The darker red meat and recent duck purchase distinguish it.",
+      learning_disposition: "reusable",
+    }, "feedback-key-0001");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://127.0.0.1:8080/v1/activities?status=not_cooking",
+      "http://127.0.0.1:8080/v1/meals/meal%2Fone/feedback",
+    ]);
+    const feedbackInit = fetchMock.mock.calls[1][1] as RequestInit;
+    expect(feedbackInit.method).toBe("POST");
+    expect(new Headers(feedbackInit.headers).get("Idempotency-Key")).toBe(
+      "feedback-key-0001",
+    );
+    expect(feedbackInit.body).toBe(JSON.stringify({
+      kind: "correct",
+      correction: {
+        scope: "component",
+        component_index: 1,
+        replacement: {
+          name: "Duck breast",
+          ingredients: ["duck"],
+          preparation_methods: ["air frying"],
+        },
+      },
+      base_revision_number: 4,
+      explanation: "The darker red meat and recent duck purchase distinguish it.",
+      learning_disposition: "reusable",
+    }));
   });
 
   it("uses explicit authenticated consent and waitlist operations", async () => {

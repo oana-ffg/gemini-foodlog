@@ -3101,14 +3101,28 @@ class FirestoreRepository:
         return await open_pattern(transaction)
 
     async def list_meals(self, owner_user_id: str) -> list[MealEntry]:
+        return [
+            meal
+            for meal in await self.list_activity_history(owner_user_id)
+            if meal.status != MealStatus.NOT_COOKING
+        ]
+
+    async def list_activity_history(
+        self,
+        owner_user_id: str,
+        *,
+        status: MealStatus | None = None,
+    ) -> list[MealEntry]:
         account = await self.account_for_owner(owner_user_id)
+        query = self._collection(account.id, "meals")
+        if status is not None:
+            query = query.where(filter=FieldFilter("status", "==", status.value))
         meals = [
             _model(snapshot, MealEntry)
-            async for snapshot in self._collection(account.id, "meals").stream()
+            async for snapshot in query.stream()
         ]
-        visible_meals = [meal for meal in meals if meal.status != MealStatus.NOT_COOKING]
         return sorted(
-            visible_meals,
+            meals,
             key=lambda item: (item.occurred_at or item.created_at, item.id),
             reverse=True,
         )

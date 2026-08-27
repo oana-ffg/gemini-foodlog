@@ -262,7 +262,7 @@ button:disabled { cursor: not-allowed; opacity: 0.46; }
 .motion-status dt { color: #aebbb3; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
 .motion-status dd { margin: 5px 0 0; font-weight: 700; text-transform: capitalize; }
 
-.questions, .journal { padding-top: 80px; }
+.questions, .journal, .discarded-activities { padding-top: 80px; }
 .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 32px; }
 .empty-state { padding: 42px; border: 1px dashed #aaa99f; border-radius: 18px; color: #686d69; text-align: center; }
 .question-count { padding: 8px 12px; border-radius: 999px; color: #7b392c; background: #f2d9d2; font-size: 0.84rem; font-weight: 700; }
@@ -271,10 +271,12 @@ button:disabled { cursor: not-allowed; opacity: 0.46; }
 .question-card p { color: #555d57; line-height: 1.55; }
 .question-form, .feedback-form { display: grid; gap: 16px; }
 .question-form label, .feedback-form label { display: grid; gap: 8px; color: #3e4640; font-size: 0.88rem; font-weight: 700; }
-input, textarea { width: 100%; padding: 12px 14px; border: 1px solid #c8c4b8; border-radius: 10px; color: #1f2521; background: #fff; font: inherit; font-weight: 400; }
+input, textarea, select { width: 100%; padding: 12px 14px; border: 1px solid #c8c4b8; border-radius: 10px; color: #1f2521; background: #fff; font: inherit; font-weight: 400; }
 textarea { resize: vertical; }
-input:focus, textarea:focus { outline: 3px solid rgba(240, 187, 92, 0.35); border-color: #9a762e; }
+input:focus, textarea:focus, select:focus { outline: 3px solid rgba(240, 187, 92, 0.35); border-color: #9a762e; }
 .form-message { margin: 0; color: #5d645f; font-size: 0.85rem; line-height: 1.5; }
+.journal-notice { margin: -12px 0 24px; padding: 16px 18px; border-radius: 12px; color: #24533a; background: #dcecdf; font-weight: 700; }
+.section-intro { max-width: 760px; margin: -14px 0 28px; color: #555d57; line-height: 1.6; }
 .journal-card { display: grid; grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.1fr); align-items: start; overflow: hidden; margin-bottom: 24px; border-radius: 22px; background: #fffdf8; box-shadow: 0 12px 36px rgba(31, 37, 33, 0.08); }
 .evidence-viewer { min-width: 0; align-self: start; padding-bottom: 18px; color: #f7f5ee; background: #18241e; }
 .evidence-viewer__viewport {
@@ -314,6 +316,7 @@ input:focus, textarea:focus { outline: 3px solid rgba(240, 187, 92, 0.35); borde
 .status--confirmed { color: #1f5f3f; background: #dcecdf; }
 .status--corrected { color: #345f75; background: #dceaf0; }
 .status--contradicted { color: #7b392c; background: #f2d9d2; }
+.status--not_cooking { color: #5c5046; background: #e7e0d8; }
 details { margin-top: 24px; border-top: 1px solid #e0ddd4; padding-top: 18px; }
 summary { cursor: pointer; font-weight: 700; }
 .activity-rationale > section { margin-top: 22px; }
@@ -330,6 +333,7 @@ summary { cursor: pointer; font-weight: 700; }
 .legacy-evidence-note { font-size: 0.82rem; }
 .feedback-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
 .feedback-form { margin-top: 20px; padding: 22px; border-radius: 16px; background: #f4f1e8; }
+.feedback-form--discard { border: 1px solid #d3b5ad; background: #f6ebe7; }
 .feedback-form > p { margin: 0; font-size: 0.9rem; }
 .button-row--compact { margin-top: 0; }
 .revision-history { margin-top: 20px; padding-top: 18px; border-top: 1px solid #e0ddd4; }
@@ -338,6 +342,9 @@ summary { cursor: pointer; font-weight: 700; }
 .revision { padding: 16px; border: 1px solid #e0ddd4; border-radius: 12px; background: #fff; }
 .revision h4 { margin: 12px 0 6px; }
 .revision p { margin: 0; font-size: 0.88rem; }
+.revision__base { display: block; margin-top: 12px; color: #777d78; }
+.correction-summary { display: grid; gap: 4px; margin-top: 14px !important; padding: 12px 14px; border-radius: 10px; color: #344b3c !important; background: #e7efe8; }
+.correction-summary small { display: block; color: #59645d; }
 
 .knowledge-page {
   width: min(1280px, calc(100% - 36px));

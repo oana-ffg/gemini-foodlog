@@ -82,6 +82,7 @@ from .models import (
     MealEntry,
     MealFeedbackRequest,
     MealRevision,
+    MealStatus,
     QuestionAnswerRequest,
     QuestionAnswerResult,
     QuestionResponseRequest,
@@ -743,8 +744,24 @@ def create_app(
         )
 
     @app.get("/v1/journal", response_model=list[MealEntry])
-    async def list_journal(user_id: str = Depends(request_user_id)) -> list[MealEntry]:
+    async def list_journal(
+        response: Response,
+        user_id: str = Depends(request_user_id),
+    ) -> list[MealEntry]:
+        response.headers["Cache-Control"] = "private, no-store"
         return await container.repository.list_meals(user_id)
+
+    @app.get("/v1/activities", response_model=list[MealEntry])
+    async def list_activity_history(
+        response: Response,
+        activity_status: Annotated[MealStatus | None, Query(alias="status")] = None,
+        user_id: str = Depends(request_user_id),
+    ) -> list[MealEntry]:
+        response.headers["Cache-Control"] = "private, no-store"
+        return await container.repository.list_activity_history(
+            user_id,
+            status=activity_status,
+        )
 
     @app.get("/v1/audit-events", response_model=list[AuditEvent])
     async def list_audit_events(

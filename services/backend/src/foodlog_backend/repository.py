@@ -863,6 +863,13 @@ class Repository(Protocol):
 
     async def list_meals(self, owner_user_id: str) -> list[MealEntry]: ...
 
+    async def list_activity_history(
+        self,
+        owner_user_id: str,
+        *,
+        status: MealStatus | None = None,
+    ) -> list[MealEntry]: ...
+
     async def meal_for_owner(self, owner_user_id: str, meal_id: str) -> MealEntry: ...
 
     async def list_meal_revisions(self, owner_user_id: str, meal_id: str) -> list[MealRevision]: ...
@@ -2950,11 +2957,25 @@ class InMemoryRepository:
             return question.model_copy(deep=True)
 
     async def list_meals(self, owner_user_id: str) -> list[MealEntry]:
+        return [
+            meal
+            for meal in await self.list_activity_history(owner_user_id)
+            if meal.status != MealStatus.NOT_COOKING
+        ]
+
+    async def list_activity_history(
+        self,
+        owner_user_id: str,
+        *,
+        status: MealStatus | None = None,
+    ) -> list[MealEntry]:
         account = await self.account_for_owner(owner_user_id)
         async with self._lock:
             meals: Iterable[MealEntry] = (
-                meal for meal in self._meals.values() if meal.account_id == account.id
-                and meal.status != MealStatus.NOT_COOKING
+                meal
+                for meal in self._meals.values()
+                if meal.account_id == account.id
+                and (status is None or meal.status == status)
             )
             return [
                 meal.model_copy(deep=True)

@@ -1318,6 +1318,10 @@ def test_not_cooking_disappears_from_journal_and_can_be_reclassified() -> None:
         discarded = client.post(f"/v1/meals/{meal['id']}/feedback", **discard_request)
         retry = client.post(f"/v1/meals/{meal['id']}/feedback", **discard_request)
         hidden_journal = client.get("/v1/journal", headers=USER_HEADER)
+        discarded_activity = client.get(
+            "/v1/activities?status=not_cooking",
+            headers=USER_HEADER,
+        )
         revisions = client.get(
             f"/v1/meals/{meal['id']}/revisions",
             headers=USER_HEADER,
@@ -1339,6 +1343,11 @@ def test_not_cooking_disappears_from_journal_and_can_be_reclassified() -> None:
         assert discarded.json()["revision"]["status"] == "not_cooking"
         assert hidden_journal.status_code == 200
         assert hidden_journal.json() == []
+        assert hidden_journal.headers["cache-control"] == "private, no-store"
+        assert discarded_activity.status_code == 200
+        assert discarded_activity.headers["cache-control"] == "private, no-store"
+        assert [item["id"] for item in discarded_activity.json()] == [meal["id"]]
+        assert discarded_activity.json()[0]["status"] == "not_cooking"
         assert revisions.status_code == 200
         assert [item["status"] for item in revisions.json()] == [
             "provisional",
@@ -1360,11 +1369,18 @@ def test_not_cooking_disappears_from_journal_and_can_be_reclassified() -> None:
             },
         )
         restored_journal = client.get("/v1/journal", headers=USER_HEADER)
+        restored_activity = client.get("/v1/activities", headers=USER_HEADER)
+        restored_discarded_activity = client.get(
+            "/v1/activities?status=not_cooking",
+            headers=USER_HEADER,
+        )
 
         assert reclassified.status_code == 200
         assert reclassified.json()["revision"]["status"] == "corrected"
         assert reclassified.json()["revision"]["inference"]["title"] == "Steak"
         assert [item["id"] for item in restored_journal.json()] == [meal["id"]]
+        assert [item["status"] for item in restored_activity.json()] == ["corrected"]
+        assert restored_discarded_activity.json() == []
 
 
 def test_component_correction_preserves_a_separate_correct_component() -> None:
