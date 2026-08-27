@@ -491,6 +491,78 @@ resource "google_cloud_run_v2_job" "model_spend_smoke" {
   ]
 }
 
+# This job must fail before the container starts. It deliberately references the
+# notification-only secrets while running as the worker identity, which has no
+# Secret Manager access. If IAM regresses and injection succeeds, the container
+# emits a payload-free security event and fails explicitly instead of using the
+# secret.
+resource "google_cloud_run_v2_job" "secret_access_denial_smoke" {
+  project  = var.project_id
+  name     = "foodlog-secret-access-denial-smoke"
+  location = var.region
+
+  deletion_protection = true
+
+  labels = merge(local.common_labels, {
+    component = "secret-denial-smoke"
+  })
+
+  template {
+    parallelism = 1
+    task_count  = 1
+
+    template {
+      service_account = google_service_account.runtime["worker"].email
+      timeout         = "30s"
+      max_retries     = 0
+
+      containers {
+        name    = "secret-denial-smoke"
+        image   = var.api_container_image
+        command = ["python"]
+        args    = ["-m", "foodlog_backend.secret_denial_smoke"]
+
+        env {
+          name = "FOODLOG_FORBIDDEN_PUSHOVER_APP_TOKEN"
+
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.notification["pushover_app_token"].secret_id
+              version = "1"
+            }
+          }
+        }
+
+        env {
+          name = "FOODLOG_FORBIDDEN_PUSHOVER_USER_KEY"
+
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.notification["pushover_user_key"].secret_id
+              version = "1"
+            }
+          }
+        }
+
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "512Mi"
+          }
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [
+    google_secret_manager_secret_iam_member.notification_accessor,
+  ]
+}
+
 # Rerunnable production proof for account-scoped meal, question, feedback, and
 # immutable-revision persistence. The job writes only a fixed internal fixture.
 resource "google_cloud_run_v2_job" "firestore_repository_smoke" {

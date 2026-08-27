@@ -30,6 +30,7 @@ steps:
         import foodlog_backend.model_probe
         import foodlog_backend.model_spend_smoke
         import foodlog_backend.notification_app
+        import foodlog_backend.secret_denial_smoke
         import foodlog_agent.agent
         import foodlog_agent.context_tools
         import foodlog_agent.context_tools_smoke
