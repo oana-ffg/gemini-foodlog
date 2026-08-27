@@ -563,6 +563,13 @@ class Repository(Protocol):
         purchase_id: str,
     ) -> PurchaseEvidenceBundle: ...
 
+    async def recent_purchase_evidence_for_account(
+        self,
+        *,
+        account_id: str,
+        limit: int = 5,
+    ) -> list[PurchaseEvidenceBundle]: ...
+
     async def record_launch_mail_consent(
         self,
         *,
@@ -1466,63 +1473,94 @@ class InMemoryRepository:
     ) -> PurchaseEvidenceBundle:
         account = await self.account_for_owner(owner_user_id)
         async with self._lock:
-            purchase = self._purchases.get((account.id, purchase_id))
-            if purchase is None:
-                raise PurchaseNotFound
-            documents = sorted(
+            return self._purchase_evidence_unlocked(account.id, purchase_id).model_copy(
+                deep=True
+            )
+
+    async def recent_purchase_evidence_for_account(
+        self,
+        *,
+        account_id: str,
+        limit: int = 5,
+    ) -> list[PurchaseEvidenceBundle]:
+        validate_purchase_list_limit(limit)
+        async with self._lock:
+            if account_id not in self._accounts:
+                raise AccountNotProvisioned
+            purchases = sorted(
                 (
-                    document
-                    for (account_id, _), document in self._purchase_documents.items()
-                    if account_id == account.id and document.purchase_id == purchase_id
+                    purchase
+                    for (scope, _), purchase in self._purchases.items()
+                    if scope == account_id
                 ),
-                key=lambda document: document.revision_number,
-            )
-            document_ids = {document.id for document in documents}
-            normalizations = sorted(
-                (
-                    normalization
-                    for (account_id, _), normalization in (
-                        self._purchase_normalizations.items()
-                    )
-                    if account_id == account.id
-                    and normalization.purchase_id == purchase_id
-                    and normalization.document_id in document_ids
-                ),
-                key=lambda normalization: normalization.document_revision_number,
-            )
-            items = sorted(
-                (
-                    item
-                    for (account_id, _), item in self._purchase_items.items()
-                    if account_id == account.id and item.purchase_id == purchase_id
-                ),
-                key=lambda item: (item.document_revision_number, item.ordinal),
-            )
-            document_revisions = {
-                document.id: document.revision_number for document in documents
-            }
-            charges = sorted(
-                (
-                    charge
-                    for (account_id, _), charge in self._purchase_charges.items()
-                    if account_id == account.id and charge.purchase_id == purchase_id
-                ),
-                key=lambda charge: (
-                    document_revisions.get(charge.document_id, 0),
-                    charge.kind.value,
-                ),
-            )
-            reconciliation = self._purchase_reconciliations.get(
-                (account.id, purchase_id)
-            )
-            return PurchaseEvidenceBundle(
-                purchase=purchase,
-                documents=documents,
-                normalizations=normalizations,
-                items=items,
-                charges=charges,
-                reconciliation=reconciliation,
-            ).model_copy(deep=True)
+                key=lambda purchase: purchase.updated_at,
+                reverse=True,
+            )[:limit]
+            return [
+                self._purchase_evidence_unlocked(account_id, purchase.id).model_copy(
+                    deep=True
+                )
+                for purchase in purchases
+            ]
+
+    def _purchase_evidence_unlocked(
+        self,
+        account_id: str,
+        purchase_id: str,
+    ) -> PurchaseEvidenceBundle:
+        purchase = self._purchases.get((account_id, purchase_id))
+        if purchase is None:
+            raise PurchaseNotFound
+        documents = sorted(
+            (
+                document
+                for (scope, _), document in self._purchase_documents.items()
+                if scope == account_id and document.purchase_id == purchase_id
+            ),
+            key=lambda document: document.revision_number,
+        )
+        document_ids = {document.id for document in documents}
+        normalizations = sorted(
+            (
+                normalization
+                for (scope, _), normalization in self._purchase_normalizations.items()
+                if scope == account_id
+                and normalization.purchase_id == purchase_id
+                and normalization.document_id in document_ids
+            ),
+            key=lambda normalization: normalization.document_revision_number,
+        )
+        items = sorted(
+            (
+                item
+                for (scope, _), item in self._purchase_items.items()
+                if scope == account_id and item.purchase_id == purchase_id
+            ),
+            key=lambda item: (item.document_revision_number, item.ordinal),
+        )
+        document_revisions = {
+            document.id: document.revision_number for document in documents
+        }
+        charges = sorted(
+            (
+                charge
+                for (scope, _), charge in self._purchase_charges.items()
+                if scope == account_id and charge.purchase_id == purchase_id
+            ),
+            key=lambda charge: (
+                document_revisions.get(charge.document_id, 0),
+                charge.kind.value,
+            ),
+        )
+        reconciliation = self._purchase_reconciliations.get((account_id, purchase_id))
+        return PurchaseEvidenceBundle(
+            purchase=purchase,
+            documents=documents,
+            normalizations=normalizations,
+            items=items,
+            charges=charges,
+            reconciliation=reconciliation,
+        )
 
     async def record_launch_mail_consent(
         self,

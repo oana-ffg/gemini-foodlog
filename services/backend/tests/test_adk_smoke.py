@@ -43,6 +43,7 @@ def test_trace_request_includes_the_application_owned_prompt_tools_and_schema() 
     assert request["tools"] == [
         "get_current_event_evidence",
         "get_recent_meals",
+        "get_recent_purchases",
         "get_active_user_context",
         "get_unresolved_reviews",
         "list_household_knowledge",
@@ -61,9 +62,10 @@ def test_trace_request_includes_the_application_owned_prompt_tools_and_schema() 
 
 
 def test_prompt_explicitly_couples_questions_to_uncertain_confidence() -> None:
-    assert PROMPT_VERSION == "food-event-v7"
+    assert PROMPT_VERSION == "food-event-v8"
     assert "call get_current_event_evidence" in INSTRUCTION
     assert "get_recent_meals" in INSTRUCTION
+    assert "get_recent_purchases" in INSTRUCTION
     assert "get_active_user_context" in INSTRUCTION
     assert "get_unresolved_reviews" in INSTRUCTION
     assert "list_household_knowledge" in INSTRUCTION
@@ -116,6 +118,10 @@ def test_validation_accepts_only_exact_context_ids_returned_by_agent_tools() -> 
                     response={"meals": [{"event_id": "recent-event-001"}]},
                 ),
                 types.Part.from_function_response(
+                    name="get_recent_purchases",
+                    response={"purchases": [{"purchase_id": "purchase-001"}]},
+                ),
+                types.Part.from_function_response(
                     name="get_active_user_context",
                     response={"notes": [{"note_id": "note-001"}]},
                 ),
@@ -132,6 +138,12 @@ def test_validation_accepts_only_exact_context_ids_returned_by_agent_tools() -> 
             "source_id": "recent-event-001",
         },
         {
+            "id": "ctx_purchase",
+            "description": "A final receipt contains a plausible ingredient.",
+            "source_kind": "purchase",
+            "source_id": "purchase-001",
+        },
+        {
             "id": "ctx_note",
             "description": "A time-bounded note says duck may be cooked tonight.",
             "source_kind": "user_note",
@@ -143,7 +155,15 @@ def test_validation_accepts_only_exact_context_ids_returned_by_agent_tools() -> 
         event_id="event-001", capture_ids=["capture-001"]
     ), source_ids)
 
-    payload["contextual_evidence"][1]["source_id"] = "invented-note"
+    payload["contextual_evidence"][1]["source_id"] = "invented-purchase"
+    invented = ActivityMealInferenceV1.model_validate(payload)
+    with pytest.raises(RuntimeError, match="invented purchase source ID"):
+        _validate_source_identities(invented, event_bundle(
+            event_id="event-001", capture_ids=["capture-001"]
+        ), source_ids)
+
+    payload["contextual_evidence"][1]["source_id"] = "purchase-001"
+    payload["contextual_evidence"][2]["source_id"] = "invented-note"
     invented = ActivityMealInferenceV1.model_validate(payload)
     with pytest.raises(RuntimeError, match="invented user_note source ID"):
         _validate_source_identities(invented, event_bundle(

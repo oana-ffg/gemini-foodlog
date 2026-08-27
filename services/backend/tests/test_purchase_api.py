@@ -208,11 +208,22 @@ def test_firestore_purchase_projection_is_account_scoped() -> None:
         evidence = await repository.purchase_evidence_for_owner(
             "firestore-owner", owner_purchase.id
         )
+        recent_evidence = await repository.recent_purchase_evidence_for_account(
+            account_id=owner_purchase.account_id,
+            limit=5,
+        )
 
         assert [purchase.id for purchase in listed] == [owner_purchase.id]
         assert evidence.purchase.id == owner_purchase.id
         assert len(evidence.documents) == len(evidence.normalizations) == 1
         assert len(evidence.items) == len(evidence.charges) == 1
+        assert [bundle.purchase.id for bundle in recent_evidence] == [
+            owner_purchase.id
+        ]
+        assert all(
+            bundle.purchase.account_id == owner_purchase.account_id
+            for bundle in recent_evidence
+        )
         with pytest.raises(PurchaseNotFound):
             await repository.purchase_evidence_for_owner(
                 "firestore-owner", foreign_purchase.id

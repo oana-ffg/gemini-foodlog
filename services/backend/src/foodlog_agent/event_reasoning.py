@@ -132,6 +132,7 @@ def application_visible_model_request(
         "tools": [
             "get_current_event_evidence",
             "get_recent_meals",
+            "get_recent_purchases",
             "get_active_user_context",
             "get_unresolved_reviews",
             "list_household_knowledge",
@@ -188,6 +189,14 @@ def _tool_context_source_ids(event: Event) -> dict[ContextSourceKind, set[str]]:
             for meal in response.response.get("meals", []):
                 if isinstance(meal, dict) and isinstance(meal.get("event_id"), str):
                     source_ids[ContextSourceKind.RECENT_MEAL].add(meal["event_id"])
+        elif response.name == "get_recent_purchases":
+            for purchase in response.response.get("purchases", []):
+                if isinstance(purchase, dict) and isinstance(
+                    purchase.get("purchase_id"), str
+                ):
+                    source_ids[ContextSourceKind.PURCHASE].add(
+                        purchase["purchase_id"]
+                    )
         elif response.name == "get_active_user_context":
             for note in response.response.get("notes", []):
                 if isinstance(note, dict) and isinstance(note.get("note_id"), str):

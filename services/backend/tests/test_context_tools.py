@@ -213,6 +213,9 @@ def test_context_tools_are_bounded_active_provenanced_and_account_scoped() -> No
             knowledge_service=KnowledgeToolsService(repository=repository),
         )
         assert smoke["recent_meal_count"] == CONTEXT_TOOL_RESULT_LIMIT
+        assert smoke["purchase_context_available"] is False
+        assert smoke["recent_purchase_count"] == 0
+        assert smoke["recent_purchase_ids"] == []
         assert smoke["active_note_ids"] == [active.id]
         assert smoke["unresolved_meal_ids"] == [provisional.id]
         assert smoke["open_question_ids"] == [question.id]
@@ -230,6 +233,7 @@ def test_context_tools_are_bounded_active_provenanced_and_account_scoped() -> No
             assert not response.get("meals")
             assert not response.get("notes")
             assert not response.get("questions")
+            assert not response.get("purchases")
 
     asyncio.run(scenario())
 
@@ -240,6 +244,7 @@ def test_context_tool_declarations_expose_no_model_controlled_account_scope() ->
     )
     assert [tool.name for tool in tools] == [
         "get_recent_meals",
+        "get_recent_purchases",
         "get_active_user_context",
         "get_unresolved_reviews",
     ]

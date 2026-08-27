@@ -1008,9 +1008,53 @@ class FirestoreRepository:
         if purchase.account_id != account.id:
             raise PurchaseNotFound
 
+        return await self._purchase_evidence_for_account(
+            account_id=account.id,
+            purchase=purchase,
+        )
+
+    async def recent_purchase_evidence_for_account(
+        self,
+        *,
+        account_id: str,
+        limit: int = 5,
+    ) -> list[PurchaseEvidenceBundle]:
+        validate_purchase_list_limit(limit)
+        account = await self._account(account_id).get()
+        if not account.exists or account.get("status") != "active":
+            raise AccountNotProvisioned
+        query = (
+            self._collection(account_id, "purchases")
+            .order_by("updated_at", direction=firestore.Query.DESCENDING)
+            .limit(limit)
+        )
+        purchases = [_model(snapshot, Purchase) async for snapshot in query.stream()]
+        if any(purchase.account_id != account_id for purchase in purchases):
+            raise CrossAccountAccess
+        return list(
+            await asyncio.gather(
+                *(
+                    self._purchase_evidence_for_account(
+                        account_id=account_id,
+                        purchase=purchase,
+                    )
+                    for purchase in purchases
+                )
+            )
+        )
+
+    async def _purchase_evidence_for_account(
+        self,
+        *,
+        account_id: str,
+        purchase: Purchase,
+    ) -> PurchaseEvidenceBundle:
+        if purchase.account_id != account_id:
+            raise CrossAccountAccess
+
         async def purchase_collection_models(name: str, model_type):
-            query = self._collection(account.id, name).where(
-                filter=FieldFilter("purchase_id", "==", purchase_id)
+            query = self._collection(account_id, name).where(
+                filter=FieldFilter("purchase_id", "==", purchase.id)
             )
             return [
                 _model(snapshot, model_type)
@@ -1026,8 +1070,8 @@ class FirestoreRepository:
         items = await purchase_collection_models("purchase_items", PurchaseItem)
         charges = await purchase_collection_models("purchase_charges", PurchaseCharge)
         reconciliation_snapshot = await (
-            self._collection(account.id, "purchase_reconciliations")
-            .document(purchase_id)
+            self._collection(account_id, "purchase_reconciliations")
+            .document(purchase.id)
             .get()
         )
         reconciliation = (

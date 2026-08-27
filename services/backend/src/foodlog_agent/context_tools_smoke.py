@@ -30,6 +30,7 @@ async def run_smoke(
     context = SmokeContext(account_id=account_id)
     active_service = service or production_context_tools_service()
     recent = await active_service.get_recent_meals(context=context)
+    recent_purchases = await active_service.get_recent_purchases(context=context)
     active_context = await active_service.get_active_user_context(context=context)
     unresolved = await active_service.get_unresolved_reviews(context=context)
     active_knowledge_service = knowledge_service or production_knowledge_tools_service()
@@ -49,6 +50,11 @@ async def run_smoke(
         "recent_meal_count": len(recent.meals),
         "recent_meal_ids": [meal.meal_id for meal in recent.meals],
         "recent_event_ids": [meal.event_id for meal in recent.meals],
+        "purchase_context_available": recent_purchases.available,
+        "recent_purchase_count": len(recent_purchases.purchases),
+        "recent_purchase_ids": [
+            purchase.purchase_id for purchase in recent_purchases.purchases
+        ],
         "active_note_count": len(active_context.notes),
         "active_note_ids": [note.note_id for note in active_context.notes],
         "unresolved_meal_count": len(unresolved.meals),
