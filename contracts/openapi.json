@@ -587,6 +587,79 @@
         "title": "Confidence",
         "type": "string"
       },
+      "ConsentPreferences": {
+        "properties": {
+          "launch_mail_opt_in": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Launch Mail Opt In"
+          },
+          "launch_mail_policy_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Launch Mail Policy Version"
+          },
+          "launch_mail_updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Launch Mail Updated At"
+          },
+          "waitlist_policy_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waitlist Policy Version"
+          },
+          "waitlist_status": {
+            "default": "not_joined",
+            "enum": [
+              "not_joined",
+              "active",
+              "withdrawn"
+            ],
+            "title": "Waitlist Status",
+            "type": "string"
+          },
+          "waitlist_updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waitlist Updated At"
+          }
+        },
+        "title": "ConsentPreferences",
+        "type": "object"
+      },
       "ContextEvidence": {
         "additionalProperties": false,
         "properties": {
@@ -3159,19 +3232,33 @@
             "type": "string"
           },
           "email_normalized": {
-            "title": "Email Normalized",
-            "type": "string"
-          },
-          "firebase_uid": {
-            "title": "Firebase Uid",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email Normalized"
           },
           "id": {
             "title": "Id",
             "type": "string"
           },
+          "last_withdrawn_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Withdrawn At"
+          },
           "mailing_list_opt_in": {
-            "const": true,
             "default": true,
             "title": "Mailing List Opt In",
             "type": "boolean"
@@ -3187,15 +3274,28 @@
             "type": "string"
           },
           "status": {
-            "const": "active",
             "default": "active",
+            "enum": [
+              "active",
+              "withdrawn"
+            ],
             "title": "Status",
             "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "withdrawal_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Withdrawal Count",
+            "type": "integer"
           }
         },
         "required": [
           "id",
-          "firebase_uid",
           "email_normalized",
           "policy_version"
         ],
@@ -3638,6 +3738,52 @@
         "summary": "Get Capture Image"
       }
     },
+    "/v1/consents": {
+      "get": {
+        "operationId": "get_consent_preferences_v1_consents_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsentPreferences"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Consent Preferences"
+      }
+    },
     "/v1/consents/launch-mail": {
       "post": {
         "operationId": "record_launch_mail_consent_v1_consents_launch_mail_post",
@@ -3692,6 +3838,52 @@
           }
         },
         "summary": "Record Launch Mail Consent"
+      }
+    },
+    "/v1/consents/launch-mail/withdraw": {
+      "post": {
+        "operationId": "withdraw_launch_mail_consent_v1_consents_launch_mail_withdraw_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LaunchMailConsent"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Withdraw Launch Mail Consent"
       }
     },
     "/v1/context-notes": {
@@ -4652,6 +4844,52 @@
           }
         },
         "summary": "Join Waitlist"
+      }
+    },
+    "/v1/waitlist/withdraw": {
+      "post": {
+        "operationId": "withdraw_waitlist_v1_waitlist_withdraw_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WaitlistEntry"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Withdraw Waitlist"
       }
     }
   }
