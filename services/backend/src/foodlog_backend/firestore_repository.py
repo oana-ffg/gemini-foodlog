@@ -655,7 +655,7 @@ class FirestoreRepository:
             if (
                 not raw_mail_snapshot.exists
                 or raw_mail_data.get("account_id") != candidate.account_id
-                or raw_mail_data.get("status") != "published"
+                or raw_mail_data.get("status") not in {"stored", "published"}
                 or raw_mail_data.get("content_sha256") != candidate.raw_content_sha256
             ):
                 raise RawMailNotFound

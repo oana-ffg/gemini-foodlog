@@ -212,14 +212,14 @@ def test_firestore_transaction_connects_only_exact_business_aliases() -> None:
             order_reference="order-900",
             invoice_reference="invoice-901",
         )
-        for item in (order, receipt):
+        for item, transport_status in ((order, "published"), (receipt, "stored")):
             await (
                 account_ref.collection("raw_mail")
                 .document(item.raw_mail_id)
                 .set(
                     {
                         "account_id": account_id,
-                        "status": "published",
+                        "status": transport_status,
                         "content_sha256": item.raw_content_sha256,
                     }
                 )
