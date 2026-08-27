@@ -9,7 +9,27 @@ from google.cloud.firestore_v1.async_client import AsyncClient
 
 from foodlog_backend.audit import build_audit_event
 from foodlog_backend.firestore_repository import FirestoreRepository
-from foodlog_backend.models import AuditAction, AuditActorKind, AuditSource
+from foodlog_backend.models import AuditAction, AuditActorKind, AuditPurpose, AuditSource
+
+
+def test_operator_audit_sessions_are_unique_but_each_session_is_idempotent() -> None:
+    arguments = {
+        "account_id": "account-a",
+        "action": AuditAction.OPERATOR_DIAGNOSTIC_READ,
+        "actor_kind": AuditActorKind.OPERATOR,
+        "source": AuditSource.OPERATOR_CLI,
+        "subject_kind": "activity_event",
+        "subject_id": "event-a",
+        "purpose": AuditPurpose.INCIDENT_TRIAGE,
+    }
+
+    first = build_audit_event(**arguments, occurrence_id="session-a")
+    first_retry = build_audit_event(**arguments, occurrence_id="session-a")
+    second = build_audit_event(**arguments, occurrence_id="session-b")
+
+    assert first.id == first_retry.id
+    assert first.id != second.id
+    assert first.purpose == AuditPurpose.INCIDENT_TRIAGE
 
 
 @pytest.mark.skipif(

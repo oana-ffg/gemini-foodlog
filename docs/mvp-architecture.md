@@ -813,6 +813,18 @@ metadata without retaining the corresponding hidden content.
 
 Trace reads are an operator capability and must be audited and access-controlled. Any retained trace that contains account data is part of that account's personal-data inventory and must be considered in account export, future deletion, and retention behavior. Secrets, bearer tokens, camera credentials, and raw authorization headers are always redacted before persistence even when full traces are enabled.
 
+The prototype operator path is a local ADC-backed command, not an administrative
+web endpoint. It requires one exact account ID, one exact activity-event ID, and a
+versioned diagnostic purpose. Before reading evidence it appends an immutable,
+session-specific audit event. It may return Firestore status, private-object
+metadata, trace integrity counts, and allowlisted correlated operational fields;
+it never returns image bytes, MIME bodies, prompts, responses, user free text, or
+hidden reasoning. The command has no tenant impersonation, bulk listing, replay,
+acknowledgement, or mutation mode. Google Cloud Audit Logs independently retain the
+actual authenticated principal that performed the underlying reads. The exact
+contract and production command are recorded in the
+[operator diagnostics runbook](operator-diagnostics.md).
+
 Full trace payloads are stored as compressed JSON objects under account-scoped paths in private Cloud Storage. Firestore stores searchable trace metadata, lifecycle state, and the GCS object reference. This avoids Firestore's per-document size limit, uses infrastructure the MVP already operates, and adds no fixed-cost database service. Trace content is not duplicated into ordinary Cloud Logging; operational logs contain trace IDs, timing, token and cost metrics, status, and redacted errors.
 
 Every API and worker request emits one `foodlog_operational_event_v1` JSON record
