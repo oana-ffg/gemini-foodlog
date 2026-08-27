@@ -55,10 +55,29 @@ class _VisibleTextParser(HTMLParser):
         del attrs
         if tag.casefold() in {"script", "style"}:
             self.hidden_depth += 1
+        elif not self.hidden_depth and tag.casefold() in {
+            "br",
+            "div",
+            "li",
+            "p",
+            "td",
+            "th",
+            "tr",
+        }:
+            self.parts.append("\n")
 
     def handle_endtag(self, tag: str) -> None:
         if tag.casefold() in {"script", "style"} and self.hidden_depth:
             self.hidden_depth -= 1
+        elif not self.hidden_depth and tag.casefold() in {
+            "div",
+            "li",
+            "p",
+            "td",
+            "th",
+            "tr",
+        }:
+            self.parts.append("\n")
 
     def handle_data(self, data: str) -> None:
         if not self.hidden_depth:
@@ -125,7 +144,7 @@ def _decode_text_part(part: Message) -> str:
         return payload.decode("utf-8", errors="replace")
 
 
-def _visible_text(message: Message) -> str:
+def visible_message_text(message: Message) -> str:
     plain: list[str] = []
     html: list[str] = []
     for part in message.walk():
@@ -138,7 +157,7 @@ def _visible_text(message: Message) -> str:
         elif content_type == "text/html":
             parser = _VisibleTextParser()
             parser.feed(decoded)
-            html.append(" ".join(parser.parts))
+            html.append("".join(parser.parts))
     return "\n".join(plain or html)[:MAX_CLASSIFIER_TEXT_CHARS]
 
 
@@ -179,7 +198,7 @@ def classify_nemlig_purchase_email(
         )
 
     subject = _normalized_subject(message)
-    body = _visible_text(message)
+    body = visible_message_text(message)
     raw_content_sha256 = sha256(raw_message).hexdigest()
     if subject == ORDER_SUBJECT:
         match = ORDER_REFERENCE_PATTERN.search(body)

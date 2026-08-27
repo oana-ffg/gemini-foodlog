@@ -13,6 +13,7 @@ from .purchase_mail import (
     classify_nemlig_purchase_email,
     raw_mail_object_key,
 )
+from .purchase_normalization import parse_purchase_document
 from .repository import Repository
 from .storage import GCSObjectStore, ObjectStore
 
@@ -73,7 +74,17 @@ def create_mail_worker_app(
             )
             if classification.outcome == MailClassificationOutcome.PURCHASE_DOCUMENT:
                 assert classification.candidate is not None
-                await active_repository.attach_purchase_document(classification.candidate)
+                identity = await active_repository.attach_purchase_document(
+                    classification.candidate
+                )
+                parsed = parse_purchase_document(
+                    raw_message,
+                    kind=identity.document.kind,
+                )
+                await active_repository.normalize_purchase_document(
+                    document=identity.document,
+                    parsed=parsed,
+                )
         except Exception as error:
             LOGGER.exception(
                 "Purchase-mail classification failed for account %s mail %s",

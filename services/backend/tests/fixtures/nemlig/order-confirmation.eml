@@ -3,15 +3,21 @@ To: foodlog-test@example.test
 Message-ID: <synthetic-order-confirmation@example.test>
 Subject: Tak for din ordre
 Authentication-Results: mx.example.test; dkim=pass header.d=nemlig.com; dmarc=pass header.from=nemlig.com
-Content-Type: text/plain; charset=utf-8
+Content-Type: text/html; charset=utf-8
 Content-Transfer-Encoding: 8bit
 
-Tak for din ordre
-
-Du kan tilføje eller fjerne varer fra din ordre frem til den viste frist.
-
-Ordrenummer:
-9000000001
-
-Ordreoversigt
-Dette er en syntetisk testmail uden person- eller købsdata.
+<h1>Tak for din ordre</h1>
+<p>Du kan tilføje eller fjerne varer fra din ordre frem til den viste frist.</p>
+<p>Ordrenummer:</p><p>9000000001</p>
+<h2>Ordreoversigt</h2>
+<table>
+  <tr><th>Vare</th><th>Antal</th><th>Pris pr. stk</th></tr>
+  <tr><td>Syntetisk roedt aeble</td><td>2</td><td>4,50 kr</td><td>9,00 kr</td></tr>
+  <tr><td>* Syntetisk havredrik</td><td>1</td><td>19,95 kr</td><td>19,95 kr</td></tr>
+</table>
+<p>Subtotal</p><p>28,95 kr</p>
+<p>Pant: 0 enheder</p><p>0,00 kr</p>
+<p>Pakkegebyr: 1 zone</p><p>7,50 kr</p>
+<p>Fragt</p><p>0,00 kr</p>
+<p>Kortgebyr</p><p>0,00 kr</p>
+<p>Total</p><p>36,45 kr</p>

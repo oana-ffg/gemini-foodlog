@@ -14,7 +14,16 @@ from foodlog_backend.errors import (
     RawMailNotFound,
 )
 from foodlog_backend.firestore_repository import FirestoreRepository
-from foodlog_backend.models import PurchaseDocumentCandidate, PurchaseDocumentKind
+from foodlog_backend.models import (
+    ParsedPurchaseDocument,
+    PurchaseChargeDraft,
+    PurchaseChargeKind,
+    PurchaseDocumentCandidate,
+    PurchaseDocumentKind,
+    PurchaseItemDisposition,
+    PurchaseItemDraft,
+    PurchaseReconciliationDisposition,
+)
 from foodlog_backend.repository import InMemoryRepository, purchase_identity_alias_id
 
 
@@ -225,10 +234,61 @@ def test_firestore_transaction_connects_only_exact_business_aliases() -> None:
         first = await repository.attach_purchase_document(order)
         second = await repository.attach_purchase_document(receipt)
         retry = await repository.attach_purchase_document(receipt)
+        confirmation_parsed = ParsedPurchaseDocument(
+            parser_version="test-v1",
+            kind=PurchaseDocumentKind.ORDER_CONFIRMATION,
+            items=[
+                PurchaseItemDraft(
+                    ordinal=1,
+                    name="Synthetic apple",
+                    normalized_name="synthetic apple",
+                    disposition=PurchaseItemDisposition.ORDERED,
+                    quantity=2,
+                    unit_price_ore=450,
+                    line_total_ore=900,
+                )
+            ],
+            charges=[
+                PurchaseChargeDraft(
+                    kind=PurchaseChargeKind.TOTAL,
+                    amount_ore=900,
+                    description="Total",
+                )
+            ],
+        )
+        final_parsed = confirmation_parsed.model_copy(
+            update={
+                "kind": PurchaseDocumentKind.FINAL_RECEIPT,
+                "items": [
+                    confirmation_parsed.items[0].model_copy(
+                        update={"disposition": PurchaseItemDisposition.DELIVERED}
+                    )
+                ],
+            }
+        )
+        confirmation_normalization = await repository.normalize_purchase_document(
+            document=first.document,
+            parsed=confirmation_parsed,
+        )
+        final_normalization = await repository.normalize_purchase_document(
+            document=second.document,
+            parsed=final_parsed,
+        )
+        normalization_retry = await repository.normalize_purchase_document(
+            document=second.document,
+            parsed=final_parsed,
+        )
 
         assert first.purchase.id == second.purchase.id == retry.purchase.id
         assert second.purchase.revision_count == retry.purchase.revision_count == 2
         assert retry.duplicate is True
+        assert confirmation_normalization.duplicate is False
+        assert final_normalization.duplicate is False
+        assert normalization_retry.duplicate is True
+        assert final_normalization.reconciliation.unresolved_item_count == 0
+        assert final_normalization.reconciliation.items[0].disposition == (
+            PurchaseReconciliationDisposition.DELIVERED_AS_ORDERED
+        )
         order_alias_id = purchase_identity_alias_id(
             merchant="nemlig",
             kind="order",
@@ -246,6 +306,15 @@ def test_firestore_transaction_connects_only_exact_business_aliases() -> None:
             order.raw_mail_id,
             receipt.raw_mail_id,
         }
+        normalizations = [
+            snapshot
+            async for snapshot in account_ref.collection("purchase_normalizations").stream()
+        ]
+        persisted_items = [
+            snapshot async for snapshot in account_ref.collection("purchase_items").stream()
+        ]
+        assert len(normalizations) == 2
+        assert len(persisted_items) == 2
         database.close()
 
     asyncio.run(scenario())

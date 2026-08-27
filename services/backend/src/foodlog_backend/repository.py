@@ -37,6 +37,7 @@ from .errors import (
     ModelUsageExceedsReservation,
     PurchaseDocumentConflict,
     PurchaseIdentityConflict,
+    PurchaseNormalizationConflict,
     QuestionAlreadyAnswered,
     QuestionNotFound,
     QuestionSuperseded,
@@ -100,12 +101,19 @@ from .models import (
     ModelSpendReservation,
     ModelUsageRecord,
     NotificationOutboxStatus,
+    ParsedPurchaseDocument,
     PreparationMethodCorrection,
     Purchase,
+    PurchaseCharge,
     PurchaseDocument,
     PurchaseDocumentCandidate,
+    PurchaseDocumentKind,
+    PurchaseDocumentNormalization,
     PurchaseIdentityAlias,
     PurchaseIdentityResult,
+    PurchaseItem,
+    PurchaseNormalizationResult,
+    PurchaseReconciliation,
     QuestionAnswerRequest,
     QuestionAnswerResult,
     QuestionEvidenceKind,
@@ -125,6 +133,10 @@ from .models import (
     capture_grouping_job_id,
     event_inference_job_id,
     utc_now,
+)
+from .purchase_normalization import (
+    materialize_purchase_document_normalization,
+    reconcile_purchase_items,
 )
 
 
@@ -524,6 +536,13 @@ class Repository(Protocol):
         candidate: PurchaseDocumentCandidate,
     ) -> PurchaseIdentityResult: ...
 
+    async def normalize_purchase_document(
+        self,
+        *,
+        document: PurchaseDocument,
+        parsed: ParsedPurchaseDocument,
+    ) -> PurchaseNormalizationResult: ...
+
     async def record_launch_mail_consent(
         self,
         *,
@@ -893,6 +912,14 @@ class InMemoryRepository:
         self._purchases: dict[tuple[str, str], Purchase] = {}
         self._purchase_documents: dict[tuple[str, str], PurchaseDocument] = {}
         self._purchase_aliases: dict[tuple[str, str], PurchaseIdentityAlias] = {}
+        self._purchase_normalizations: dict[
+            tuple[str, str], PurchaseDocumentNormalization
+        ] = {}
+        self._purchase_items: dict[tuple[str, str], PurchaseItem] = {}
+        self._purchase_charges: dict[tuple[str, str], PurchaseCharge] = {}
+        self._purchase_reconciliations: dict[
+            tuple[str, str], PurchaseReconciliation
+        ] = {}
         self._device_cameras: dict[str, DeviceCamera] = {}
         self._device_credentials: dict[str, DeviceCredentialRecord] = {}
         self._cameras: dict[str, BrowserCamera] = {}
@@ -1290,14 +1317,105 @@ class InMemoryRepository:
                 invoice_reference=candidate.invoice_reference,
                 created_at=now,
             )
+            latest_update = {}
+            if candidate.kind == PurchaseDocumentKind.ORDER_CONFIRMATION:
+                latest_update["latest_confirmation_document_id"] = document.id
+            elif candidate.kind == PurchaseDocumentKind.FINAL_RECEIPT:
+                latest_update["latest_final_document_id"] = document.id
             purchase = purchase.model_copy(
-                update={"revision_count": revision_number, "updated_at": now}
+                update={
+                    "revision_count": revision_number,
+                    "updated_at": now,
+                    **latest_update,
+                }
             )
             self._purchases[(candidate.account_id, purchase.id)] = purchase
             self._purchase_documents[document_key] = document
             return PurchaseIdentityResult(
                 purchase=purchase.model_copy(deep=True),
                 document=document.model_copy(deep=True),
+                duplicate=False,
+            )
+
+    async def normalize_purchase_document(
+        self,
+        *,
+        document: PurchaseDocument,
+        parsed: ParsedPurchaseDocument,
+    ) -> PurchaseNormalizationResult:
+        normalization, items, charges = materialize_purchase_document_normalization(
+            document=document,
+            parsed=parsed,
+        )
+        async with self._lock:
+            source = self._purchase_documents.get((document.account_id, document.id))
+            purchase = self._purchases.get((document.account_id, document.purchase_id))
+            if source != document or purchase is None:
+                raise PurchaseNormalizationConflict
+            existing = self._purchase_normalizations.get(
+                (document.account_id, document.id)
+            )
+            if existing is not None:
+                if (
+                    existing.model_dump(exclude={"created_at"})
+                    != normalization.model_dump(exclude={"created_at"})
+                ):
+                    raise PurchaseNormalizationConflict
+                persisted_items = [
+                    self._purchase_items[(document.account_id, item.id)] for item in items
+                ]
+                persisted_charges = [
+                    self._purchase_charges[(document.account_id, charge.id)]
+                    for charge in charges
+                ]
+                reconciliation = self._purchase_reconciliations.get(
+                    (document.account_id, document.purchase_id)
+                )
+                if reconciliation is None:
+                    raise PurchaseNormalizationConflict
+                return PurchaseNormalizationResult(
+                    normalization=existing.model_copy(deep=True),
+                    items=[item.model_copy(deep=True) for item in persisted_items],
+                    charges=[charge.model_copy(deep=True) for charge in persisted_charges],
+                    reconciliation=reconciliation.model_copy(deep=True),
+                    duplicate=True,
+                )
+
+            self._purchase_normalizations[(document.account_id, document.id)] = normalization
+            for item in items:
+                self._purchase_items[(document.account_id, item.id)] = item
+            for charge in charges:
+                self._purchase_charges[(document.account_id, charge.id)] = charge
+
+            confirmation_id = purchase.latest_confirmation_document_id
+            final_id = purchase.latest_final_document_id
+            confirmation_items = [
+                item
+                for (account_id, _), item in self._purchase_items.items()
+                if account_id == document.account_id
+                and item.document_id == confirmation_id
+            ]
+            final_items = [
+                item
+                for (account_id, _), item in self._purchase_items.items()
+                if account_id == document.account_id and item.document_id == final_id
+            ]
+            reconciliation = reconcile_purchase_items(
+                account_id=document.account_id,
+                purchase_id=document.purchase_id,
+                confirmation_document_id=(confirmation_id if confirmation_items else None),
+                confirmation_items=confirmation_items,
+                final_document_id=final_id if final_items else None,
+                final_items=final_items,
+            )
+            self._purchase_reconciliations[(document.account_id, document.purchase_id)] = (
+                reconciliation
+            )
+            return PurchaseNormalizationResult(
+                normalization=normalization.model_copy(deep=True),
+                items=[item.model_copy(deep=True) for item in items],
+                charges=[charge.model_copy(deep=True) for charge in charges],
+                reconciliation=reconciliation.model_copy(deep=True),
                 duplicate=False,
             )
 

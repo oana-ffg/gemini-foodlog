@@ -306,6 +306,27 @@ class PurchaseDocumentKind(StrEnum):
     FINAL_RECEIPT = "final_receipt"
 
 
+class PurchaseItemDisposition(StrEnum):
+    ORDERED = "ordered"
+    DELIVERED = "delivered"
+
+
+class PurchaseChargeKind(StrEnum):
+    ITEMS_SUBTOTAL = "items_subtotal"
+    DEPOSIT = "deposit"
+    PACKING_FEE = "packing_fee"
+    DELIVERY_FEE = "delivery_fee"
+    CARD_FEE = "card_fee"
+    TOTAL = "total"
+
+
+class PurchaseReconciliationDisposition(StrEnum):
+    DELIVERED_AS_ORDERED = "delivered_as_ordered"
+    QUANTITY_CHANGED = "quantity_changed"
+    REMOVED_OR_UNRESOLVED = "removed_or_unresolved"
+    ADDED_OR_UNRESOLVED_SUBSTITUTION = "added_or_unresolved_substitution"
+
+
 class Account(BaseModel):
     id: str
     owner_user_id: str
@@ -371,6 +392,14 @@ class Purchase(BaseModel):
     account_id: str = Field(min_length=1, max_length=128)
     merchant: Literal["nemlig"] = "nemlig"
     revision_count: int = Field(default=0, ge=0)
+    latest_confirmation_document_id: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    latest_final_document_id: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -402,6 +431,124 @@ class PurchaseIdentityAlias(BaseModel):
 class PurchaseIdentityResult(BaseModel):
     purchase: Purchase
     document: PurchaseDocument
+    duplicate: bool
+
+
+class PurchaseItemDraft(BaseModel):
+    ordinal: int = Field(ge=1, le=250)
+    name: str = Field(min_length=1, max_length=240)
+    normalized_name: str = Field(min_length=1, max_length=240)
+    disposition: PurchaseItemDisposition
+    quantity: int = Field(ge=1, le=1_000)
+    category: str | None = Field(default=None, min_length=1, max_length=120)
+    unit_description: str | None = Field(default=None, min_length=1, max_length=160)
+    unit_price_ore: int = Field(ge=0, le=100_000_000)
+    included_discount_ore: int | None = Field(default=None, ge=0, le=100_000_000)
+    line_total_ore: int = Field(ge=0, le=100_000_000)
+
+
+class PurchaseChargeDraft(BaseModel):
+    kind: PurchaseChargeKind
+    amount_ore: int = Field(ge=0, le=100_000_000)
+    description: str = Field(min_length=1, max_length=120)
+
+
+class ParsedPurchaseDocument(BaseModel):
+    parser_version: str = Field(min_length=1, max_length=80)
+    kind: PurchaseDocumentKind
+    items: list[PurchaseItemDraft] = Field(max_length=250)
+    charges: list[PurchaseChargeDraft] = Field(max_length=20)
+    included_vat_ore: int | None = Field(default=None, ge=0, le=100_000_000)
+
+    @model_validator(mode="after")
+    def parsed_document_is_internally_consistent(self) -> "ParsedPurchaseDocument":
+        if not self.items:
+            raise ValueError("purchase document must contain at least one item")
+        if [item.ordinal for item in self.items] != list(range(1, len(self.items) + 1)):
+            raise ValueError("purchase item ordinals must be contiguous")
+        charge_kinds = [charge.kind for charge in self.charges]
+        if len(charge_kinds) != len(set(charge_kinds)):
+            raise ValueError("purchase charge kinds must be unique")
+        return self
+
+
+class PurchaseDocumentNormalization(BaseModel):
+    id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    account_id: str = Field(min_length=1, max_length=128)
+    purchase_id: str = Field(min_length=1, max_length=128)
+    document_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    document_revision_number: int = Field(ge=1)
+    document_kind: PurchaseDocumentKind
+    parser_version: str = Field(min_length=1, max_length=80)
+    normalization_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    item_count: int = Field(ge=1, le=250)
+    charge_count: int = Field(ge=0, le=20)
+    included_vat_ore: int | None = Field(default=None, ge=0, le=100_000_000)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class PurchaseItem(BaseModel):
+    id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    account_id: str = Field(min_length=1, max_length=128)
+    purchase_id: str = Field(min_length=1, max_length=128)
+    document_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    document_revision_number: int = Field(ge=1)
+    source_kind: PurchaseDocumentKind
+    ordinal: int = Field(ge=1, le=250)
+    name: str = Field(min_length=1, max_length=240)
+    normalized_name: str = Field(min_length=1, max_length=240)
+    disposition: PurchaseItemDisposition
+    quantity: int = Field(ge=1, le=1_000)
+    category: str | None = Field(default=None, min_length=1, max_length=120)
+    unit_description: str | None = Field(default=None, min_length=1, max_length=160)
+    unit_price_ore: int = Field(ge=0, le=100_000_000)
+    included_discount_ore: int | None = Field(default=None, ge=0, le=100_000_000)
+    line_total_ore: int = Field(ge=0, le=100_000_000)
+
+
+class PurchaseCharge(BaseModel):
+    id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    account_id: str = Field(min_length=1, max_length=128)
+    purchase_id: str = Field(min_length=1, max_length=128)
+    document_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    kind: PurchaseChargeKind
+    amount_ore: int = Field(ge=0, le=100_000_000)
+    description: str = Field(min_length=1, max_length=120)
+
+
+class PurchaseReconciledItem(BaseModel):
+    id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    normalized_name: str = Field(min_length=1, max_length=240)
+    display_name: str = Field(min_length=1, max_length=240)
+    disposition: PurchaseReconciliationDisposition
+    ordered_quantity: int | None = Field(default=None, ge=1, le=1_000)
+    delivered_quantity: int | None = Field(default=None, ge=1, le=1_000)
+    confirmation_item_ids: list[str] = Field(default_factory=list, max_length=20)
+    final_item_ids: list[str] = Field(default_factory=list, max_length=20)
+
+
+class PurchaseReconciliation(BaseModel):
+    id: Literal["current"] = "current"
+    account_id: str = Field(min_length=1, max_length=128)
+    purchase_id: str = Field(min_length=1, max_length=128)
+    confirmation_document_id: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    final_document_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    reconciliation_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    item_count: int = Field(ge=1, le=250)
+    unresolved_item_count: int = Field(ge=0, le=250)
+    has_unresolved_substitution_pairing: bool = False
+    items: list[PurchaseReconciledItem] = Field(min_length=1, max_length=250)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class PurchaseNormalizationResult(BaseModel):
+    normalization: PurchaseDocumentNormalization
+    items: list[PurchaseItem] = Field(min_length=1, max_length=250)
+    charges: list[PurchaseCharge] = Field(max_length=20)
+    reconciliation: PurchaseReconciliation
     duplicate: bool
 
 

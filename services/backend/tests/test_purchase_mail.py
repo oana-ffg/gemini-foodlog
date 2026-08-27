@@ -8,7 +8,10 @@ from fastapi.testclient import TestClient
 
 from foodlog_backend.mail_events import RawMailStoredEventV1
 from foodlog_backend.mail_worker_app import MailWorkerSettings, create_mail_worker_app
-from foodlog_backend.models import PurchaseDocumentKind
+from foodlog_backend.models import (
+    PurchaseDocumentKind,
+    PurchaseReconciliationDisposition,
+)
 from foodlog_backend.purchase_mail import (
     MailClassificationOutcome,
     classify_nemlig_purchase_email,
@@ -98,7 +101,7 @@ def test_invoice_requires_matching_pdf_filename_and_magic_bytes() -> None:
         b"Faktura - 9000000002.pdf",
     )
     wrong_magic = fixture("final-invoice.eml").replace(
-        b"JVBERi0xLjcK",
+        b"JVBERi0xLjMK",
         b"Tk9ULUEtUERG",
     )
 
@@ -165,6 +168,24 @@ def test_mail_worker_preserves_confirmation_then_final_invoice_as_one_purchase()
         for (scope, _), purchase in repository._purchases.items()
         if scope == account_id
     ]
+    normalizations = [
+        normalization
+        for (scope, _), normalization in repository._purchase_normalizations.items()
+        if scope == account_id
+    ]
+    items = [
+        item
+        for (scope, _), item in repository._purchase_items.items()
+        if scope == account_id
+    ]
+    charges = [
+        charge
+        for (scope, _), charge in repository._purchase_charges.items()
+        if scope == account_id
+    ]
+    reconciliation = repository._purchase_reconciliations[
+        (account_id, purchases[0].id)
+    ]
     assert health.json() == {"status": "ok", "mode": "test"}
     assert confirmation.status_code == invoice.status_code == duplicate.status_code == 204
     assert len(purchases) == 1
@@ -174,6 +195,13 @@ def test_mail_worker_preserves_confirmation_then_final_invoice_as_one_purchase()
         PurchaseDocumentKind.FINAL_RECEIPT,
     ]
     assert [document.revision_number for document in documents] == [1, 2]
+    assert len(normalizations) == 2
+    assert len(items) == 4
+    assert len(charges) == 11
+    assert reconciliation.unresolved_item_count == 0
+    assert {
+        item.disposition for item in reconciliation.items
+    } == {PurchaseReconciliationDisposition.DELIVERED_AS_ORDERED}
 
 
 def test_mail_worker_rejects_bad_event_and_retries_missing_object() -> None:

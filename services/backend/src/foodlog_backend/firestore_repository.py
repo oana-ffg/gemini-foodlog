@@ -35,6 +35,7 @@ from .errors import (
     ModelUsageConflict,
     ModelUsageExceedsReservation,
     PurchaseIdentityConflict,
+    PurchaseNormalizationConflict,
     QuestionAlreadyAnswered,
     QuestionNotFound,
     QuestionSuperseded,
@@ -92,11 +93,18 @@ from .models import (
     ModelSpendReservation,
     ModelUsageRecord,
     NotificationOutboxStatus,
+    ParsedPurchaseDocument,
     Purchase,
+    PurchaseCharge,
     PurchaseDocument,
     PurchaseDocumentCandidate,
+    PurchaseDocumentKind,
+    PurchaseDocumentNormalization,
     PurchaseIdentityAlias,
     PurchaseIdentityResult,
+    PurchaseItem,
+    PurchaseNormalizationResult,
+    PurchaseReconciliation,
     QuestionAnswerRequest,
     QuestionAnswerResult,
     QuestionEvidenceKind,
@@ -115,6 +123,11 @@ from .models import (
     capture_grouping_job_id,
     event_inference_job_id,
     utc_now,
+)
+from .purchase_normalization import (
+    materialize_purchase_document_normalization,
+    purchase_item_id,
+    reconcile_purchase_items,
 )
 from .repository import (
     event_question_from_hypothesis,
@@ -757,8 +770,17 @@ class FirestoreRepository:
                 invoice_reference=candidate.invoice_reference,
                 created_at=now,
             )
+            latest_update = {}
+            if candidate.kind == PurchaseDocumentKind.ORDER_CONFIRMATION:
+                latest_update["latest_confirmation_document_id"] = document.id
+            elif candidate.kind == PurchaseDocumentKind.FINAL_RECEIPT:
+                latest_update["latest_final_document_id"] = document.id
             purchase = purchase.model_copy(
-                update={"revision_count": revision_number, "updated_at": now}
+                update={
+                    "revision_count": revision_number,
+                    "updated_at": now,
+                    **latest_update,
+                }
             )
             if purchase_snapshot.exists:
                 transaction.update(
@@ -766,6 +788,7 @@ class FirestoreRepository:
                     {
                         "revision_count": purchase.revision_count,
                         "updated_at": purchase.updated_at,
+                        **latest_update,
                     },
                 )
             else:
@@ -778,6 +801,176 @@ class FirestoreRepository:
             )
 
         return await attach(transaction)
+
+    async def normalize_purchase_document(
+        self,
+        *,
+        document: PurchaseDocument,
+        parsed: ParsedPurchaseDocument,
+    ) -> PurchaseNormalizationResult:
+        normalization, items, charges = materialize_purchase_document_normalization(
+            document=document,
+            parsed=parsed,
+        )
+        document_ref = self._collection(document.account_id, "purchase_documents").document(
+            document.id
+        )
+        purchase_ref = self._collection(document.account_id, "purchases").document(
+            document.purchase_id
+        )
+        normalization_ref = self._collection(
+            document.account_id, "purchase_normalizations"
+        ).document(document.id)
+        reconciliation_ref = self._collection(
+            document.account_id, "purchase_reconciliations"
+        ).document(document.purchase_id)
+        transaction = self._client.transaction()
+
+        async def load_items(
+            transaction,
+            *,
+            source_document_id: str | None,
+            expected_kind: PurchaseDocumentKind,
+        ) -> list[PurchaseItem]:
+            if source_document_id is None:
+                return []
+            if source_document_id == document.id:
+                return items
+            source_normalization_snapshot = await self._collection(
+                document.account_id, "purchase_normalizations"
+            ).document(source_document_id).get(transaction=transaction)
+            if not source_normalization_snapshot.exists:
+                return []
+            source_normalization = _model(
+                source_normalization_snapshot,
+                PurchaseDocumentNormalization,
+            )
+            if (
+                source_normalization.account_id != document.account_id
+                or source_normalization.purchase_id != document.purchase_id
+                or source_normalization.document_kind != expected_kind
+            ):
+                raise PurchaseNormalizationConflict
+            loaded = []
+            for ordinal in range(1, source_normalization.item_count + 1):
+                item_snapshot = await self._collection(
+                    document.account_id, "purchase_items"
+                ).document(purchase_item_id(source_document_id, ordinal)).get(
+                    transaction=transaction
+                )
+                if not item_snapshot.exists:
+                    raise PurchaseNormalizationConflict
+                item = _model(item_snapshot, PurchaseItem)
+                if (
+                    item.account_id != document.account_id
+                    or item.purchase_id != document.purchase_id
+                    or item.document_id != source_document_id
+                    or item.source_kind != expected_kind
+                ):
+                    raise PurchaseNormalizationConflict
+                loaded.append(item)
+            return loaded
+
+        @firestore.async_transactional
+        async def normalize(transaction):
+            document_snapshot = await document_ref.get(transaction=transaction)
+            purchase_snapshot = await purchase_ref.get(transaction=transaction)
+            normalization_snapshot = await normalization_ref.get(transaction=transaction)
+            reconciliation_snapshot = await reconciliation_ref.get(transaction=transaction)
+            if not document_snapshot.exists or not purchase_snapshot.exists:
+                raise PurchaseNormalizationConflict
+            persisted_document = _model(document_snapshot, PurchaseDocument)
+            purchase = _model(purchase_snapshot, Purchase)
+            if persisted_document != document or purchase.account_id != document.account_id:
+                raise PurchaseNormalizationConflict
+
+            if normalization_snapshot.exists:
+                existing = _model(
+                    normalization_snapshot,
+                    PurchaseDocumentNormalization,
+                )
+                if (
+                    existing.model_dump(exclude={"created_at"})
+                    != normalization.model_dump(exclude={"created_at"})
+                    or not reconciliation_snapshot.exists
+                ):
+                    raise PurchaseNormalizationConflict
+                persisted_items = []
+                for item in items:
+                    snapshot = await self._collection(
+                        document.account_id, "purchase_items"
+                    ).document(item.id).get(transaction=transaction)
+                    if not snapshot.exists:
+                        raise PurchaseNormalizationConflict
+                    persisted_items.append(_model(snapshot, PurchaseItem))
+                persisted_charges = []
+                for charge in charges:
+                    snapshot = await self._collection(
+                        document.account_id, "purchase_charges"
+                    ).document(charge.id).get(transaction=transaction)
+                    if not snapshot.exists:
+                        raise PurchaseNormalizationConflict
+                    persisted_charges.append(_model(snapshot, PurchaseCharge))
+                return PurchaseNormalizationResult(
+                    normalization=existing,
+                    items=persisted_items,
+                    charges=persisted_charges,
+                    reconciliation=_model(
+                        reconciliation_snapshot,
+                        PurchaseReconciliation,
+                    ),
+                    duplicate=True,
+                )
+
+            confirmation_id = purchase.latest_confirmation_document_id
+            final_id = purchase.latest_final_document_id
+            if document.kind == PurchaseDocumentKind.ORDER_CONFIRMATION:
+                confirmation_id = confirmation_id or document.id
+            else:
+                final_id = final_id or document.id
+            confirmation_items = await load_items(
+                transaction,
+                source_document_id=confirmation_id,
+                expected_kind=PurchaseDocumentKind.ORDER_CONFIRMATION,
+            )
+            final_items = await load_items(
+                transaction,
+                source_document_id=final_id,
+                expected_kind=PurchaseDocumentKind.FINAL_RECEIPT,
+            )
+            reconciliation = reconcile_purchase_items(
+                account_id=document.account_id,
+                purchase_id=document.purchase_id,
+                confirmation_document_id=confirmation_id if confirmation_items else None,
+                confirmation_items=confirmation_items,
+                final_document_id=final_id if final_items else None,
+                final_items=final_items,
+            )
+            transaction.create(normalization_ref, _document(normalization))
+            for item in items:
+                transaction.create(
+                    self._collection(document.account_id, "purchase_items").document(
+                        item.id
+                    ),
+                    _document(item),
+                )
+            for charge in charges:
+                transaction.create(
+                    self._collection(document.account_id, "purchase_charges").document(
+                        charge.id
+                    ),
+                    _document(charge),
+                )
+            transaction.set(reconciliation_ref, _document(reconciliation))
+            return PurchaseNormalizationResult(
+                normalization=normalization,
+                items=items,
+                charges=charges,
+                reconciliation=reconciliation,
+                duplicate=False,
+            )
+
+        return await normalize(transaction)
 
     async def record_launch_mail_consent(
         self,

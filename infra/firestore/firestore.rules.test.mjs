@@ -45,7 +45,10 @@ const DOCUMENT_PATHS = [
   "accounts/account-a/purchases/purchase-a",
   "accounts/account-a/purchase_identities/identity-a",
   "accounts/account-a/purchase_documents/mail-a",
-  "accounts/account-a/purchases/purchase-a/items/item-a",
+  "accounts/account-a/purchase_normalizations/mail-a",
+  "accounts/account-a/purchase_items/item-a",
+  "accounts/account-a/purchase_charges/charge-a",
+  "accounts/account-a/purchase_reconciliations/purchase-a",
   "accounts/account-a/raw_mail/mail-a",
   "accounts/account-a/traces/trace-a",
   "accounts/account-a/jobs/job-a",
@@ -63,6 +66,10 @@ const COLLECTION_GROUPS = [
   "purchases",
   "purchase_identities",
   "purchase_documents",
+  "purchase_normalizations",
+  "purchase_items",
+  "purchase_charges",
+  "purchase_reconciliations",
   "jobs",
 ];
 
