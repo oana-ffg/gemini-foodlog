@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import timedelta, timezone
 from functools import lru_cache
 from typing import Any, Literal
 
@@ -43,6 +44,8 @@ class RecentMealSummary(BaseModel):
     status: MealStatus
     confidence: Confidence
     revision_number: int = Field(ge=1)
+    revision_id: str
+    occurred_local_at: str | None
     components: list[BoundedMealComponentSummary] = Field(max_length=20)
     observations: list[str] = Field(max_length=20)
     alternatives: list[str] = Field(max_length=8)
@@ -195,17 +198,25 @@ class RecentPurchasesToolResult(BaseModel):
     purchases: list[RecentPurchaseSummary]
 
 
-def _recent_meal_summary(meal: MealEntry) -> RecentMealSummary:
+def _recent_meal_summary(meal: MealEntry, revision_id: str) -> RecentMealSummary:
     if meal.event_id is None:
         raise ValueError("Recent agent meal context requires event provenance")
+    occurred_at = meal.occurred_at or meal.created_at
+    occurred_local_at = None
+    if meal.occurred_utc_offset_minutes is not None:
+        occurred_local_at = occurred_at.astimezone(
+            timezone(timedelta(minutes=meal.occurred_utc_offset_minutes))
+        ).isoformat()
     return RecentMealSummary(
         meal_id=meal.id,
         event_id=meal.event_id,
-        occurred_at=(meal.occurred_at or meal.created_at).isoformat(),
+        occurred_at=occurred_at.isoformat(),
+        occurred_local_at=occurred_local_at,
         title=meal.title[:200],
         status=meal.status,
         confidence=meal.confidence,
         revision_number=meal.revision_number,
+        revision_id=revision_id,
         components=[
             BoundedMealComponentSummary(
                 name=component.name[:160],
@@ -379,11 +390,16 @@ class ContextToolsService:
         context: SessionStateContext,
     ) -> RecentMealsToolResult:
         account_id = required_state_identifier(context, ACCOUNT_ID_STATE_KEY)
-        meals = await self._repository.recent_meals_for_account(
+        evidence = await self._repository.recent_meal_evidence_for_account(
             account_id=account_id,
             limit=CONTEXT_TOOL_RESULT_LIMIT,
         )
-        return RecentMealsToolResult(meals=[_recent_meal_summary(meal) for meal in meals])
+        return RecentMealsToolResult(
+            meals=[
+                _recent_meal_summary(meal, revision.id)
+                for meal, revision in evidence
+            ]
+        )
 
     async def get_active_user_context(
         self,

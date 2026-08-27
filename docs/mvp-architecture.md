@@ -189,7 +189,8 @@ Each frame is uploaded in one authenticated request to the Cloud Run API. Physic
 Each upload includes server-verifiable device identity plus capture metadata such as:
 
 - camera identifier;
-- capture timestamp;
+- capture timestamp with its original UTC offset, which the backend preserves as
+  server-derived offset minutes for correct local-calendar analysis;
 - client-generated idempotency key;
 - sequence or burst identifier;
 - image content type and dimensions;
@@ -544,6 +545,16 @@ records exist; the later proposal links the rejected predecessor. Confirming a r
 strong confirmed household knowledge with the exact question response as provenance. A natural-language
 correction is preserved verbatim and confirmed without manufacturing a structured claim from wording the
 user did not supply. Rejection creates no household knowledge.
+
+The first detector is deterministic and runs after durable event inference, without another model
+call. It scans at most 100 current meal revisions, cites at most the 20 most recent examples in a
+candidate cohort, and considers only non-uncertain cooking events
+whose original camera UTC offset is known. A proposal needs at least three matching examples across
+three ISO weeks and 14 days, with at least 75% support inside a recognized weekday or breakfast
+cohort. The service rebuilds every displayed example and the observation window from account-scoped
+current revisions, validates that cited labels and calendar conditions actually match, and rejects
+missing, stale, or cross-account evidence. Legacy meals without the original offset fail closed and
+are not used for weekday claims.
 
 The observations feed is not a clarification inbox and does not contain generic event-labeling forms. A question such as "What meal or ingredient was being prepared?" appearing there is an explicit product failure. Uncertainty alone does not require a question; harmless uncertainty remains visible in the event rationale.
 

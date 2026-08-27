@@ -57,7 +57,11 @@ The request is `multipart/form-data` with:
   retrying the exact same camera frame and metadata.
 
 `captured_at` includes a UTC offset and cannot be more than five minutes ahead of
-the server. Older offline-queued captures remain valid. `sequence_id` identifies a client boot or
+the server. The backend derives and persists `captured_utc_offset_minutes` from that
+parsed timestamp; clients cannot submit that internal field separately. Keeping the
+original offset lets later household-pattern analysis use the camera's local calendar
+day even though Firestore normalizes timestamps to UTC. Older offline-queued captures
+remain valid. `sequence_id` identifies a client boot or
 delivery sequence and `sequence_number` increases within it. The optional
 `burst_id` and `burst_frame_index` are supplied together for a motion burst.
 Periodic frames outside a burst omit both. Motion data is optional, explicitly

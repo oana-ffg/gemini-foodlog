@@ -564,6 +564,19 @@
             ],
             "title": "Pattern Topic Key"
           },
+          "pattern_uncertainty": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pattern Uncertainty"
+          },
           "predecessor_question_id": {
             "anyOf": [
               {
@@ -1846,6 +1859,19 @@
             ],
             "title": "Occurred At"
           },
+          "occurred_utc_offset_minutes": {
+            "anyOf": [
+              {
+                "maximum": 840.0,
+                "minimum": -840.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred Utc Offset Minutes"
+          },
           "rationale": {
             "title": "Rationale",
             "type": "string"
@@ -2356,6 +2382,19 @@
             "format": "date-time",
             "title": "Occurred At",
             "type": "string"
+          },
+          "occurred_utc_offset_minutes": {
+            "anyOf": [
+              {
+                "maximum": 840.0,
+                "minimum": -840.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred Utc Offset Minutes"
           },
           "summary": {
             "maxLength": 500,

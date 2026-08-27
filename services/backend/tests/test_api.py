@@ -1,6 +1,7 @@
 import asyncio
 import json
 from base64 import b64decode
+from datetime import timedelta, timezone
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -430,7 +431,12 @@ def test_shared_browser_ingestion_stores_metadata_and_bytes_without_inference() 
     with build_client() as client:
         _, camera = provision(client)
         image = (FIXTURES / "synthetic-steak-airfryer.png").read_bytes()
-        metadata = capture_metadata(camera["id"], image)
+        metadata = {
+            **capture_metadata(camera["id"], image),
+            "captured_at": utc_now()
+            .astimezone(timezone(timedelta(hours=2)))
+            .isoformat(),
+        }
         request = shared_capture_request(
             headers={**USER_HEADER, "Idempotency-Key": "shared-browser-capture-0001"},
             metadata=metadata,
@@ -471,6 +477,7 @@ def test_shared_browser_ingestion_stores_metadata_and_bytes_without_inference() 
     assert stored_image.content == image
     assert stored_capture.status == "stored"
     assert stored_capture.metadata == CaptureEnvelopeV1.model_validate(metadata)
+    assert stored_capture.captured_utc_offset_minutes == 120
 
 
 def test_shared_ingestion_recovers_an_interrupted_reserved_capture() -> None:

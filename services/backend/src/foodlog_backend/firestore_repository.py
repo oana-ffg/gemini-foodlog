@@ -31,6 +31,7 @@ from .errors import (
     KnowledgePageNotFound,
     KnowledgeRevisionConflict,
     MealNotFound,
+    MealRevisionConflict,
     ModelSpendLimitExceeded,
     ModelSpendReservationConflict,
     ModelUsageConflict,
@@ -1710,6 +1711,11 @@ class FirestoreRepository:
             content_sha256=content_sha256,
             object_key=object_key,
             metadata=metadata,
+            captured_utc_offset_minutes=(
+                int(metadata.captured_at.utcoffset().total_seconds() // 60)
+                if metadata is not None
+                else None
+            ),
             created_at=created_at,
         )
         capture_ref = self._collection(account.id, "captures").document(capture.id)
@@ -2857,6 +2863,7 @@ class FirestoreRepository:
         supporting_examples: list[PatternEvidenceExample] | None = None,
         counterexamples: list[PatternEvidenceExample] | None = None,
         prompt_version: str | None = None,
+        uncertainty: str | None = None,
     ) -> ClarificationQuestion:
         rich_values = (
             pattern_claim,
@@ -2906,6 +2913,7 @@ class FirestoreRepository:
             pattern_supporting_examples=supporting_examples or [],
             pattern_counterexamples=counterexamples or [],
             pattern_prompt_version=prompt_version,
+            pattern_uncertainty=uncertainty,
             pattern_evidence_hash=evidence_hash,
             pattern_topic_key=topic_key,
         )
@@ -3488,6 +3496,7 @@ class FirestoreRepository:
                     capture_id=meal.capture_id,
                     event_id=meal.event_id,
                     occurred_at=meal.occurred_at,
+                    occurred_utc_offset_minutes=meal.occurred_utc_offset_minutes,
                     activity_hypothesis=meal.activity_hypothesis,
                     status=status,
                     revision_number=revision.number,
@@ -3648,6 +3657,34 @@ class FirestoreRepository:
             key=lambda item: (item.occurred_at or item.created_at, item.id),
             reverse=True,
         )[:limit]
+
+    async def recent_meal_evidence_for_account(
+        self,
+        *,
+        account_id: str,
+        limit: int = 20,
+    ) -> list[tuple[MealEntry, MealRevision]]:
+        meals = await self.recent_meals_for_account(account_id=account_id, limit=limit)
+        result: list[tuple[MealEntry, MealRevision]] = []
+        for meal in meals:
+            snapshots = [
+                snapshot
+                async for snapshot in (
+                    self._collection(account_id, "meals")
+                    .document(meal.id)
+                    .collection("revisions")
+                    .where(filter=FieldFilter("number", "==", meal.revision_number))
+                    .limit(2)
+                    .stream()
+                )
+            ]
+            if len(snapshots) != 1:
+                raise MealRevisionConflict
+            revision = _model(snapshots[0], MealRevision)
+            if revision.account_id != account_id or revision.meal_id != meal.id:
+                raise MealRevisionConflict
+            result.append((meal, revision))
+        return result
 
     async def active_user_context_notes_for_account(
         self,
@@ -3980,6 +4017,7 @@ class FirestoreRepository:
                         capture_id=meal.capture_id,
                         event_id=meal.event_id,
                         occurred_at=meal.occurred_at,
+                        occurred_utc_offset_minutes=meal.occurred_utc_offset_minutes,
                         activity_hypothesis=meal.activity_hypothesis,
                         status=meal_status,
                         revision_number=revision.number,

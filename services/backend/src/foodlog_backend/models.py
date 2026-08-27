@@ -793,10 +793,22 @@ class CaptureRecord(BaseModel):
     content_sha256: str
     object_key: str
     metadata: CaptureEnvelopeV1 | None = None
+    captured_utc_offset_minutes: int | None = Field(default=None, ge=-840, le=840)
     segment_id: str | None = Field(default=None, min_length=1, max_length=160)
     event_id: str | None = Field(default=None, min_length=1, max_length=160)
     status: CaptureStatus = CaptureStatus.ACCEPTED
     created_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def persisted_offset_matches_capture_timestamp(self) -> "CaptureRecord":
+        if self.metadata is None or self.captured_utc_offset_minutes is None:
+            return self
+        offset = self.metadata.captured_at.utcoffset()
+        assert offset is not None
+        expected = int(offset.total_seconds() // 60)
+        if self.captured_utc_offset_minutes != expected:
+            raise ValueError("persisted capture offset does not match captured_at")
+        return self
 
 
 def capture_grouping_job_id(capture_id: str) -> str:
@@ -1092,6 +1104,7 @@ class MealEntry(MealInference):
     capture_id: str
     event_id: str | None = Field(default=None, min_length=1, max_length=160)
     occurred_at: datetime | None = None
+    occurred_utc_offset_minutes: int | None = Field(default=None, ge=-840, le=840)
     activity_hypothesis: ActivityMealInferenceV1 | None = None
     status: MealStatus = MealStatus.PROVISIONAL
     revision_number: int = Field(default=1, ge=1)
@@ -1103,6 +1116,8 @@ class MealEntry(MealInference):
             self.occurred_at.tzinfo is None or self.occurred_at.utcoffset() is None
         ):
             raise ValueError("meal occurrence timestamp must include a UTC offset")
+        if self.occurred_at is None and self.occurred_utc_offset_minutes is not None:
+            raise ValueError("meal occurrence offset requires an occurrence timestamp")
         if self.activity_hypothesis is None:
             return self
         if self.event_id != self.activity_hypothesis.event_id:
@@ -1308,6 +1323,7 @@ class PatternEvidenceExample(BaseModel):
 
     evidence: QuestionEvidenceReference
     occurred_at: datetime
+    occurred_utc_offset_minutes: int | None = Field(default=None, ge=-840, le=840)
     summary: str = Field(min_length=1, max_length=500)
 
     @field_validator("occurred_at")
@@ -1341,6 +1357,7 @@ class ClarificationQuestion(BaseModel):
         max_length=20,
     )
     pattern_prompt_version: str | None = Field(default=None, min_length=1, max_length=120)
+    pattern_uncertainty: str | None = Field(default=None, min_length=1, max_length=1_000)
     pattern_evidence_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     pattern_topic_key: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     predecessor_question_id: str | None = Field(default=None, min_length=1, max_length=200)

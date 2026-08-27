@@ -44,6 +44,25 @@ class RecordingInferenceProcessor:
         return None
 
 
+class RecordingPatternDetector:
+    def __init__(self, *, failures_remaining: int = 0) -> None:
+        self.failures_remaining = failures_remaining
+        self.calls: list[str] = []
+
+    async def detect_and_propose(
+        self,
+        *,
+        account_id: str,
+        max_proposals: int = 2,
+    ) -> list:
+        del max_proposals
+        self.calls.append(account_id)
+        if self.failures_remaining:
+            self.failures_remaining -= 1
+            raise RuntimeError("simulated pattern detector outage")
+        return []
+
+
 def inference_settings() -> InferenceWorkerSettings:
     return InferenceWorkerSettings(environment="test", gcp_project_id="test-project")
 
@@ -52,10 +71,12 @@ def test_inference_worker_retries_until_grouped_and_quiet_then_publishes_once() 
     repository, publisher, account_id, capture_id = stored_capture()
     envelope = push_envelope(publisher.events[0].model_dump(mode="json"))
     processor = RecordingInferenceProcessor(repository)
+    pattern_detector = RecordingPatternDetector()
     inference_app = create_inference_worker_app(
         inference_settings(),
         repository=repository,
         processor=processor,
+        pattern_detector=pattern_detector,
     )
 
     with TestClient(inference_app) as client:
@@ -91,6 +112,44 @@ def test_inference_worker_retries_until_grouped_and_quiet_then_publishes_once() 
     assert processor.calls[0]["event_id"] == capture.event_id
     assert processor.calls[0]["expected_revision"] == 1
     assert processor.published == 1
+    assert pattern_detector.calls == [account_id, account_id]
+
+
+def test_completed_inference_retries_pattern_detection_without_reinvoking_model() -> None:
+    repository, publisher, account_id, capture_id = stored_capture()
+    envelope = push_envelope(publisher.events[0].model_dump(mode="json"))
+    with TestClient(
+        create_image_worker_app(worker_settings(), repository=repository)
+    ) as image_client:
+        assert (
+            image_client.post("/internal/pubsub/capture-stored", json=envelope).status_code
+            == 204
+        )
+    capture = repository._captures[capture_id]
+    assert capture.event_id is not None
+    job_key = (account_id, event_inference_job_id(capture.event_id))
+    repository._jobs[job_key] = repository._jobs[job_key].model_copy(
+        update={"available_at": utc_now()}
+    )
+    processor = RecordingInferenceProcessor(repository)
+    pattern_detector = RecordingPatternDetector(failures_remaining=1)
+    app = create_inference_worker_app(
+        inference_settings(),
+        repository=repository,
+        processor=processor,
+        pattern_detector=pattern_detector,
+    )
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        detector_failed = client.post("/internal/pubsub/capture-stored", json=envelope)
+        retry = client.post("/internal/pubsub/capture-stored", json=envelope)
+
+    assert detector_failed.status_code == 503
+    assert detector_failed.json() == {"detail": "event_inference_failed"}
+    assert retry.status_code == 204
+    assert len(processor.calls) == 1
+    assert processor.published == 1
+    assert pattern_detector.calls == [account_id, account_id]
 
 
 def test_inference_worker_rejects_bad_events_and_retries_processor_failures(

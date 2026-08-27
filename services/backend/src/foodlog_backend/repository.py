@@ -498,12 +498,14 @@ def materialize_activity_hypothesis(
     else:
         assert hypothesis.best_guess is not None
         title = hypothesis.best_guess
+    latest_capture = max(captures, key=capture_activity_time)
     return MealEntry(
         id=meal_id,
         account_id=event.account_id,
         capture_id=captures[0].id,
         event_id=event.id,
         occurred_at=event.last_capture_at,
+        occurred_utc_offset_minutes=latest_capture.captured_utc_offset_minutes,
         activity_hypothesis=hypothesis,
         title=title,
         confidence=Confidence(hypothesis.confidence.value),
@@ -842,6 +844,7 @@ class Repository(Protocol):
         supporting_examples: list[PatternEvidenceExample] | None = None,
         counterexamples: list[PatternEvidenceExample] | None = None,
         prompt_version: str | None = None,
+        uncertainty: str | None = None,
     ) -> ClarificationQuestion: ...
 
     async def list_meals(self, owner_user_id: str) -> list[MealEntry]: ...
@@ -953,6 +956,13 @@ class Repository(Protocol):
         account_id: str,
         limit: int = 20,
     ) -> list[MealEntry]: ...
+
+    async def recent_meal_evidence_for_account(
+        self,
+        *,
+        account_id: str,
+        limit: int = 20,
+    ) -> list[tuple[MealEntry, MealRevision]]: ...
 
     async def active_user_context_notes_for_account(
         self,
@@ -2019,6 +2029,11 @@ class InMemoryRepository:
                 content_sha256=content_sha256,
                 object_key=object_key,
                 metadata=metadata,
+                captured_utc_offset_minutes=(
+                    int(metadata.captured_at.utcoffset().total_seconds() // 60)
+                    if metadata is not None
+                    else None
+                ),
             )
             stored_account.accepted_image_count += 1
             self._captures[capture.id] = capture
@@ -2746,6 +2761,7 @@ class InMemoryRepository:
         supporting_examples: list[PatternEvidenceExample] | None = None,
         counterexamples: list[PatternEvidenceExample] | None = None,
         prompt_version: str | None = None,
+        uncertainty: str | None = None,
     ) -> ClarificationQuestion:
         async with self._lock:
             if account_id not in self._accounts:
@@ -2845,6 +2861,7 @@ class InMemoryRepository:
                 pattern_supporting_examples=supporting_examples or [],
                 pattern_counterexamples=counterexamples or [],
                 pattern_prompt_version=prompt_version,
+                pattern_uncertainty=uncertainty,
                 pattern_evidence_hash=evidence_hash,
                 pattern_topic_key=topic_key,
                 predecessor_question_id=(predecessor.id if predecessor is not None else None),
@@ -3234,6 +3251,32 @@ class InMemoryRepository:
                 )[:limit]
             ]
 
+    async def recent_meal_evidence_for_account(
+        self,
+        *,
+        account_id: str,
+        limit: int = 20,
+    ) -> list[tuple[MealEntry, MealRevision]]:
+        meals = await self.recent_meals_for_account(account_id=account_id, limit=limit)
+        async with self._lock:
+            result: list[tuple[MealEntry, MealRevision]] = []
+            for meal in meals:
+                revisions = self._meal_revisions.get(meal.id, [])
+                current = next(
+                    (
+                        revision
+                        for revision in reversed(revisions)
+                        if revision.number == meal.revision_number
+                    ),
+                    None,
+                )
+                if current is None or current.account_id != account_id:
+                    raise MealRevisionConflict
+                result.append(
+                    (meal.model_copy(deep=True), current.model_copy(deep=True))
+                )
+            return result
+
     async def active_user_context_notes_for_account(
         self,
         *,
@@ -3509,6 +3552,7 @@ class InMemoryRepository:
             capture_id=meal.capture_id,
             event_id=meal.event_id,
             occurred_at=meal.occurred_at,
+            occurred_utc_offset_minutes=meal.occurred_utc_offset_minutes,
             activity_hypothesis=meal.activity_hypothesis,
             status=meal_status,
             revision_number=revision.number,

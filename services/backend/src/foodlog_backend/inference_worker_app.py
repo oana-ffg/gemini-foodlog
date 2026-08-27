@@ -14,7 +14,15 @@ from foodlog_agent.event_processing import (
 from .errors import CaptureNotFound
 from .firestore_repository import FirestoreRepository
 from .image_events import CaptureStoredEventV1
-from .models import JobKind, JobStatus, MealEntry, event_inference_job_id, utc_now
+from .models import (
+    ClarificationQuestion,
+    JobKind,
+    JobStatus,
+    MealEntry,
+    event_inference_job_id,
+    utc_now,
+)
+from .pattern_detection import PatternDetectionService
 from .pubsub import PubSubPushEnvelope, decode_event
 from .repository import Repository
 
@@ -45,11 +53,21 @@ class InferenceExecutor(Protocol):
     async def publish(self, claimed: ClaimedEventInference) -> MealEntry | None: ...
 
 
+class PatternDetector(Protocol):
+    async def detect_and_propose(
+        self,
+        *,
+        account_id: str,
+        max_proposals: int = 2,
+    ) -> list[ClarificationQuestion]: ...
+
+
 def create_inference_worker_app(
     settings: InferenceWorkerSettings | None = None,
     *,
     repository: Repository | None = None,
     processor: InferenceExecutor | None = None,
+    pattern_detector: PatternDetector | None = None,
 ) -> FastAPI:
     active_settings = settings or InferenceWorkerSettings()
     active_repository = repository or FirestoreRepository(
@@ -62,6 +80,7 @@ def create_inference_worker_app(
         repository=active_repository,
         reasoner=AdkEventReasoner(),
     )
+    pattern_detection = pattern_detector or PatternDetectionService(active_repository)
     app = FastAPI(
         title="Gemini FoodLog inference worker",
         version="0.1.0",
@@ -107,6 +126,7 @@ def create_inference_worker_app(
             )
             raise HTTPException(status_code=503, detail="invalid_inference_job")
         if job.status == JobStatus.COMPLETED:
+            await pattern_detection.detect_and_propose(account_id=event.account_id)
             return Response(status_code=status.HTTP_204_NO_CONTENT)
         now = utc_now()
         if job.status == JobStatus.PENDING and job.available_at > now:
@@ -127,6 +147,7 @@ def create_inference_worker_app(
             )
             if claimed is not None:
                 await active_processor.publish(claimed)
+            await pattern_detection.detect_and_propose(account_id=event.account_id)
         except Exception as error:
             LOGGER.exception(
                 "Event inference failed for account %s event %s revision %s",
