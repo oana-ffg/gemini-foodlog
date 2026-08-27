@@ -223,7 +223,12 @@
           "capture.image_read",
           "meal.feedback_recorded",
           "ai.trace_recorded",
-          "operator.diagnostic_read"
+          "operator.diagnostic_read",
+          "operator.dead_letter_inspected",
+          "operator.dead_letter_replay_requested",
+          "operator.dead_letter_replay_published",
+          "operator.dead_letter_resolution_requested",
+          "operator.dead_letter_resolved_acknowledged"
         ],
         "title": "AuditAction",
         "type": "string"

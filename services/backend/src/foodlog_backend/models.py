@@ -333,6 +333,15 @@ class AuditAction(StrEnum):
     MEAL_FEEDBACK_RECORDED = "meal.feedback_recorded"
     AI_TRACE_RECORDED = "ai.trace_recorded"
     OPERATOR_DIAGNOSTIC_READ = "operator.diagnostic_read"
+    OPERATOR_DEAD_LETTER_INSPECTED = "operator.dead_letter_inspected"
+    OPERATOR_DEAD_LETTER_REPLAY_REQUESTED = "operator.dead_letter_replay_requested"
+    OPERATOR_DEAD_LETTER_REPLAY_PUBLISHED = "operator.dead_letter_replay_published"
+    OPERATOR_DEAD_LETTER_RESOLUTION_REQUESTED = (
+        "operator.dead_letter_resolution_requested"
+    )
+    OPERATOR_DEAD_LETTER_RESOLVED_ACKNOWLEDGED = (
+        "operator.dead_letter_resolved_acknowledged"
+    )
 
 
 class AuditPurpose(StrEnum):
