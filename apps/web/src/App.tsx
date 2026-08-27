@@ -1,20 +1,29 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  ApiError,
   answerQuestion,
+  getConsentPreferences,
   listJournal,
   listMealRevisions,
   listOpenQuestions,
   loadCaptureImage,
   provisionAccount,
+  recordLaunchMailConsent,
   submitMealFeedback,
   type Account,
   type ClarificationQuestion,
+  type ConsentPreferences,
   type MealEntry,
   type MealRevision,
   type MealStatus,
 } from "./api";
-import { SessionControls } from "./auth";
+import { SessionControls, useAuth } from "./auth";
+import { CapacityWaitlist, LaunchMailConsentControls } from "./ConsentControls";
+import {
+  clearSignupLaunchMailIntent,
+  readSignupLaunchMailIntent,
+} from "./signupIntent";
 
 interface JournalCardProps {
   entry: MealEntry;
@@ -297,22 +306,62 @@ function QuestionCard({ question, onChanged }: QuestionCardProps) {
 }
 
 function App() {
+  const { user } = useAuth();
+  const firebaseUid = user?.uid;
   const [account, setAccount] = useState<Account>();
+  const [consentPreferences, setConsentPreferences] = useState<ConsentPreferences>();
+  const [capacityReached, setCapacityReached] = useState(false);
   const [journal, setJournal] = useState<MealEntry[]>([]);
   const [questions, setQuestions] = useState<ClarificationQuestion[]>([]);
   const [loadMessage, setLoadMessage] = useState("Loading your private journal…");
 
   const refreshWorkspace = useCallback(async () => {
-    const currentAccount = await provisionAccount();
-    const [entries, openQuestions] = await Promise.all([
-      listJournal(),
-      listOpenQuestions(),
-    ]);
-    setJournal(entries);
-    setAccount(currentAccount);
-    setQuestions(openQuestions);
-    setLoadMessage("");
-  }, []);
+    setLoadMessage("Loading your private journal…");
+    try {
+      const currentAccount = await provisionAccount();
+      let currentConsent = await getConsentPreferences();
+      const signupIntent = firebaseUid
+        ? readSignupLaunchMailIntent(firebaseUid)
+        : undefined;
+      if (firebaseUid && signupIntent !== undefined) {
+        if (currentConsent.launch_mail_opt_in === null) {
+          const consent = await recordLaunchMailConsent(signupIntent);
+          currentConsent = {
+            ...currentConsent,
+            launch_mail_opt_in: consent.granted,
+            launch_mail_policy_version: consent.policy_version,
+            launch_mail_updated_at: consent.created_at,
+          };
+        }
+        clearSignupLaunchMailIntent(firebaseUid);
+      }
+      const [entries, openQuestions] = await Promise.all([
+        listJournal(),
+        listOpenQuestions(),
+      ]);
+      setJournal(entries);
+      setAccount(currentAccount);
+      setConsentPreferences(currentConsent);
+      setQuestions(openQuestions);
+      setCapacityReached(false);
+      setLoadMessage("");
+    } catch (error: unknown) {
+      if (
+        error instanceof ApiError
+        && error.status === 409
+        && error.message === "signup_capacity_exhausted"
+      ) {
+        setAccount(undefined);
+        setJournal([]);
+        setQuestions([]);
+        setConsentPreferences(await getConsentPreferences());
+        setCapacityReached(true);
+        setLoadMessage("");
+        return;
+      }
+      throw error;
+    }
+  }, [firebaseUid]);
 
   useEffect(() => {
     refreshWorkspace()
@@ -320,6 +369,15 @@ function App() {
         setLoadMessage(error instanceof Error ? error.message : "The journal is unavailable.");
       });
   }, [refreshWorkspace]);
+
+  if (capacityReached && consentPreferences) {
+    return (
+      <CapacityWaitlist
+        preferences={consentPreferences}
+        onChanged={refreshWorkspace}
+      />
+    );
+  }
 
   return (
     <main className="app-shell">
@@ -341,6 +399,13 @@ function App() {
         </div>
         <Link className="camera-link" to="/camera">Open the phone camera page</Link>
       </header>
+
+      {consentPreferences ? (
+        <LaunchMailConsentControls
+          preferences={consentPreferences}
+          onChanged={refreshWorkspace}
+        />
+      ) : null}
 
       {loadMessage ? <p className="empty-state" role="status">{loadMessage}</p> : null}
 

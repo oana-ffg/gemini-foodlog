@@ -18,6 +18,33 @@ export interface Account {
   accepted_image_count: number;
 }
 
+export interface ConsentPreferences {
+  launch_mail_opt_in: boolean | null;
+  launch_mail_policy_version: string | null;
+  launch_mail_updated_at: string | null;
+  waitlist_status: "not_joined" | "active" | "withdrawn";
+  waitlist_policy_version: string | null;
+  waitlist_updated_at: string | null;
+}
+
+export interface LaunchMailConsent {
+  id: string;
+  granted: boolean;
+  policy_version: string;
+  created_at: string;
+}
+
+export interface WaitlistEntry {
+  id: string;
+  email_normalized: string | null;
+  policy_version: string;
+  mailing_list_opt_in: boolean;
+  status: "active" | "withdrawn";
+  updated_at: string;
+  last_withdrawn_at: string | null;
+  withdrawal_count: number;
+}
+
 export interface BrowserCamera {
   id: string;
   account_id: string;
@@ -209,6 +236,38 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function provisionAccount(): Promise<Account> {
   return apiRequest<Account>("/v1/accounts", { method: "POST" });
+}
+
+export function getConsentPreferences(): Promise<ConsentPreferences> {
+  return apiRequest<ConsentPreferences>("/v1/consents");
+}
+
+export function recordLaunchMailConsent(granted: boolean): Promise<LaunchMailConsent> {
+  return apiRequest<LaunchMailConsent>("/v1/consents/launch-mail", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ granted }),
+  });
+}
+
+export function withdrawLaunchMailConsent(): Promise<LaunchMailConsent> {
+  return apiRequest<LaunchMailConsent>("/v1/consents/launch-mail/withdraw", {
+    method: "POST",
+  });
+}
+
+export function joinWaitlist(): Promise<WaitlistEntry> {
+  return apiRequest<WaitlistEntry>("/v1/waitlist", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ join: true }),
+  });
+}
+
+export function withdrawWaitlist(): Promise<WaitlistEntry> {
+  return apiRequest<WaitlistEntry>("/v1/waitlist/withdraw", {
+    method: "POST",
+  });
 }
 
 export function createBrowserCamera(

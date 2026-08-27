@@ -19,12 +19,13 @@ import {
   useState,
 } from "react";
 import { auth } from "./firebase";
+import { saveSignupLaunchMailIntent } from "./signupIntent";
 
 interface AuthContextValue {
   user: User | null;
   emailVerified: boolean;
   loading: boolean;
-  signUp: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string, launchMailOptIn: boolean) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   reauthenticate: (password: string) => Promise<void>;
@@ -73,8 +74,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user,
     emailVerified,
     loading,
-    signUp: async (email, password) => {
+    signUp: async (email, password, launchMailOptIn) => {
       const credential = await createUserWithEmailAndPassword(auth, email, password);
+      saveSignupLaunchMailIntent(credential.user.uid, launchMailOptIn);
       await sendEmailVerification(credential.user);
     },
     signIn: async (email, password) => {
@@ -116,6 +118,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [launchMailOptIn, setLaunchMailOptIn] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
 
@@ -134,7 +137,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
       if (mode === "sign-in") {
         await signIn(email.trim(), password);
       } else {
-        await signUp(email.trim(), password);
+        await signUp(email.trim(), password, launchMailOptIn);
       }
       setPassword("");
     } catch (error: unknown) {
@@ -146,6 +149,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const switchMode = () => {
     setMode((current) => current === "sign-in" ? "sign-up" : "sign-in");
     setPassword("");
+    setLaunchMailOptIn(false);
     setMessage(undefined);
   };
 
@@ -177,6 +181,16 @@ export function AuthGate({ children }: { children: ReactNode }) {
               onChange={(event) => setPassword(event.target.value)}
             />
           </label>
+          {mode === "sign-up" ? (
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={launchMailOptIn}
+                onChange={(event) => setLaunchMailOptIn(event.target.checked)}
+              />
+              Notify me when FoodLog becomes a full product
+            </label>
+          ) : null}
           <button type="submit" disabled={busy}>
             {busy ? "Please wait…" : mode === "sign-in" ? "Sign in" : "Create account"}
           </button>

@@ -10,8 +10,13 @@ vi.mock("./firebase", () => firebase);
 
 import {
   AuthenticationRequiredError,
+  getConsentPreferences,
+  joinWaitlist,
   provisionAccount,
+  recordLaunchMailConsent,
   uploadCapture,
+  withdrawLaunchMailConsent,
+  withdrawWaitlist,
 } from "./api";
 
 const account = {
@@ -78,6 +83,63 @@ describe("authenticated API client", () => {
     const secondHeaders = new Headers((fetchMock.mock.calls[1][1] as RequestInit).headers);
     expect(firstHeaders.get("Authorization")).toBe("Bearer expired-token");
     expect(secondHeaders.get("Authorization")).toBe("Bearer refreshed-token");
+  });
+
+  it("uses explicit authenticated consent and waitlist operations", async () => {
+    firebase.auth.currentUser = {
+      getIdToken: vi.fn().mockResolvedValue("firebase-id-token"),
+    };
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.endsWith("/v1/consents")) {
+        return Promise.resolve(jsonResponse({
+          launch_mail_opt_in: false,
+          launch_mail_policy_version: "launch-interest-v1",
+          launch_mail_updated_at: "2026-08-27T12:00:00Z",
+          waitlist_status: "not_joined",
+          waitlist_policy_version: null,
+          waitlist_updated_at: null,
+        }));
+      }
+      if (url.includes("launch-mail")) {
+        return Promise.resolve(jsonResponse({
+          id: "consent-1",
+          granted: false,
+          policy_version: "launch-interest-v1",
+          created_at: "2026-08-27T12:00:00Z",
+        }));
+      }
+      return Promise.resolve(jsonResponse({
+        id: "waitlist-1",
+        email_normalized: null,
+        policy_version: "capacity-waitlist-v1",
+        mailing_list_opt_in: false,
+        status: "withdrawn",
+        updated_at: "2026-08-27T12:00:00Z",
+        last_withdrawn_at: "2026-08-27T12:00:00Z",
+        withdrawal_count: 1,
+      }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getConsentPreferences();
+    await recordLaunchMailConsent(true);
+    await withdrawLaunchMailConsent();
+    await joinWaitlist();
+    await withdrawWaitlist();
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://127.0.0.1:8080/v1/consents",
+      "http://127.0.0.1:8080/v1/consents/launch-mail",
+      "http://127.0.0.1:8080/v1/consents/launch-mail/withdraw",
+      "http://127.0.0.1:8080/v1/waitlist",
+      "http://127.0.0.1:8080/v1/waitlist/withdraw",
+    ]);
+    const recordInit = fetchMock.mock.calls[1][1] as RequestInit;
+    const joinInit = fetchMock.mock.calls[3][1] as RequestInit;
+    expect(recordInit.method).toBe("POST");
+    expect(recordInit.body).toBe(JSON.stringify({ granted: true }));
+    expect(joinInit.method).toBe("POST");
+    expect(joinInit.body).toBe(JSON.stringify({ join: true }));
   });
 
   it("uploads browser snapshots through the shared capture envelope", async () => {
