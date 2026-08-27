@@ -112,6 +112,7 @@ from .notifications import (
     NotificationPublisher,
     PubSubNotificationPublisher,
 )
+from .operational_logging import install_request_logging
 from .pattern_hypotheses import PatternHypothesisService
 from .processing_views import CaptureProcessingView, capture_processing_view
 from .purchase_views import (
@@ -277,6 +278,7 @@ def create_app(
     )
     app = FastAPI(title="Gemini FoodLog API", version="0.1.0")
     app.state.container = container
+    install_request_logging(app, service="api", environment=active_settings.environment)
     allowed_headers = ["Content-Type", "Idempotency-Key"]
     if active_settings.auth_backend == "firebase":
         allowed_headers.append("Authorization")

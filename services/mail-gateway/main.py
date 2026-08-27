@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import logging
 import os
 import re
 from collections.abc import Callable, Iterable
+from time import perf_counter
 from urllib.parse import unquote
+from uuid import uuid4
 
 from mail_gateway.adapters import (
     FirestoreMailRepository,
@@ -12,9 +13,13 @@ from mail_gateway.adapters import (
     PubSubMailEventPublisher,
 )
 from mail_gateway.domain import InvalidRecipient, UnknownRecipient, UnsafeMail
+from mail_gateway.operational_logging import (
+    emit_gateway_event,
+    safe_error_kind,
+    trace_id_from_header,
+)
 from mail_gateway.service import MailGatewayService
 
-LOGGER = logging.getLogger(__name__)
 MAX_RAW_MESSAGE_BYTES = 20 * 1024 * 1024
 MAIL_PATH_PATTERN = re.compile(r"^/_ah/mail/(.+)$")
 
@@ -43,6 +48,46 @@ class MailGatewayApplication:
         environ: dict,
         start_response: Callable[[str, list[tuple[str, str]]], None],
     ) -> Iterable[bytes]:
+        request_id = uuid4().hex
+        trace_id = trace_id_from_header(environ.get("HTTP_X_CLOUD_TRACE_CONTEXT"))
+        started = perf_counter()
+        response_status = 500
+
+        def tracked_start_response(
+            status: str,
+            headers: list[tuple[str, str]],
+        ) -> None:
+            nonlocal response_status
+            response_status = int(status.split(" ", 1)[0])
+            start_response(status, [*headers, ("X-Request-ID", request_id)])
+
+        try:
+            return self._handle(environ, tracked_start_response, request_id, trace_id)
+        finally:
+            emit_gateway_event(
+                "INFO" if response_status < 500 else "ERROR",
+                "http_request_completed",
+                service="mail_gateway",
+                environment=os.environ.get("GAE_ENV", "test"),
+                request_id=request_id,
+                trace_id=trace_id,
+                http_method=environ.get("REQUEST_METHOD", "UNKNOWN"),
+                http_route=(
+                    "/_ah/mail/{recipient}"
+                    if MAIL_PATH_PATTERN.fullmatch(environ.get("PATH_INFO", ""))
+                    else "unmatched"
+                ),
+                http_status=response_status,
+                duration_ms=max(0, round((perf_counter() - started) * 1_000)),
+            )
+
+    def _handle(
+        self,
+        environ: dict,
+        start_response: Callable[[str, list[tuple[str, str]]], None],
+        request_id: str,
+        trace_id: str | None,
+    ) -> Iterable[bytes]:
         if environ.get("REQUEST_METHOD") != "POST":
             return self._respond(start_response, "405 Method Not Allowed")
         match = MAIL_PATH_PATTERN.fullmatch(environ.get("PATH_INFO", ""))
@@ -60,19 +105,46 @@ class MailGatewayApplication:
         if not raw_message or len(raw_message) > MAX_RAW_MESSAGE_BYTES:
             return self._respond(start_response, "413 Payload Too Large")
         try:
-            (self._service or build_service()).receive(
+            record = (self._service or build_service()).receive(
                 recipient=unquote(match.group(1)),
                 raw_message=raw_message,
             )
         except (InvalidRecipient, UnknownRecipient):
-            LOGGER.warning("Discarded inbound mail for an inactive or invalid recipient")
+            emit_gateway_event(
+                "WARNING",
+                "inbound_mail_discarded",
+                request_id=request_id,
+                trace_id=trace_id,
+                outcome="inactive_or_invalid_recipient",
+            )
             return self._respond(start_response, "204 No Content")
         except UnsafeMail as error:
-            LOGGER.warning("Discarded unsafe inbound mail: %s", error.code)
+            emit_gateway_event(
+                "WARNING",
+                "inbound_mail_discarded",
+                request_id=request_id,
+                trace_id=trace_id,
+                outcome=error.code,
+            )
             return self._respond(start_response, "204 No Content")
-        except Exception:
-            LOGGER.exception("Inbound mail persistence or publication failed")
+        except Exception as error:
+            emit_gateway_event(
+                "ERROR",
+                "inbound_mail_failed",
+                request_id=request_id,
+                trace_id=trace_id,
+                error_kind=safe_error_kind(error),
+            )
             return self._respond(start_response, "503 Service Unavailable")
+        emit_gateway_event(
+            "INFO",
+            "inbound_mail_published",
+            request_id=request_id,
+            trace_id=trace_id,
+            account_id=record.account_id,
+            mail_id=record.id,
+            outcome=record.status,
+        )
         return self._respond(start_response, "204 No Content")
 
     @staticmethod

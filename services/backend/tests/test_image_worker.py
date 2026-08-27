@@ -1,6 +1,5 @@
 import asyncio
 import json
-import logging
 from base64 import b64encode
 
 import pytest
@@ -132,7 +131,7 @@ def test_image_worker_groups_once_and_acknowledges_duplicate_delivery() -> None:
 
 def test_image_worker_rejects_bad_events_and_retries_processing_failures(
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
+    capfd: pytest.CaptureFixture[str],
 ) -> None:
     repository, publisher, account_id, capture_id = stored_capture(owner_user_id="failure-owner")
     app = create_image_worker_app(worker_settings(), repository=repository)
@@ -142,10 +141,7 @@ def test_image_worker_rejects_bad_events_and_retries_processing_failures(
         raise RuntimeError("simulated grouping failure")
 
     monkeypatch.setattr(repository, "group_capture", fail_grouping)
-    with (
-        caplog.at_level(logging.ERROR, logger="foodlog_backend.image_worker_app"),
-        TestClient(app) as client,
-    ):
+    with TestClient(app) as client:
         malformed = client.post(
             "/internal/pubsub/capture-stored",
             json=push_envelope({"kind": "wrong"}),
@@ -159,4 +155,9 @@ def test_image_worker_rejects_bad_events_and_retries_processing_failures(
     assert failed.json() == {"detail": "capture_grouping_failed"}
     assert job.status == JobStatus.PENDING
     assert job.last_error_code == "RuntimeError"
-    assert "simulated grouping failure" in caplog.text
+    output = capfd.readouterr().out
+    assert '"event":"capture_grouping_failed"' in output
+    assert '"error_kind":"RuntimeError"' in output
+    assert account_id in output
+    assert capture_id in output
+    assert "simulated grouping failure" not in output

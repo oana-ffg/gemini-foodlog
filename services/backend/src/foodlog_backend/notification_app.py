@@ -11,6 +11,7 @@ from .notifications import (
     PushoverClient,
     PushoverSender,
 )
+from .operational_logging import emit_operational_event, install_request_logging, safe_error_kind
 from .pubsub import PubSubPushEnvelope, decode_event
 from .repository import Repository
 
@@ -53,6 +54,11 @@ def create_notification_app(
         redoc_url=None,
         openapi_url=None,
     )
+    install_request_logging(
+        app,
+        service="notification_worker",
+        environment=active_settings.environment,
+    )
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -71,7 +77,21 @@ def create_notification_app(
         try:
             await service.deliver(event.event_id)
         except Exception as error:
+            emit_operational_event(
+                "ERROR",
+                "notification_delivery_failed",
+                notification_id=event.event_id,
+                message_id=envelope.message.message_id,
+                error_kind=safe_error_kind(error),
+            )
             raise HTTPException(status_code=503, detail="notification_delivery_failed") from error
+        emit_operational_event(
+            "INFO",
+            "notification_delivery_completed",
+            notification_id=event.event_id,
+            message_id=envelope.message.message_id,
+            outcome="delivered_or_duplicate",
+        )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     return app

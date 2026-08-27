@@ -1,4 +1,3 @@
-import logging
 from datetime import timedelta
 from typing import Literal
 
@@ -9,10 +8,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from .firestore_repository import FirestoreRepository
 from .grouping import CaptureGroupingService, GroupingPolicy
 from .image_events import CaptureStoredEventV1
+from .operational_logging import emit_operational_event, install_request_logging, safe_error_kind
 from .pubsub import PubSubPushEnvelope, decode_event
 from .repository import Repository
-
-LOGGER = logging.getLogger(__name__)
 
 
 class ImageWorkerSettings(BaseSettings):
@@ -56,6 +54,7 @@ def create_image_worker_app(
         redoc_url=None,
         openapi_url=None,
     )
+    install_request_logging(app, service="image_worker", environment=active_settings.environment)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -78,12 +77,23 @@ def create_image_worker_app(
                 worker_id=f"pubsub:{envelope.message.message_id}"[:200],
             )
         except Exception as error:
-            LOGGER.exception(
-                "Capture grouping failed for account %s capture %s",
-                event.account_id,
-                event.capture_id,
+            emit_operational_event(
+                "ERROR",
+                "capture_grouping_failed",
+                account_id=event.account_id,
+                capture_id=event.capture_id,
+                message_id=envelope.message.message_id,
+                error_kind=safe_error_kind(error),
             )
             raise HTTPException(status_code=503, detail="capture_grouping_failed") from error
+        emit_operational_event(
+            "INFO",
+            "capture_grouping_completed",
+            account_id=event.account_id,
+            capture_id=event.capture_id,
+            message_id=envelope.message.message_id,
+            outcome="acknowledged",
+        )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     return app

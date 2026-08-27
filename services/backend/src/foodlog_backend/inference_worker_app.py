@@ -1,4 +1,3 @@
-import logging
 from typing import Literal, Protocol
 
 from fastapi import FastAPI, HTTPException, Response, status
@@ -22,11 +21,10 @@ from .models import (
     event_inference_job_id,
     utc_now,
 )
+from .operational_logging import emit_operational_event, install_request_logging, safe_error_kind
 from .pattern_detection import PatternDetectionService
 from .pubsub import PubSubPushEnvelope, decode_event
 from .repository import Repository
-
-LOGGER = logging.getLogger(__name__)
 
 
 class InferenceWorkerSettings(BaseSettings):
@@ -88,6 +86,11 @@ def create_inference_worker_app(
         redoc_url=None,
         openapi_url=None,
     )
+    install_request_logging(
+        app,
+        service="inference_worker",
+        environment=active_settings.environment,
+    )
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -119,10 +122,12 @@ def create_inference_worker_app(
         if job is None:
             raise HTTPException(status_code=503, detail="inference_job_not_ready")
         if job.kind != JobKind.EVENT_INFERENCE or job.subject_id != capture.event_id:
-            LOGGER.error(
-                "Inference job identity is invalid for account %s event %s",
-                event.account_id,
-                capture.event_id,
+            emit_operational_event(
+                "ERROR",
+                "inference_job_identity_invalid",
+                account_id=event.account_id,
+                event_id=capture.event_id,
+                job_id=job_id,
             )
             raise HTTPException(status_code=503, detail="invalid_inference_job")
         if job.status == JobStatus.COMPLETED:
@@ -149,17 +154,31 @@ def create_inference_worker_app(
                 await active_processor.publish(claimed)
             await pattern_detection.detect_and_propose(account_id=event.account_id)
         except Exception as error:
-            LOGGER.exception(
-                "Event inference failed for account %s event %s revision %s",
-                event.account_id,
-                capture.event_id,
-                job.subject_revision,
+            emit_operational_event(
+                "ERROR",
+                "event_inference_failed",
+                account_id=event.account_id,
+                event_id=capture.event_id,
+                job_id=job_id,
+                subject_revision=job.subject_revision,
+                message_id=envelope.message.message_id,
+                error_kind=safe_error_kind(error),
             )
             raise HTTPException(status_code=503, detail="event_inference_failed") from error
 
         latest = await active_repository.job_for_account(event.account_id, job_id)
         if latest is None or latest.status != JobStatus.COMPLETED:
             raise HTTPException(status_code=503, detail="inference_not_completed")
+        emit_operational_event(
+            "INFO",
+            "event_inference_completed",
+            account_id=event.account_id,
+            event_id=capture.event_id,
+            job_id=job_id,
+            subject_revision=job.subject_revision,
+            message_id=envelope.message.message_id,
+            outcome="published",
+        )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     return app

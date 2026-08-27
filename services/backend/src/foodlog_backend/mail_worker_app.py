@@ -1,4 +1,3 @@
-import logging
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Response, status
@@ -7,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .firestore_repository import FirestoreRepository
 from .mail_events import RawMailStoredEventV1
+from .operational_logging import emit_operational_event, install_request_logging, safe_error_kind
 from .pubsub import PubSubPushEnvelope, decode_event
 from .purchase_mail import (
     MailClassificationOutcome,
@@ -16,8 +16,6 @@ from .purchase_mail import (
 from .purchase_normalization import parse_purchase_document
 from .repository import Repository
 from .storage import GCSObjectStore, ObjectStore
-
-LOGGER = logging.getLogger(__name__)
 
 
 class MailWorkerSettings(BaseSettings):
@@ -53,6 +51,7 @@ def create_mail_worker_app(
         redoc_url=None,
         openapi_url=None,
     )
+    install_request_logging(app, service="mail_worker", environment=active_settings.environment)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -86,12 +85,23 @@ def create_mail_worker_app(
                     parsed=parsed,
                 )
         except Exception as error:
-            LOGGER.exception(
-                "Purchase-mail classification failed for account %s mail %s",
-                event.account_id,
-                event.mail_id,
+            emit_operational_event(
+                "ERROR",
+                "purchase_mail_processing_failed",
+                account_id=event.account_id,
+                mail_id=event.mail_id,
+                message_id=envelope.message.message_id,
+                error_kind=safe_error_kind(error),
             )
             raise HTTPException(status_code=503, detail="mail_classification_failed") from error
+        emit_operational_event(
+            "INFO",
+            "purchase_mail_processing_completed",
+            account_id=event.account_id,
+            mail_id=event.mail_id,
+            message_id=envelope.message.message_id,
+            outcome=classification.outcome.value,
+        )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     return app

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from typing import cast
 
 from fastapi.testclient import TestClient
@@ -153,7 +152,7 @@ def test_completed_inference_retries_pattern_detection_without_reinvoking_model(
 
 
 def test_inference_worker_rejects_bad_events_and_retries_processor_failures(
-    caplog,
+    capfd,
 ) -> None:
     repository, publisher, account_id, capture_id = stored_capture()
     envelope = push_envelope(publisher.events[0].model_dump(mode="json"))
@@ -179,13 +178,7 @@ def test_inference_worker_rejects_bad_events_and_retries_processor_failures(
         processor=processor,
     )
 
-    with (
-        caplog.at_level(
-            logging.ERROR,
-            logger="foodlog_backend.inference_worker_app",
-        ),
-        TestClient(app) as client,
-    ):
+    with TestClient(app) as client:
         malformed = client.post(
             "/internal/pubsub/capture-stored",
             json=push_envelope({"kind": "wrong"}),
@@ -196,4 +189,9 @@ def test_inference_worker_rejects_bad_events_and_retries_processor_failures(
     assert malformed.json() == {"detail": "invalid_pubsub_event"}
     assert failed.status_code == 503
     assert failed.json() == {"detail": "event_inference_failed"}
-    assert "simulated model outage" in caplog.text
+    output = capfd.readouterr().out
+    assert '"event":"event_inference_failed"' in output
+    assert '"error_kind":"RuntimeError"' in output
+    assert account_id in output
+    assert capture.event_id in output
+    assert "simulated model outage" not in output

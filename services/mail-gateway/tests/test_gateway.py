@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import subprocess
 from dataclasses import replace
@@ -549,6 +550,37 @@ def test_wsgi_boundary_limits_method_path_size_and_unknown_recipient(gateway) ->
     assert repository.records == {}
     assert object_store.objects == {}
     assert publisher.events == []
+
+
+def test_wsgi_operational_logs_are_structured_and_redact_mail_and_failures(
+    gateway,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    service, _, _, publisher = gateway
+    secret = "private provider error with raw mail content"
+    publisher.failure = RuntimeError(secret)
+    app = MailGatewayApplication(service)
+
+    status = wsgi_request(
+        app,
+        method="POST",
+        path=f"/_ah/mail/{RECIPIENT}",
+        body=RAW_MESSAGE,
+    )
+
+    assert status == "503 Service Unavailable"
+    output = capfd.readouterr().out
+    payloads = [json.loads(line) for line in output.splitlines() if line]
+    assert [payload["event"] for payload in payloads] == [
+        "inbound_mail_failed",
+        "http_request_completed",
+    ]
+    assert payloads[0]["error_kind"] == "RuntimeError"
+    assert payloads[1]["http_route"] == "/_ah/mail/{recipient}"
+    assert payloads[1]["http_status"] == 503
+    assert secret not in output
+    assert RECIPIENT not in output
+    assert RAW_MESSAGE.decode() not in output
 
 
 def test_app_engine_config_is_bounded_private_default_mail_service() -> None:
