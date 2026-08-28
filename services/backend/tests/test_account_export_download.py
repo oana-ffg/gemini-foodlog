@@ -7,7 +7,12 @@ from fastapi.testclient import TestClient
 
 from foodlog_backend.account_exports import EXPORT_CONTENT_TYPE, export_archive_object_key
 from foodlog_backend.app import create_app
-from foodlog_backend.http_ranges import RangeNotSatisfiable, parse_single_byte_range
+from foodlog_backend.http_ranges import (
+    MAX_HTTP1_FIXED_LENGTH_RESPONSE_BYTES,
+    RangeNotSatisfiable,
+    fixed_content_length,
+    parse_single_byte_range,
+)
 from foodlog_backend.models import AccountExport, AuditAction
 from foodlog_backend.settings import Settings
 
@@ -99,6 +104,15 @@ def test_single_range_parser_rejects_invalid_or_multiple_ranges(value: str) -> N
         parse_single_byte_range(value, total=100)
 
 
+def test_fixed_content_length_selects_chunking_beyond_cloud_run_limit() -> None:
+    assert fixed_content_length(MAX_HTTP1_FIXED_LENGTH_RESPONSE_BYTES) == str(
+        MAX_HTTP1_FIXED_LENGTH_RESPONSE_BYTES
+    )
+    assert fixed_content_length(MAX_HTTP1_FIXED_LENGTH_RESPONSE_BYTES + 1) is None
+    with pytest.raises(ValueError):
+        fixed_content_length(0)
+
+
 def test_owner_can_stream_full_and_resumable_private_export() -> None:
     app = create_app(Settings(environment="test"))
     content = bytes(range(256)) * 8_193
@@ -138,6 +152,23 @@ def test_owner_can_stream_full_and_resumable_private_export() -> None:
     assert [event.action for event in audits].count(
         AuditAction.ACCOUNT_EXPORT_DOWNLOADED
     ) == 1
+
+
+def test_large_full_download_uses_chunked_streaming() -> None:
+    app = create_app(Settings(environment="test"))
+    content = b"x" * (MAX_HTTP1_FIXED_LENGTH_RESPONSE_BYTES + 1)
+    account_export = asyncio.run(
+        create_export(app, owner_user_id="large-download-owner", content=content)
+    )
+    with TestClient(app) as client:
+        response = client.get(
+            f"/v1/exports/{account_export.id}/download",
+            headers={"X-FoodLog-Local-User": "large-download-owner"},
+        )
+
+    assert response.status_code == 200
+    assert response.content == content
+    assert "content-length" not in response.headers
 
 
 def test_invalid_range_returns_416_without_streaming_bytes() -> None:

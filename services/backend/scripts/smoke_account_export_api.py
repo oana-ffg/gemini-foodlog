@@ -28,6 +28,7 @@ FORBIDDEN_EXPORT_FIELDS = frozenset(
         "token",
     }
 )
+MAX_HTTP1_FIXED_LENGTH_RESPONSE_BYTES = 32 * 1024 * 1024
 
 
 def _walk_keys(value: Any):
@@ -186,10 +187,17 @@ def smoke(args: argparse.Namespace) -> None:
 
         with TemporaryFile("w+b") as archive:
             with client.stream("GET", download_path) as response:
-                assert response.status_code == 200, response.text
+                assert response.status_code == 200, (
+                    f"full download returned {response.status_code}"
+                )
                 assert response.headers["cache-control"] == "private, no-store"
                 assert response.headers["content-type"] == "application/zip"
-                assert response.headers["content-length"] == str(export["archive_size"])
+                if export["archive_size"] <= MAX_HTTP1_FIXED_LENGTH_RESPONSE_BYTES:
+                    assert response.headers["content-length"] == str(
+                        export["archive_size"]
+                    )
+                else:
+                    assert "content-length" not in response.headers
                 assert response.headers["accept-ranges"] == "bytes"
                 assert "attachment" in response.headers["content-disposition"]
                 assert response.headers["x-content-type-options"] == "nosniff"

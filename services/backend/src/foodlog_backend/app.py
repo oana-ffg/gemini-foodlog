@@ -61,7 +61,12 @@ from .errors import (
 from .feedback_learning import FeedbackLearningService, MealFeedbackLearningResult
 from .firestore_repository import FirestoreRepository
 from .household_teaching import HouseholdTeachingService
-from .http_ranges import ByteRange, RangeNotSatisfiable, parse_single_byte_range
+from .http_ranges import (
+    ByteRange,
+    RangeNotSatisfiable,
+    fixed_content_length,
+    parse_single_byte_range,
+)
 from .image_events import (
     CaptureEventPublisher,
     InMemoryCaptureEventPublisher,
@@ -779,9 +784,11 @@ def create_app(
             "Content-Disposition": (
                 f'attachment; filename="foodlog-export-{account_export.id}.zip"'
             ),
-            "Content-Length": str(requested_range.length),
             "X-Content-Type-Options": "nosniff",
         }
+        content_length = fixed_content_length(requested_range.length)
+        if content_length is not None:
+            headers["Content-Length"] = content_length
         if response_status == status.HTTP_206_PARTIAL_CONTENT:
             headers["Content-Range"] = requested_range.content_range
         return StreamingResponse(
