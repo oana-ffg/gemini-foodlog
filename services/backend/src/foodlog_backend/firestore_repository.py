@@ -1,6 +1,7 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from hashlib import sha256
+from math import ceil
 from typing import Any
 from uuid import uuid4
 
@@ -15,6 +16,9 @@ from .audit import build_audit_event
 from .errors import (
     AccountAlreadyProvisioned,
     AccountCapacityReached,
+    AccountExportAlreadyActive,
+    AccountExportNotFound,
+    AccountExportRateLimited,
     AccountNotProvisioned,
     ActivityEventNotFound,
     AiTraceConflict,
@@ -61,6 +65,7 @@ from .inference_schema import ActivityMealInferenceV1
 from .models import (
     Account,
     AccountCreatedOutbox,
+    AccountExport,
     ActivityEvent,
     ActivityEventStatus,
     ActivitySegment,
@@ -135,6 +140,8 @@ from .models import (
     UserContextNoteStatus,
     VerifiedDeviceIdentity,
     WaitlistEntry,
+    account_export_id,
+    account_export_job_id,
     capture_grouping_job_id,
     event_inference_job_id,
     utc_now,
@@ -619,6 +626,142 @@ class FirestoreRepository:
         if not account.exists or not entitlement.exists:
             raise AccountNotProvisioned
         return self._account_from_snapshots(account, entitlement)
+
+    async def create_account_export(
+        self,
+        *,
+        owner_user_id: str,
+        idempotency_key: str,
+        requested_at: datetime,
+        cooldown: timedelta,
+    ) -> tuple[AccountExport, bool]:
+        if requested_at.tzinfo is None or requested_at.utcoffset() is None:
+            raise ValueError("account export request time must include a UTC offset")
+        if cooldown <= timedelta(0):
+            raise ValueError("account export cooldown must be positive")
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def create(transaction):
+            identity_snapshot = await self._identity(owner_user_id).get(
+                transaction=transaction
+            )
+            if not identity_snapshot.exists or identity_snapshot.get("status") != "active":
+                raise AccountNotProvisioned
+            account_id = identity_snapshot.get("account_id")
+            if not isinstance(account_id, str) or not account_id:
+                raise AccountNotProvisioned
+            account_ref = self._account(account_id)
+            account_snapshot = await account_ref.get(transaction=transaction)
+            if (
+                not account_snapshot.exists
+                or account_snapshot.get("status") != "active"
+                or account_snapshot.get("owner_user_id") != owner_user_id
+            ):
+                raise AccountNotProvisioned
+
+            export_id = account_export_id(account_id, idempotency_key)
+            export_ref = self._collection(account_id, "exports").document(export_id)
+            control_ref = self._collection(account_id, "export_control").document("current")
+            export_snapshot = await export_ref.get(transaction=transaction)
+            control_snapshot = await control_ref.get(transaction=transaction)
+
+            if export_snapshot.exists:
+                existing = _model(export_snapshot, AccountExport)
+                job_snapshot = await self._collection(account_id, "jobs").document(
+                    existing.job_id
+                ).get(transaction=transaction)
+                if (
+                    existing.account_id != account_id
+                    or existing.requested_by_user_id != owner_user_id
+                    or not job_snapshot.exists
+                ):
+                    raise JobIdentityConflict
+                job = _model(job_snapshot, DurableJob)
+                if job.kind != JobKind.ACCOUNT_EXPORT or job.subject_id != export_id:
+                    raise JobIdentityConflict
+                return existing, False
+
+            active_export_id = (
+                control_snapshot.get("active_export_id") if control_snapshot.exists else None
+            )
+            if active_export_id is not None:
+                if not isinstance(active_export_id, str) or not active_export_id:
+                    raise JobIdentityConflict
+                raise AccountExportAlreadyActive(active_export_id)
+            last_requested_at = (
+                control_snapshot.get("last_requested_at") if control_snapshot.exists else None
+            )
+            if last_requested_at is not None:
+                if not isinstance(last_requested_at, datetime):
+                    raise JobIdentityConflict
+                available_at = last_requested_at + cooldown
+                if requested_at < available_at:
+                    raise AccountExportRateLimited(
+                        max(1, ceil((available_at - requested_at).total_seconds()))
+                    )
+
+            job_id = account_export_job_id(export_id)
+            account_export = AccountExport(
+                id=export_id,
+                account_id=account_id,
+                requested_by_user_id=owner_user_id,
+                job_id=job_id,
+                snapshot_at=requested_at,
+                requested_at=requested_at,
+            )
+            job = DurableJob(
+                id=job_id,
+                account_id=account_id,
+                kind=JobKind.ACCOUNT_EXPORT,
+                subject_id=export_id,
+                subject_revision=1,
+                available_at=requested_at,
+                created_at=requested_at,
+            )
+            audit = build_audit_event(
+                account_id=account_id,
+                action=AuditAction.ACCOUNT_EXPORT_REQUESTED,
+                actor_kind=AuditActorKind.USER,
+                source=AuditSource.API,
+                subject_kind="account_export",
+                subject_id=export_id,
+            ).model_copy(update={"created_at": requested_at})
+            audit_ref = self._collection(account_id, "audit_events").document(audit.id)
+            job_ref = self._collection(account_id, "jobs").document(job.id)
+            transaction.create(export_ref, _document(account_export))
+            transaction.create(job_ref, _document(job))
+            transaction.create(audit_ref, _document(audit))
+            transaction.set(
+                control_ref,
+                {
+                    "schema_version": 1,
+                    "account_id": account_id,
+                    "active_export_id": export_id,
+                    "last_requested_at": requested_at,
+                },
+            )
+            return account_export, True
+
+        return await create(transaction)
+
+    async def account_export_for_owner(
+        self,
+        *,
+        owner_user_id: str,
+        export_id: str,
+    ) -> AccountExport:
+        account = await self.account_for_owner(owner_user_id)
+        snapshot = await self._collection(account.id, "exports").document(export_id).get()
+        if not snapshot.exists:
+            raise AccountExportNotFound
+        account_export = _model(snapshot, AccountExport)
+        if (
+            account_export.account_id != account.id
+            or account_export.requested_by_user_id != owner_user_id
+        ):
+            raise AccountExportNotFound
+        return account_export
 
     async def create_inbound_mail_address(
         self,

@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from enum import StrEnum
+from hashlib import sha256
 from typing import Annotated, Literal
 from unicodedata import normalize as unicode_normalize
 
@@ -281,6 +282,7 @@ class CaptureStatus(StrEnum):
 class JobKind(StrEnum):
     CAPTURE_GROUPING = "capture_grouping"
     EVENT_INFERENCE = "event_inference"
+    ACCOUNT_EXPORT = "account_export"
 
 
 class JobStatus(StrEnum):
@@ -328,6 +330,7 @@ class AuditSource(StrEnum):
 
 class AuditAction(StrEnum):
     ACCOUNT_PROVISIONED = "account.provisioned"
+    ACCOUNT_EXPORT_REQUESTED = "account_export.requested"
     CAPTURE_STORED = "capture.stored"
     CAPTURE_IMAGE_READ = "capture.image_read"
     MEAL_FEEDBACK_RECORDED = "meal.feedback_recorded"
@@ -405,6 +408,42 @@ class Account(BaseModel):
         ):
             raise ValueError("Unlimited accounts cannot have a trial image limit")
         return self
+
+
+class AccountExport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    account_id: str = Field(min_length=1, max_length=128)
+    requested_by_user_id: str = Field(min_length=1, max_length=128)
+    job_id: str = Field(min_length=1, max_length=160)
+    status: Literal["pending"] = "pending"
+    snapshot_at: datetime
+    requested_at: datetime
+
+    @field_validator("snapshot_at", "requested_at")
+    @classmethod
+    def timestamps_have_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("account export timestamps must include a UTC offset")
+        return value.astimezone(UTC)
+
+    @model_validator(mode="after")
+    def snapshot_is_fixed_at_request(self) -> "AccountExport":
+        if self.snapshot_at != self.requested_at:
+            raise ValueError("pending account exports snapshot exactly at request time")
+        return self
+
+
+class AccountExportView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    status: Literal["pending"] = "pending"
+    snapshot_at: datetime
+    requested_at: datetime
 
 
 class AuditEvent(BaseModel):
@@ -910,6 +949,15 @@ def capture_grouping_job_id(capture_id: str) -> str:
 
 def event_inference_job_id(event_id: str) -> str:
     return f"event-inference-{event_id}"
+
+
+def account_export_id(account_id: str, idempotency_key: str) -> str:
+    identity = f"account-export-v1\0{account_id}\0{idempotency_key}"
+    return sha256(identity.encode()).hexdigest()
+
+
+def account_export_job_id(export_id: str) -> str:
+    return f"account-export-{export_id}"
 
 
 class DurableJob(BaseModel):

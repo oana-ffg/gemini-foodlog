@@ -12,6 +12,8 @@ from google.cloud.firestore_v1.async_client import AsyncClient
 from foodlog_backend.errors import (
     AccountAlreadyProvisioned,
     AccountCapacityReached,
+    AccountExportAlreadyActive,
+    AccountExportNotFound,
     AiTraceConflict,
     AiTraceNotFound,
     IdempotencyConflict,
@@ -66,10 +68,98 @@ from foodlog_backend.models import (
     QuestionStatus,
     UserContextNoteCreate,
     UserContextNoteStatus,
+    account_export_id,
     event_inference_job_id,
     utc_now,
 )
 from tests.inference_fixtures import base_payload
+
+
+@pytest.mark.skipif(
+    "FIRESTORE_EMULATOR_HOST" not in os.environ,
+    reason="requires the Firestore emulator",
+)
+def test_firestore_account_export_request_is_atomic_idempotent_and_scoped() -> None:
+    async def scenario() -> None:
+        project_id = f"gemini-foodlog-export-contract-{uuid4().hex}"
+        client = AsyncClient(project=project_id)
+        repository = FirestoreRepository(
+            project_id=project_id,
+            public_account_limit=25,
+            trial_image_limit=200,
+            client=client,
+        )
+        account = await repository.provision_account("firestore-export-owner")
+        await repository.provision_account("firestore-export-other")
+        requested_at = utc_now()
+        request_keys = [f"firestore-export-{index:04d}" for index in range(10)]
+        outcomes = await asyncio.gather(
+            *(
+                repository.create_account_export(
+                    owner_user_id=account.owner_user_id,
+                    idempotency_key=request_key,
+                    requested_at=requested_at,
+                    cooldown=timedelta(hours=1),
+                )
+                for request_key in request_keys
+            ),
+            return_exceptions=True,
+        )
+        accepted = [result for result in outcomes if not isinstance(result, Exception)]
+        rejected = [result for result in outcomes if isinstance(result, Exception)]
+        assert len(accepted) == 1
+        assert len(rejected) == 9
+        assert all(isinstance(error, AccountExportAlreadyActive) for error in rejected)
+        account_export, created = accepted[0]
+        assert created is True
+
+        retry, retry_created = await repository.create_account_export(
+            owner_user_id=account.owner_user_id,
+            idempotency_key=next(
+                request_key
+                for request_key in request_keys
+                if account_export.id
+                == account_export_id(account.id, request_key)
+            ),
+            requested_at=requested_at + timedelta(minutes=1),
+            cooldown=timedelta(hours=1),
+        )
+        assert retry_created is False
+        assert retry == account_export
+        assert await repository.account_export_for_owner(
+            owner_user_id=account.owner_user_id,
+            export_id=account_export.id,
+        ) == account_export
+        with pytest.raises(AccountExportNotFound):
+            await repository.account_export_for_owner(
+                owner_user_id="firestore-export-other",
+                export_id=account_export.id,
+            )
+
+        account_ref = client.collection("accounts").document(account.id)
+        export_snapshot = await account_ref.collection("exports").document(
+            account_export.id
+        ).get()
+        job_snapshot = await account_ref.collection("jobs").document(
+            account_export.job_id
+        ).get()
+        audit_snapshots = [
+            snapshot async for snapshot in account_ref.collection("audit_events").stream()
+        ]
+        control_snapshot = await account_ref.collection("export_control").document(
+            "current"
+        ).get()
+        assert export_snapshot.exists
+        assert job_snapshot.get("kind") == JobKind.ACCOUNT_EXPORT.value
+        assert job_snapshot.get("subject_id") == account_export.id
+        assert len(audit_snapshots) == 1
+        assert audit_snapshots[0].get("action") == "account_export.requested"
+        assert control_snapshot.get("active_export_id") == account_export.id
+        assert "firestore-export" not in repr(export_snapshot.to_dict())
+
+        await client.close()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.skipif(

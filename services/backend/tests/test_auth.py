@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Callable
+from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any, cast
 
@@ -107,6 +108,8 @@ def test_verified_bearer_token_is_the_only_source_of_user_identity() -> None:
         ("GET", "/v1/processing"),
         ("GET", "/v1/purchases"),
         ("GET", "/v1/purchases/purchase-id"),
+        ("POST", "/v1/exports"),
+        ("GET", "/v1/exports/export-id"),
         ("GET", "/v1/meals/meal-id/revisions"),
         ("POST", "/v1/meals/meal-id/feedback"),
         ("GET", "/v1/questions"),
@@ -196,12 +199,13 @@ def test_firebase_verifier_returns_verified_uid_and_normalized_email(
 ) -> None:
     calls: list[tuple[str, object]] = []
 
-    def verify_id_token(token: str, app: object) -> dict[str, str]:
+    def verify_id_token(token: str, app: object) -> dict[str, object]:
         calls.append((token, app))
         return {
             "uid": "verified-user",
             "email": "  Mixed.Case@Example.Test  ",
             "email_verified": "not-a-boolean",
+            "auth_time": 1_777_000_000,
         }
 
     fake_app = object()
@@ -215,6 +219,7 @@ def test_firebase_verifier_returns_verified_uid_and_normalized_email(
         uid="verified-user",
         email_verified=False,
         email="mixed.case@example.test",
+        authenticated_at=datetime.fromtimestamp(1_777_000_000, UTC),
     )
     assert calls == [("signed-token", fake_app)]
 

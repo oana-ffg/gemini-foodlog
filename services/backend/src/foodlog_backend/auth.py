@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 import firebase_admin
@@ -17,6 +18,19 @@ class VerifiedIdentity:
     uid: str
     email_verified: bool
     email: str | None = None
+    authenticated_at: datetime | None = None
+
+    def was_recently_authenticated(
+        self,
+        *,
+        now: datetime,
+        maximum_age: timedelta,
+    ) -> bool:
+        authenticated_at = self.authenticated_at
+        if authenticated_at is None or authenticated_at.tzinfo is None:
+            return False
+        normalized = authenticated_at.astimezone(UTC)
+        return now - maximum_age <= normalized <= now + timedelta(minutes=1)
 
 
 class IdentityTokenVerifier(Protocol):
@@ -55,7 +69,17 @@ class FirebaseIdentityTokenVerifier:
             uid=uid,
             email_verified=claims.get("email_verified") is True,
             email=self._normalized_email(claims.get("email")),
+            authenticated_at=self._authentication_time(claims.get("auth_time")),
         )
+
+    @staticmethod
+    def _authentication_time(value: object) -> datetime | None:
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return None
+        try:
+            return datetime.fromtimestamp(value, UTC)
+        except (OverflowError, OSError, ValueError):
+            return None
 
     @staticmethod
     def _normalized_email(value: object) -> str | None:

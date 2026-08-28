@@ -766,6 +766,8 @@ It excludes device-token verifiers, service credentials, internal secrets, secur
 
 Completed exports remain private and are downloaded through the authenticated API proxy with range support rather than a signed URL. Generated ZIP objects expire automatically after 24 hours; this is temporary-artifact cleanup and does not delete the retained source images, messages, or records. Only one active export per account is allowed, requests are rate-limited, and failures remain visible and retryable without publishing a partial archive as complete.
 
+For the MVP, "recent" means the Firebase `auth_time` is no more than five minutes old, with one minute of allowed future clock skew. Refreshing an ID token does not reset that authentication time. New export requests have a one-hour per-account cooldown, while an exact idempotent retry always returns the original export and its original snapshot timestamp. Admission atomically creates the export, its pending durable job, the active-export fence, and a user audit event; raw idempotency keys are never stored.
+
 ## 13. Firestore data model
 
 Cloud Firestore is the MVP system of record. It was selected over Cloud SQL to avoid fixed idle compute cost and over Turso to keep the trust boundary, regional configuration, IAM, billing controls, and hackathon infrastructure within GCP. Firebase Authentication remains a separate identity service; Firestore stores the application's account and domain data.

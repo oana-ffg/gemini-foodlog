@@ -1,8 +1,9 @@
 import asyncio
 import json
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import datetime, timedelta
 from hashlib import sha256
+from math import ceil
 from typing import Protocol
 from unicodedata import normalize as unicode_normalize
 from uuid import uuid4
@@ -11,6 +12,9 @@ from .audit import build_audit_event
 from .errors import (
     AccountAlreadyProvisioned,
     AccountCapacityReached,
+    AccountExportAlreadyActive,
+    AccountExportNotFound,
+    AccountExportRateLimited,
     AccountNotProvisioned,
     ActivityEventNotFound,
     AiTraceConflict,
@@ -61,6 +65,7 @@ from .inference_schema import ActivityMealInferenceV1, InferenceKind
 from .models import (
     Account,
     AccountCreatedOutbox,
+    AccountExport,
     ActivityEvent,
     ActivityEventStatus,
     ActivitySegment,
@@ -143,6 +148,8 @@ from .models import (
     VerifiedDeviceIdentity,
     WaitlistEntry,
     WholeMealCorrection,
+    account_export_id,
+    account_export_job_id,
     capture_grouping_job_id,
     event_inference_job_id,
     utc_now,
@@ -595,6 +602,22 @@ class Repository(Protocol):
     ) -> bool: ...
 
     async def account_for_owner(self, owner_user_id: str) -> Account: ...
+
+    async def create_account_export(
+        self,
+        *,
+        owner_user_id: str,
+        idempotency_key: str,
+        requested_at: datetime,
+        cooldown: timedelta,
+    ) -> tuple[AccountExport, bool]: ...
+
+    async def account_export_for_owner(
+        self,
+        *,
+        owner_user_id: str,
+        export_id: str,
+    ) -> AccountExport: ...
 
     async def create_inbound_mail_address(
         self,
@@ -1074,6 +1097,9 @@ class InMemoryRepository:
         self._audit_events: dict[tuple[str, str], AuditEvent] = {}
         self._accounts: dict[str, Account] = {}
         self._account_by_owner: dict[str, str] = {}
+        self._account_exports: dict[tuple[str, str], AccountExport] = {}
+        self._active_export_by_account: dict[str, str] = {}
+        self._last_export_requested_at: dict[str, datetime] = {}
         self._notification_outbox: dict[str, AccountCreatedOutbox] = {}
         self._launch_consents: dict[str, LaunchMailConsent] = {}
         self._launch_consent_state_by_owner: dict[str, LaunchMailConsent] = {}
@@ -1360,6 +1386,93 @@ class InMemoryRepository:
             if not account_id:
                 raise AccountNotProvisioned
             return self._accounts[account_id].model_copy(deep=True)
+
+    async def create_account_export(
+        self,
+        *,
+        owner_user_id: str,
+        idempotency_key: str,
+        requested_at: datetime,
+        cooldown: timedelta,
+    ) -> tuple[AccountExport, bool]:
+        if requested_at.tzinfo is None or requested_at.utcoffset() is None:
+            raise ValueError("account export request time must include a UTC offset")
+        if cooldown <= timedelta(0):
+            raise ValueError("account export cooldown must be positive")
+        async with self._lock:
+            account_id = self._account_by_owner.get(owner_user_id)
+            if not account_id:
+                raise AccountNotProvisioned
+            export_id = account_export_id(account_id, idempotency_key)
+            key = (account_id, export_id)
+            existing = self._account_exports.get(key)
+            if existing is not None:
+                job = self._jobs.get((account_id, existing.job_id))
+                if (
+                    existing.requested_by_user_id != owner_user_id
+                    or job is None
+                    or job.kind != JobKind.ACCOUNT_EXPORT
+                    or job.subject_id != export_id
+                ):
+                    raise JobIdentityConflict
+                return existing.model_copy(deep=True), False
+
+            active_export_id = self._active_export_by_account.get(account_id)
+            if active_export_id is not None:
+                raise AccountExportAlreadyActive(active_export_id)
+            last_requested_at = self._last_export_requested_at.get(account_id)
+            if last_requested_at is not None:
+                available_at = last_requested_at + cooldown
+                if requested_at < available_at:
+                    raise AccountExportRateLimited(
+                        max(1, ceil((available_at - requested_at).total_seconds()))
+                    )
+
+            job_id = account_export_job_id(export_id)
+            account_export = AccountExport(
+                id=export_id,
+                account_id=account_id,
+                requested_by_user_id=owner_user_id,
+                job_id=job_id,
+                snapshot_at=requested_at,
+                requested_at=requested_at,
+            )
+            job = DurableJob(
+                id=job_id,
+                account_id=account_id,
+                kind=JobKind.ACCOUNT_EXPORT,
+                subject_id=export_id,
+                subject_revision=1,
+                available_at=requested_at,
+                created_at=requested_at,
+            )
+            audit = build_audit_event(
+                account_id=account_id,
+                action=AuditAction.ACCOUNT_EXPORT_REQUESTED,
+                actor_kind=AuditActorKind.USER,
+                source=AuditSource.API,
+                subject_kind="account_export",
+                subject_id=export_id,
+            ).model_copy(update={"created_at": requested_at})
+            self._account_exports[key] = account_export
+            self._jobs[(account_id, job_id)] = job
+            self._active_export_by_account[account_id] = export_id
+            self._last_export_requested_at[account_id] = requested_at
+            self._append_audit_event_locked(audit)
+            return account_export.model_copy(deep=True), True
+
+    async def account_export_for_owner(
+        self,
+        *,
+        owner_user_id: str,
+        export_id: str,
+    ) -> AccountExport:
+        account = await self.account_for_owner(owner_user_id)
+        async with self._lock:
+            account_export = self._account_exports.get((account.id, export_id))
+            if account_export is None or account_export.requested_by_user_id != owner_user_id:
+                raise AccountExportNotFound
+            return account_export.model_copy(deep=True)
 
     async def create_inbound_mail_address(
         self,

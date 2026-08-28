@@ -34,24 +34,26 @@ locals {
       "https://gemini-foodlog-2026.firebaseapp.com",
       "https://gemini-foodlog-2026.web.app",
     ])
-    FOODLOG_AUTH_BACKEND                  = "firebase"
-    FOODLOG_ENVIRONMENT                   = var.environment
-    FOODLOG_FIREBASE_PROJECT_ID           = var.project_id
-    FOODLOG_GCP_PROJECT_ID                = var.project_id
-    FOODLOG_GROUPING_POLICY_VERSION       = "temporal-v1"
-    FOODLOG_GROUPING_QUIET_SECONDS        = "30"
-    FOODLOG_GROUPING_REOPEN_SECONDS       = "7200"
-    FOODLOG_IMAGE_TOPIC                   = google_pubsub_topic.events["image"].id
-    FOODLOG_INBOUND_MAIL_DOMAIN           = "${var.project_id}.appspotmail.com"
-    FOODLOG_LAUNCH_CONSENT_POLICY_VERSION = "launch-interest-v1"
-    FOODLOG_MEDIA_BUCKET                  = google_storage_bucket.retained["media"].name
-    FOODLOG_MODEL_SPEND_LIMIT_DKK_MICROS  = tostring(local.model_spend_limit_dkk_micros)
-    FOODLOG_NOTIFICATION_TOPIC            = google_pubsub_topic.events["notification"].id
-    FOODLOG_PUBLIC_ACCOUNT_LIMIT          = "25"
-    FOODLOG_STORAGE_BACKEND               = "gcp"
-    FOODLOG_TRIAL_IMAGE_LIMIT             = "200"
-    FOODLOG_UNLIMITED_OWNER_USER_IDS      = jsonencode(sort(tolist(var.unlimited_owner_user_ids)))
-    FOODLOG_WAITLIST_POLICY_VERSION       = "capacity-waitlist-v1"
+    FOODLOG_AUTH_BACKEND                    = "firebase"
+    FOODLOG_ENVIRONMENT                     = var.environment
+    FOODLOG_EXPORT_RECENT_AUTH_SECONDS      = "300"
+    FOODLOG_EXPORT_REQUEST_COOLDOWN_SECONDS = "3600"
+    FOODLOG_FIREBASE_PROJECT_ID             = var.project_id
+    FOODLOG_GCP_PROJECT_ID                  = var.project_id
+    FOODLOG_GROUPING_POLICY_VERSION         = "temporal-v1"
+    FOODLOG_GROUPING_QUIET_SECONDS          = "30"
+    FOODLOG_GROUPING_REOPEN_SECONDS         = "7200"
+    FOODLOG_IMAGE_TOPIC                     = google_pubsub_topic.events["image"].id
+    FOODLOG_INBOUND_MAIL_DOMAIN             = "${var.project_id}.appspotmail.com"
+    FOODLOG_LAUNCH_CONSENT_POLICY_VERSION   = "launch-interest-v1"
+    FOODLOG_MEDIA_BUCKET                    = google_storage_bucket.retained["media"].name
+    FOODLOG_MODEL_SPEND_LIMIT_DKK_MICROS    = tostring(local.model_spend_limit_dkk_micros)
+    FOODLOG_NOTIFICATION_TOPIC              = google_pubsub_topic.events["notification"].id
+    FOODLOG_PUBLIC_ACCOUNT_LIMIT            = "25"
+    FOODLOG_STORAGE_BACKEND                 = "gcp"
+    FOODLOG_TRIAL_IMAGE_LIMIT               = "200"
+    FOODLOG_UNLIMITED_OWNER_USER_IDS        = jsonencode(sort(tolist(var.unlimited_owner_user_ids)))
+    FOODLOG_WAITLIST_POLICY_VERSION         = "capacity-waitlist-v1"
   }
 
   notification_runtime_environment = {

@@ -14,6 +14,22 @@ class AccountAlreadyProvisioned(FoodLogError):
     pass
 
 
+class AccountExportAlreadyActive(FoodLogError):
+    def __init__(self, export_id: str) -> None:
+        super().__init__(export_id)
+        self.export_id = export_id
+
+
+class AccountExportNotFound(FoodLogError):
+    pass
+
+
+class AccountExportRateLimited(FoodLogError):
+    def __init__(self, retry_after_seconds: int) -> None:
+        super().__init__(retry_after_seconds)
+        self.retry_after_seconds = retry_after_seconds
+
+
 class WaitlistUnavailable(FoodLogError):
     pass
 

@@ -9,7 +9,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Form, Header, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from PIL import Image
 from pydantic import ValidationError
 
@@ -23,6 +23,9 @@ from .auth import (
 from .errors import (
     AccountAlreadyProvisioned,
     AccountCapacityReached,
+    AccountExportAlreadyActive,
+    AccountExportNotFound,
+    AccountExportRateLimited,
     AccountNotProvisioned,
     CameraNotFound,
     CaptureNotFound,
@@ -59,6 +62,7 @@ from .image_events import (
 from .inbound_mail import InboundMailAddressService
 from .models import (
     Account,
+    AccountExportView,
     AuditAction,
     AuditActorKind,
     AuditEvent,
@@ -331,7 +335,11 @@ def create_app(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Local user header is required",
             )
-        return VerifiedIdentity(uid=x_foodlog_local_user, email_verified=True)
+        return VerifiedIdentity(
+            uid=x_foodlog_local_user,
+            email_verified=True,
+            authenticated_at=utc_now(),
+        )
 
     request_identity = (
         firebase_request_identity
@@ -351,6 +359,19 @@ def create_app(
                 detail="verified_email_required",
             )
         return identity.email
+
+    async def recently_authenticated_identity(
+        identity: Annotated[VerifiedIdentity, Depends(request_identity)],
+    ) -> VerifiedIdentity:
+        if not identity.was_recently_authenticated(
+            now=utc_now(),
+            maximum_age=timedelta(seconds=active_settings.export_recent_auth_seconds),
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="recent_authentication_required",
+            )
+        return identity
 
     async def request_device_identity(
         authorization: str | None = Header(default=None),
@@ -450,12 +471,40 @@ def create_app(
         return Response(status_code=status.HTTP_404_NOT_FOUND)
 
     app.add_exception_handler(CameraNotFound, resource_missing_handler)
+    app.add_exception_handler(AccountExportNotFound, resource_missing_handler)
     app.add_exception_handler(CaptureNotFound, resource_missing_handler)
     app.add_exception_handler(MealNotFound, resource_missing_handler)
     app.add_exception_handler(PurchaseNotFound, resource_missing_handler)
     app.add_exception_handler(QuestionNotFound, resource_missing_handler)
     app.add_exception_handler(UserContextNoteNotFound, resource_missing_handler)
     app.add_exception_handler(KnowledgePageNotFound, resource_missing_handler)
+
+    @app.exception_handler(AccountExportAlreadyActive)
+    async def account_export_active_handler(
+        _: object,
+        error: AccountExportAlreadyActive,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={
+                "detail": "account_export_already_active",
+                "active_export_id": error.export_id,
+            },
+        )
+
+    @app.exception_handler(AccountExportRateLimited)
+    async def account_export_rate_limit_handler(
+        _: object,
+        error: AccountExportRateLimited,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content={
+                "detail": "account_export_rate_limited",
+                "retry_after_seconds": error.retry_after_seconds,
+            },
+            headers={"Retry-After": str(error.retry_after_seconds)},
+        )
 
     @app.exception_handler(CrossAccountAccess)
     async def cross_account_handler(*_: object) -> Response:
@@ -548,6 +597,51 @@ def create_app(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="inbound_address_generation_failed",
             ) from exc
+
+    @app.post(
+        "/v1/exports",
+        response_model=AccountExportView,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def request_account_export(
+        response: Response,
+        identity: Annotated[VerifiedIdentity, Depends(recently_authenticated_identity)],
+        idempotency_key: Annotated[str, Header(min_length=8, max_length=128)],
+    ) -> AccountExportView:
+        account_export, created = await container.repository.create_account_export(
+            owner_user_id=identity.uid,
+            idempotency_key=idempotency_key,
+            requested_at=utc_now(),
+            cooldown=timedelta(
+                seconds=active_settings.export_request_cooldown_seconds
+            ),
+        )
+        response.status_code = (
+            status.HTTP_202_ACCEPTED if created else status.HTTP_200_OK
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return AccountExportView.model_validate(
+            account_export.model_dump(
+                include={"schema_version", "id", "status", "snapshot_at", "requested_at"}
+            )
+        )
+
+    @app.get("/v1/exports/{export_id}", response_model=AccountExportView)
+    async def get_account_export(
+        export_id: str,
+        response: Response,
+        user_id: str = Depends(request_user_id),
+    ) -> AccountExportView:
+        account_export = await container.repository.account_export_for_owner(
+            owner_user_id=user_id,
+            export_id=export_id,
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return AccountExportView.model_validate(
+            account_export.model_dump(
+                include={"schema_version", "id", "status", "snapshot_at", "requested_at"}
+            )
+        )
 
     @app.post("/v1/consents/launch-mail", response_model=LaunchMailConsent)
     async def record_launch_mail_consent(
