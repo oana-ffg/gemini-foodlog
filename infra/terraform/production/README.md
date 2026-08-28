@@ -52,6 +52,22 @@ uses deletion policy `PREVENT`, and the live database also has delete protection
 enabled. Point-in-time recovery remains disabled during the prototype to avoid
 unnecessary retained-version storage; the standard one-hour version window remains.
 
+### Imported historical preview resources
+
+`historical_preview.tf` owns the private preview resources that existed before this
+production root: the gross-spend billing budget, source-deploy Artifact Registry
+repository, preview runner identity, preview secret metadata and accessor IAM, and
+the isolated preview Cloud Run service and invoker IAM. They were imported into the
+shared remote state without replacement. The service preserves its original pinned
+image and source-build provenance and remains scale-to-zero at revision
+`foodlog-preview-api-00002-clf`.
+
+Terraform deliberately owns only the preview secret metadata and access policy; its
+payload versions remain in Secret Manager and never enter configuration or state.
+Deletion prevention protects the historical resources. Artifact cleanup policy is
+managed separately so image retention can be reviewed against live Cloud Run digest
+references before any artifact becomes eligible for deletion.
+
 ### Unlimited internal or judge accounts
 
 Public accounts receive the configured 200-image lifetime trial. To make a known
