@@ -62,7 +62,7 @@ def test_trace_request_includes_the_application_owned_prompt_tools_and_schema() 
 
 
 def test_prompt_explicitly_couples_questions_to_uncertain_confidence() -> None:
-    assert PROMPT_VERSION == "food-event-v10"
+    assert PROMPT_VERSION == "food-event-v11"
     assert "Follow this exact bounded tool-turn plan" in INSTRUCTION
     assert "Never call more than four tools in one turn" in INSTRUCTION
     assert "select at most two relevant pages" in INSTRUCTION
@@ -92,6 +92,9 @@ def test_prompt_calibrates_specificity_for_degraded_single_frames() -> None:
     assert "without inferred food labels that the pixels do not establish" in INSTRUCTION
     assert "itself may support both candidates" in INSTRUCTION
     assert "materially unresolved distinction" in INSTRUCTION
+    assert "cannot by itself identify what is in the current image" in INSTRUCTION
+    assert 'keep confidence "uncertain"' in INSTRUCTION
+    assert "even when one candidate is known to be available" in INSTRUCTION
 
 
 def test_smoke_rejects_context_and_knowledge_ids_absent_from_input() -> None:

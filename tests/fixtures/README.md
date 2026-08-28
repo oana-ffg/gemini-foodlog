@@ -19,6 +19,7 @@ These are deliberately difficult, out-of-distribution inputs. They are not regis
 | `images/adversarial/synthetic-distant-red-meat-pack.png` | Side view from about 2 m; a person opens a pack beside the sink; basket nearby; dark-red meat is barely visible through hands, glare, blur, noise, and mixed lighting | `273a2e11050a5e7cc3464e6a45f039b8732ac0405244ada956c12e16c0fff906` |
 | `images/adversarial/synthetic-distant-pale-meat-pack.png` | Awkward high corner view; pale fillets are partly hidden by hands and film; backlight and a green cast make poultry likely but not certain | `64d25cdef45a5b23c308c76bd582a4bde76bee957014b063d25af8d6189de369` |
 | `images/adversarial/synthetic-distant-ambiguous-meat-pack.png` | Crooked side view; only a small pinkish glimpse is visible; the image intentionally preserves genuine poultry-versus-red-meat ambiguity | `9bc101311ae39bac06d36bd0df498735087c4c8ddce701c2f9a49dc0320164e6` |
+| `images/adversarial/synthetic-distant-ambiguous-meat-pack-v2.png` | Two-metre underexposed side view; hands, motion blur, mixed color cast, and occlusion make the package contents unreliable for even white-versus-red classification | `de2366772dea61d97eba571b9c84b82403d78bb77bbf0e3157bc85fbac4145f6` |
 
 ## Negative activity fixture
 
@@ -36,6 +37,7 @@ The three deterministic prompts requested a candid, photorealistic, wide consume
 - **Distant red:** a cheap fixed camera about 2 m away, side view of a person opening a generic meat pack by the sink with an air-fryer basket nearby; dark-red meat barely distinguishable through hands, glare, blur, noise, and poor mixed lighting.
 - **Distant pale:** an awkward high-corner webcam view of a person opening a tray near the sink; pale fillets partly obscured by hands and film, with backlight, greenish white balance, rolling-shutter smear, and an out-of-focus basket.
 - **Distant ambiguous:** a crooked, underexposed side view with the package near the frame edge; only a narrow pinkish glimpse that could plausibly be poultry or red meat, with background focus, motion blur, sensor grain, and lens haze.
+- **Distant ambiguous v2:** a non-destructive two-step edit of the original pale-meat frame into a two-metre, underexposed, mixed-color-cast view with the package mostly occluded and its contents deliberately unidentifiable; exact prompts and source provenance are preserved beside the PNG.
 - **Cat negative:** a candid wide fixed-camera frame of one domestic cat mid-hop onto an otherwise empty kitchen counter in an ordinary European kitchen; cheap high-corner webcam viewpoint, inactive stove, no person, no food or cooking evidence, mundane mixed evening light, slight underexposure, motion blur, sensor grain, lens softness, and imperfect white balance. Generated on 2026-08-28 with the built-in OpenAI image-generation tool. The exact generation prompt is preserved in `images/adversarial/synthetic-cat-on-counter.provenance.md`.
 
 ## Evaluation rules
@@ -44,7 +46,7 @@ The three deterministic prompts requested a candid, photorealistic, wide consume
 - Validate the recorded SHA-256 values before using them as release evidence.
 - Never mix synthetic observations into a real household's learned knowledge.
 - A model may reasonably mention additional visible objects, but it must not contradict the required facts above.
-- These seven independent frames do not test temporal event grouping or multi-camera correlation.
+- These eight independent frames do not test temporal event grouping or multi-camera correlation.
 
 The versioned [event scenario schema](../../contracts/event-scenario-ground-truth-v1.schema.json)
 and [scoring policy](../../docs/evaluation-scoring-v1.md) define the richer ground truth

@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "dataset_id": "judge-demo-v1",
+  "context_note": {
+    "text": "Synthetic demo context only: chicken is available in this kitchen during the stated window.",
+    "valid_from": "2026-08-20T00:00:00Z",
+    "valid_until": "2026-10-31T23:59:59Z"
+  },
+  "real_inference_scenarios": [
+    {
+      "key": "red-before-learning",
+      "fixture": "images/adversarial/synthetic-distant-red-meat-pack.png",
+      "sha256": "273a2e11050a5e7cc3464e6a45f039b8732ac0405244ada956c12e16c0fff906",
+      "captured_at": "2026-08-25T18:00:00+02:00",
+      "expected_kind": "tentative_meal",
+      "feedback": {
+        "actual_meal": "Ribeye steak",
+        "explanation": "For this synthetic demo household, red meat prepared in the air-fryer basket beside the sink is usually ribeye steak.",
+        "learning_disposition": "reusable"
+      }
+    },
+    {
+      "key": "red-after-learning",
+      "fixture": "images/adversarial/synthetic-distant-red-meat-pack.png",
+      "sha256": "273a2e11050a5e7cc3464e6a45f039b8732ac0405244ada956c12e16c0fff906",
+      "captured_at": "2026-08-26T18:00:00+02:00",
+      "expected_kind": "tentative_meal",
+      "must_cite_previous_learning": true
+    },
+    {
+      "key": "ambiguous-with-context-v2",
+      "fixture": "images/adversarial/synthetic-distant-ambiguous-meat-pack-v2.png",
+      "sha256": "de2366772dea61d97eba571b9c84b82403d78bb77bbf0e3157bc85fbac4145f6",
+      "captured_at": "2026-08-27T18:00:00+02:00",
+      "expected_kind": "tentative_meal",
+      "expected_confidence": "uncertain"
+    },
+    {
+      "key": "cat-negative-control",
+      "fixture": "images/adversarial/synthetic-cat-on-counter.png",
+      "sha256": "cdace422e5141d6813f6f8de311b69cf75a48883c61a0fa021fb3aa621fd1133",
+      "captured_at": "2026-08-28T09:00:00+02:00",
+      "expected_kind": "likely_non_cooking",
+      "discard_explanation": "Synthetic negative fixture: the cat jumped onto the counter and nobody was preparing food."
+    }
+  ],
+  "synthetic_pattern_history": {
+    "fixture": "images/synthetic-steak-airfryer.png",
+    "sha256": "8e51f9691aebf6335d6d1cf1c7863b73654918bb97db3bd99bd5235e290da208",
+    "events": [
+      {"captured_at": "2026-07-02T18:00:00+02:00", "title": "Steak"},
+      {"captured_at": "2026-07-09T18:00:00+02:00", "title": "Steak"},
+      {"captured_at": "2026-07-16T18:00:00+02:00", "title": "Steak"},
+      {"captured_at": "2026-07-23T18:00:00+02:00", "title": "Chicken"},
+      {"captured_at": "2026-07-30T18:00:00+02:00", "title": "Steak"},
+      {"captured_at": "2026-08-06T18:00:00+02:00", "title": "Steak"}
+    ],
+    "provenance_label": "Explicitly synthetic no-model history prepared for the judge demo.",
+    "expected_claim_value": "Steak",
+    "expected_condition": "thursday"
+  }
+}

@@ -1021,7 +1021,7 @@ def test_unknown_image_is_explicitly_uncertain_without_model_call() -> None:
 
 def test_adversarial_camera_fixtures_remain_uncertain_without_model_call() -> None:
     fixture_paths = sorted(ADVERSARIAL_FIXTURES.glob("*.png"))
-    assert len(fixture_paths) == 4
+    assert len(fixture_paths) == 5
 
     for index, fixture_path in enumerate(fixture_paths):
         with build_client() as client:

@@ -28,8 +28,11 @@ existing account, kitchen image, mail, purchase, trace, or household note.
 
 ## Frozen input
 
-[`judge-demo-dataset.v1.json`](../tests/fixtures/judge-demo-dataset.v1.json)
-hash-locks every image and defines:
+[`judge-demo-dataset.v2.json`](../tests/fixtures/judge-demo-dataset.v2.json)
+is the current create-only recovery revision and hash-locks every image. The
+committed v1 manifest remains immutable evidence of the first run; v2 replaces
+only its insufficiently degraded ambiguous fixture and distinct idempotency key.
+It defines:
 
 - a time-bounded synthetic note that chicken is available;
 - a real red-meat inference, correction, reusable learning, and later real
@@ -58,7 +61,7 @@ uv run python -m scripts.prepare_judge_dataset \
   --project gemini-foodlog-2026 \
   --bucket gemini-foodlog-2026-media-163029863855 \
   --notification-topic projects/gemini-foodlog-2026/topics/foodlog-notification-events \
-  --manifest ../../tests/fixtures/judge-demo-dataset.v1.json \
+  --manifest ../../tests/fixtures/judge-demo-dataset.v2.json \
   --fixture-root ../../tests/fixtures \
   --create-approved-identity \
   --confirm-production-write

@@ -270,7 +270,7 @@ def validate_activity(
         and hypothesis.get("confidence") != scenario.expected_confidence
     ):
         raise RuntimeError(f"judge scenario {scenario.key} produced unsafe confidence")
-    if scenario.key == "ambiguous-with-context":
+    if scenario.key.startswith("ambiguous-with-context"):
         question = hypothesis.get("question")
         if not isinstance(question, dict) or len(question.get("candidate_labels") or []) < 2:
             raise RuntimeError("ambiguous judge scenario lacks a focused candidate question")
@@ -294,7 +294,7 @@ def validate_activity(
             for item in hypothesis.get("assumptions", [])
             if isinstance(item, dict)
         }
-        if previous_knowledge_revision_id not in context_ids & assumption_ids:
+        if previous_knowledge_revision_id not in context_ids | assumption_ids:
             raise RuntimeError("learned follow-up did not cite the exact correction revision")
 
 

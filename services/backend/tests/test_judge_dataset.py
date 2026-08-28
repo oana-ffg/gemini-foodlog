@@ -9,12 +9,17 @@ import pytest
 from foodlog_backend.grouping import CaptureGroupingService, GroupingPolicy
 from foodlog_backend.repository import InMemoryRepository
 from foodlog_backend.storage import InMemoryObjectStore
-from scripts.prepare_judge_dataset import checked_fixture, load_dataset
+from scripts.prepare_judge_dataset import (
+    RealScenarioSpec,
+    checked_fixture,
+    load_dataset,
+    validate_activity,
+)
 from scripts.synthetic_dataset_support import seed_synthetic_meal
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_ROOT = REPOSITORY_ROOT / "tests" / "fixtures"
-MANIFEST = FIXTURE_ROOT / "judge-demo-dataset.v1.json"
+MANIFEST = FIXTURE_ROOT / "judge-demo-dataset.v2.json"
 
 
 def test_judge_dataset_manifest_is_complete_and_hash_locked() -> None:
@@ -24,7 +29,7 @@ def test_judge_dataset_manifest_is_complete_and_hash_locked() -> None:
     assert [item.key for item in dataset.real_inference_scenarios] == [
         "red-before-learning",
         "red-after-learning",
-        "ambiguous-with-context",
+        "ambiguous-with-context-v2",
         "cat-negative-control",
     ]
     assert len(dataset.synthetic_pattern_history.events) == 6
@@ -38,6 +43,74 @@ def test_judge_dataset_manifest_is_complete_and_hash_locked() -> None:
 def test_judge_fixture_paths_cannot_escape_the_frozen_fixture_root() -> None:
     with pytest.raises(ValueError, match="escapes"):
         checked_fixture(FIXTURE_ROOT, Path("../../README.md"), "0" * 64)
+
+
+@pytest.mark.parametrize("citation_field", ["contextual_evidence", "assumptions"])
+def test_learned_follow_up_accepts_one_exact_schema_valid_citation(
+    citation_field: str,
+) -> None:
+    revision_id = "knowledge-revision-001"
+    activity: dict[str, object] = {
+        "activity_hypothesis": {
+            "kind": "tentative_meal",
+            "confidence": "likely",
+            "contextual_evidence": [],
+            "assumptions": [],
+        }
+    }
+    hypothesis = activity["activity_hypothesis"]
+    assert isinstance(hypothesis, dict)
+    if citation_field == "contextual_evidence":
+        hypothesis[citation_field] = [
+            {
+                "source_kind": "household_knowledge",
+                "source_id": revision_id,
+            }
+        ]
+    else:
+        hypothesis[citation_field] = [{"knowledge_revision_id": revision_id}]
+
+    validate_activity(
+        activity,
+        scenario=RealScenarioSpec.model_validate(
+            {
+                "key": "learned-follow-up",
+                "fixture": "images/adversarial/synthetic-distant-red-meat-pack.png",
+                "sha256": "0" * 64,
+                "captured_at": "2026-08-26T18:00:00+02:00",
+                "expected_kind": "tentative_meal",
+                "must_cite_previous_learning": True,
+            }
+        ),
+        context_note_id="context-note-001",
+        previous_knowledge_revision_id=revision_id,
+    )
+
+
+def test_learned_follow_up_rejects_a_missing_exact_citation() -> None:
+    with pytest.raises(RuntimeError, match="did not cite the exact correction revision"):
+        validate_activity(
+            {
+                "activity_hypothesis": {
+                    "kind": "tentative_meal",
+                    "confidence": "likely",
+                    "contextual_evidence": [],
+                    "assumptions": [],
+                }
+            },
+            scenario=RealScenarioSpec.model_validate(
+                {
+                    "key": "learned-follow-up",
+                    "fixture": "images/adversarial/synthetic-distant-red-meat-pack.png",
+                    "sha256": "0" * 64,
+                    "captured_at": "2026-08-26T18:00:00+02:00",
+                    "expected_kind": "tentative_meal",
+                    "must_cite_previous_learning": True,
+                }
+            ),
+            context_note_id="context-note-001",
+            previous_knowledge_revision_id="knowledge-revision-001",
+        )
 
 
 def test_synthetic_meal_seed_is_an_exact_idempotent_retry() -> None:

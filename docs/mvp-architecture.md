@@ -924,7 +924,7 @@ Synthetic scenarios must be labeled clearly and isolated from real household lea
 
 Generated fixtures supplement real footage; they cannot establish real-world accuracy by themselves.
 
-The current fixture set uses seven synthetic OpenAI-generated still images: deterministic frames covering steak, chicken, and reheated pasta; three degraded distant-camera views of a person opening red, pale, or genuinely ambiguous meat packaging beside a sink and air-fryer basket; and one cat visibly hopping onto an otherwise empty counter with no cooking evidence. The degraded fixtures test safe uncertainty without a model, while the cat fixture tests likely-non-cooking and explicit discard behavior through real Gemini. This does not count as the Veo bonus integration. Veo has not been used and will not be invoked until its separate evaluation budget and scenarios are approved.
+The current fixture set uses eight synthetic OpenAI-generated still images: deterministic frames covering steak, chicken, and reheated pasta; four degraded distant-camera views of a person opening red, pale, or genuinely ambiguous meat packaging beside a sink and air-fryer basket, including a non-destructive second ambiguity version; and one cat visibly hopping onto an otherwise empty counter with no cooking evidence. The degraded fixtures test safe uncertainty without a model, while the cat fixture tests likely-non-cooking and explicit discard behavior through real Gemini. This does not count as the Veo bonus integration. Veo has not been used and will not be invoked until its separate evaluation budget and scenarios are approved.
 
 ### 14.1 Demo privacy boundary
 
