@@ -26,7 +26,7 @@ def test_smoke_bundle_records_prompt_and_exact_source_identities() -> None:
     assert bundle["prompt_version"] == PROMPT_VERSION
     assert bundle["event"]["event_id"] == "adk-smoke-event-v1"
     assert bundle["event"]["captures"][0]["capture_id"] == "adk-smoke-capture-v1"
-    assert MAX_LLM_CALLS == 3
+    assert MAX_LLM_CALLS == 4
 
 
 def test_trace_request_includes_the_application_owned_prompt_tools_and_schema() -> None:
@@ -52,7 +52,7 @@ def test_trace_request_includes_the_application_owned_prompt_tools_and_schema() 
     ]
     assert request["response_schema"]["title"] == "ActivityMealInferenceV1"
     assert request["run_config"] == {
-        "max_llm_calls": 3,
+        "max_llm_calls": 4,
         "custom_metadata": {
             "prompt_version": PROMPT_VERSION,
             "purpose": "deployment_smoke",
@@ -62,7 +62,12 @@ def test_trace_request_includes_the_application_owned_prompt_tools_and_schema() 
 
 
 def test_prompt_explicitly_couples_questions_to_uncertain_confidence() -> None:
-    assert PROMPT_VERSION == "food-event-v9"
+    assert PROMPT_VERSION == "food-event-v10"
+    assert "Follow this exact bounded tool-turn plan" in INSTRUCTION
+    assert "Never call more than four tools in one turn" in INSTRUCTION
+    assert "select at most two relevant pages" in INSTRUCTION
+    first_turn = INSTRUCTION.split("On the second tool", 1)[0]
+    assert first_turn.count("get_") == 4
     assert "call get_current_event_evidence" in INSTRUCTION
     assert "get_recent_meals" in INSTRUCTION
     assert "get_recent_purchases" in INSTRUCTION

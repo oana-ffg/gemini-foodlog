@@ -42,8 +42,8 @@ from foodlog_backend.models import (
 from foodlog_backend.repository import Repository
 
 MAX_OUTPUT_TOKENS = 2_048
-# Choose evidence tool, load its artifacts, then produce the structured answer.
-MAX_LLM_CALLS = 3
+# Three bounded tool turns followed by one structured-answer turn.
+MAX_LLM_CALLS = 4
 # The artifact turn can contain every image in the event. This is intentionally
 # much larger than the observed multimodal token count so reservation is an upper bound.
 PROMPT_OVERHEAD_TOKEN_CEILING = 250_000
