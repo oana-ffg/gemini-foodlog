@@ -416,9 +416,19 @@ def test_exhausted_output_repair_remains_a_visible_failure() -> None:
             event_inference_job_id(event.id),
         )
         assert job is not None
-        assert job.status == JobStatus.PENDING
+        assert job.status == JobStatus.FAILED
+        assert job.failed_at is not None
         assert job.last_error_code == "InvalidModelOutputError"
         assert "missing required best_guess" in (job.last_error_message or "")
+
+        duplicate = await processor.process(
+            account_id=account.id,
+            event_id=event.id,
+            expected_revision=event.current_revision,
+            worker_id="event-worker-invalid-output-redelivery",
+        )
+        assert duplicate is None
+        assert len(invoker.calls) == 2
 
     asyncio.run(scenario())
 

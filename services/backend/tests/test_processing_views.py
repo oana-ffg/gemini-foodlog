@@ -48,6 +48,7 @@ def job(
         last_error_code="provider_timeout" if attempt_count else None,
         last_error_message="private provider detail" if attempt_count else None,
         completed_at=now if status == JobStatus.COMPLETED else None,
+        failed_at=now if status == JobStatus.FAILED else None,
     )
 
 
@@ -96,10 +97,23 @@ def test_processing_view_only_calls_completed_inference_complete() -> None:
             status=JobStatus.COMPLETED,
         ),
     )
+    failed = capture_processing_view(
+        processed,
+        grouping_job=None,
+        inference_job=job(
+            kind=JobKind.EVENT_INFERENCE,
+            subject_id="event-001",
+            status=JobStatus.FAILED,
+            attempt_count=1,
+        ),
+    )
 
     assert pending.stage == "analysis_pending"
     assert complete.stage == "complete"
     assert complete.retry_at is None
+    assert failed.stage == "attention_required"
+    assert failed.retry_at is None
+    assert failed.latest_failure_code == "provider_timeout"
 
 
 def test_grouped_stored_capture_reports_the_inference_job_not_grouping_complete() -> None:

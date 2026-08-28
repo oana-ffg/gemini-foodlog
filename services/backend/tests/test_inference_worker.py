@@ -203,6 +203,49 @@ def test_inference_worker_rejects_bad_events_and_retries_processor_failures(
     assert "simulated model outage" not in output
 
 
+def test_released_terminal_inference_failure_is_settled_without_reinvoking_model() -> None:
+    repository, publisher, account_id, capture_id = stored_capture()
+    envelope = push_envelope(publisher.events[0].model_dump(mode="json"))
+    with TestClient(
+        create_image_worker_app(worker_settings(), repository=repository)
+    ) as image_client:
+        assert (
+            image_client.post("/internal/pubsub/capture-stored", json=envelope).status_code
+            == 204
+        )
+    capture = repository._captures[capture_id]
+    assert capture.event_id is not None
+    job_key = (account_id, event_inference_job_id(capture.event_id))
+    repository._jobs[job_key] = repository._jobs[job_key].model_copy(
+        update={
+            "status": JobStatus.PENDING,
+            "attempt_count": 5,
+            "available_at": utc_now(),
+            "last_error_code": "InvalidModelOutputError",
+            "last_error_message": "bounded structured output attempts exhausted",
+        }
+    )
+    processor = RecordingInferenceProcessor(repository)
+    pattern_detector = RecordingPatternDetector()
+    app = create_inference_worker_app(
+        inference_settings(),
+        repository=repository,
+        processor=processor,
+        pattern_detector=pattern_detector,
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/internal/pubsub/capture-stored", json=envelope)
+
+    assert response.status_code == 204
+    assert processor.calls == []
+    assert pattern_detector.calls == []
+    settled = repository._jobs[job_key]
+    assert settled.status == JobStatus.FAILED
+    assert settled.failed_at is not None
+    assert settled.attempt_count == 5
+
+
 def test_reclaimed_account_messages_are_acknowledged_without_worker_mutation() -> None:
     repository, publisher, account_id, _ = stored_capture()
     envelope = push_envelope(publisher.events[0].model_dump(mode="json"))

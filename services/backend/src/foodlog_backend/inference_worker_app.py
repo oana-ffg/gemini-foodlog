@@ -5,6 +5,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from foodlog_agent.event_processing import (
+    TERMINAL_INFERENCE_ERROR_CODES,
     AdkEventReasoner,
     ClaimedEventInference,
     EventInferenceProcessor,
@@ -135,6 +136,22 @@ def create_inference_worker_app(
             raise HTTPException(status_code=503, detail="invalid_inference_job")
         if job.status == JobStatus.COMPLETED:
             await pattern_detection.detect_and_propose(account_id=event.account_id)
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        if job.status == JobStatus.FAILED:
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        if (
+            job.status == JobStatus.PENDING
+            and job.last_error_code in TERMINAL_INFERENCE_ERROR_CODES
+        ):
+            settled = await active_repository.settle_released_job_failure(
+                account_id=event.account_id,
+                job_id=job_id,
+                expected_subject_revision=job.subject_revision,
+                expected_error_code=job.last_error_code,
+                failed_at=utc_now(),
+            )
+            if not settled:
+                raise HTTPException(status_code=503, detail="inference_terminal_settlement_race")
             return Response(status_code=status.HTTP_204_NO_CONTENT)
         now = utc_now()
         if job.status == JobStatus.PENDING and job.available_at > now:

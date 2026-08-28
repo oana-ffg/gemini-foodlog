@@ -2997,7 +2997,7 @@ class FirestoreRepository:
                 raise ValueError("Job leases must expire in the future")
             if job.subject_revision != expected_subject_revision:
                 return None
-            if job.status == JobStatus.COMPLETED:
+            if job.status in {JobStatus.COMPLETED, JobStatus.FAILED}:
                 return None
             if job.status == JobStatus.PENDING and job.available_at > now:
                 return None
@@ -3121,6 +3121,73 @@ class FirestoreRepository:
                 "completed_at": None,
             },
         )
+
+    async def fail_job(
+        self,
+        *,
+        account_id: str,
+        job_id: str,
+        expected_subject_revision: int,
+        lease_id: str,
+        lease_owner: str,
+        error_code: str,
+        error_message: str,
+        failed_at: datetime,
+    ) -> bool:
+        return await self._transition_job(
+            account_id=account_id,
+            job_id=job_id,
+            expected_subject_revision=expected_subject_revision,
+            lease_id=lease_id,
+            lease_owner=lease_owner,
+            updates={
+                "status": JobStatus.FAILED,
+                "last_error_code": error_code,
+                "last_error_message": error_message,
+                "completed_at": None,
+                "failed_at": failed_at,
+            },
+        )
+
+    async def settle_released_job_failure(
+        self,
+        *,
+        account_id: str,
+        job_id: str,
+        expected_subject_revision: int,
+        expected_error_code: str,
+        failed_at: datetime,
+    ) -> bool:
+        job_ref = self._collection(account_id, "jobs").document(job_id)
+        account_ref = self._account(account_id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def settle(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
+            job_snapshot = await job_ref.get(transaction=transaction)
+            if not account_snapshot.exists or account_snapshot.get("status") != "active":
+                return False
+            if not job_snapshot.exists:
+                return False
+            job = _model(job_snapshot, DurableJob)
+            if (
+                job.status != JobStatus.PENDING
+                or job.subject_revision != expected_subject_revision
+                or job.last_error_code != expected_error_code
+            ):
+                return False
+            settled = job.model_copy(
+                update={
+                    "status": JobStatus.FAILED,
+                    "completed_at": None,
+                    "failed_at": failed_at,
+                }
+            )
+            transaction.set(job_ref, _document(settled))
+            return True
+
+        return await settle(transaction)
 
     async def group_capture(
         self,

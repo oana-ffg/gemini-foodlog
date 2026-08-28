@@ -21,6 +21,8 @@ from foodlog_backend.models import (
 )
 from foodlog_backend.repository import Repository
 
+TERMINAL_INFERENCE_ERROR_CODES = frozenset({"InvalidModelOutputError"})
+
 
 class EventReasoner(Protocol):
     async def infer(
@@ -194,16 +196,28 @@ class EventInferenceProcessor:
                 else type(error).__name__
             )
             error_detail = str(error.__cause__ or error)
-            await self._repository.release_job(
-                account_id=account_id,
-                job_id=job_id,
-                expected_subject_revision=expected_revision,
-                lease_id=lease_id,
-                lease_owner=worker_id,
-                available_at=utc_now() + self._retry_delay,
-                error_code=error_code[:120],
-                error_message=error_detail[:2_000] or error_code,
-            )
+            if error_code in TERMINAL_INFERENCE_ERROR_CODES:
+                await self._repository.fail_job(
+                    account_id=account_id,
+                    job_id=job_id,
+                    expected_subject_revision=expected_revision,
+                    lease_id=lease_id,
+                    lease_owner=worker_id,
+                    error_code=error_code,
+                    error_message=error_detail[:2_000] or error_code,
+                    failed_at=utc_now(),
+                )
+            else:
+                await self._repository.release_job(
+                    account_id=account_id,
+                    job_id=job_id,
+                    expected_subject_revision=expected_revision,
+                    lease_id=lease_id,
+                    lease_owner=worker_id,
+                    available_at=utc_now() + self._retry_delay,
+                    error_code=error_code[:120],
+                    error_message=error_detail[:2_000] or error_code,
+                )
             raise
 
         return ClaimedEventInference(

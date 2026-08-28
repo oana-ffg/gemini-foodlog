@@ -939,6 +939,29 @@ class Repository(Protocol):
         error_message: str,
     ) -> bool: ...
 
+    async def fail_job(
+        self,
+        *,
+        account_id: str,
+        job_id: str,
+        expected_subject_revision: int,
+        lease_id: str,
+        lease_owner: str,
+        error_code: str,
+        error_message: str,
+        failed_at: datetime,
+    ) -> bool: ...
+
+    async def settle_released_job_failure(
+        self,
+        *,
+        account_id: str,
+        job_id: str,
+        expected_subject_revision: int,
+        expected_error_code: str,
+        failed_at: datetime,
+    ) -> bool: ...
+
     async def group_capture(
         self,
         *,
@@ -3014,7 +3037,7 @@ class InMemoryRepository:
             job = self._jobs.get(key)
             if job is None or job.subject_revision != expected_subject_revision:
                 return None
-            if job.status == JobStatus.COMPLETED:
+            if job.status in {JobStatus.COMPLETED, JobStatus.FAILED}:
                 return None
             if job.status == JobStatus.PENDING and job.available_at > now:
                 return None
@@ -3113,6 +3136,76 @@ class InMemoryRepository:
                 lease_expires_at=None,
                 last_error_code=error_code,
                 last_error_message=error_message,
+            )
+            return True
+
+    async def fail_job(
+        self,
+        *,
+        account_id: str,
+        job_id: str,
+        expected_subject_revision: int,
+        lease_id: str,
+        lease_owner: str,
+        error_code: str,
+        error_message: str,
+        failed_at: datetime,
+    ) -> bool:
+        async with self._lock:
+            try:
+                self._require_active_account_locked(account_id)
+            except AccountNotProvisioned:
+                return False
+            key = (account_id, job_id)
+            job = self._jobs.get(key)
+            if not self._job_has_active_lease(
+                job,
+                expected_subject_revision=expected_subject_revision,
+                lease_id=lease_id,
+                lease_owner=lease_owner,
+                now=failed_at,
+            ):
+                return False
+            assert job is not None
+            self._jobs[key] = self._updated_job(
+                job,
+                status=JobStatus.FAILED,
+                lease_id=None,
+                lease_owner=None,
+                lease_expires_at=None,
+                last_error_code=error_code,
+                last_error_message=error_message,
+                completed_at=None,
+                failed_at=failed_at,
+            )
+            return True
+
+    async def settle_released_job_failure(
+        self,
+        *,
+        account_id: str,
+        job_id: str,
+        expected_subject_revision: int,
+        expected_error_code: str,
+        failed_at: datetime,
+    ) -> bool:
+        async with self._lock:
+            if self._account_status_by_id.get(account_id) != "active":
+                return False
+            key = (account_id, job_id)
+            job = self._jobs.get(key)
+            if (
+                job is None
+                or job.status != JobStatus.PENDING
+                or job.subject_revision != expected_subject_revision
+                or job.last_error_code != expected_error_code
+            ):
+                return False
+            self._jobs[key] = self._updated_job(
+                job,
+                status=JobStatus.FAILED,
+                completed_at=None,
+                failed_at=failed_at,
             )
             return True
 

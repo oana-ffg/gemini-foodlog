@@ -61,6 +61,8 @@ def capture_processing_view(
                 "complete" if capture.status == CaptureStatus.PROCESSED else "attention_required",
                 inference_job,
             )
+        if inference_job.status == JobStatus.FAILED:
+            return _view(capture, "attention_required", inference_job)
         return _view(
             capture,
             _job_stage(
