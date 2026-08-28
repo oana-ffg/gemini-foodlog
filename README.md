@@ -84,17 +84,17 @@ See [AGENTS.md](./AGENTS.md) for the complete project contract and the hackathon
 
 ## Status
 
-**Durable authenticated capture and event-level Gemini reasoning are live; the hosted product journal UI is still under construction.**
+**The hosted authenticated MVP is live; end-stage human UX checks, hardware firmware, long-running evaluation, and release packaging remain.**
 
 The production API runs on bounded, scale-to-zero Cloud Run and accepts JPEG or PNG captures through one shared contract. Verified browser users authenticate with Firebase; physical and Python cameras use independently revocable `FoodLogCamera` credentials. Accepted images consume the account's 200-image trial entitlement, persist in private Cloud Storage plus Firestore, deduplicate exact retries, and can be read back only through the authenticated owner API. The test account has exercised both browser-user and device upload paths with exact byte/hash read-back.
 
-The React application is live at [gemini-foodlog-2026.web.app](https://gemini-foodlog-2026.web.app). Its separate `/camera` route provides the first manual phone-camera path; motion capture, wake lock, and the persistent browser delivery queue follow after the signed-in phone smoke. The locked [Python camera client](./clients/python/README.md) can already replay fixture sequences or capture a bounded webcam sequence through the production device-authenticated endpoint.
+The React application is live at [gemini-foodlog-2026.web.app](https://gemini-foodlog-2026.web.app). Its protected standalone `/camera` route supports manual phone snapshots plus optional local motion detection, a capture-scoped wake lock, and an IndexedDB delivery queue; real-phone endurance and offline recovery remain human/long tests. The locked [Python camera client](./clients/python/README.md) can replay fixture sequences or capture a bounded webcam sequence through the production device-authenticated endpoint.
 
 Account admission, the 25-account ceiling, 200-image trials, launch-mail consent records, the waitlist API, and one Pushover notification per new account are implemented. The API, image-processing worker, and notification worker are live.
 
-Production groups captures into revisioned activity events and runs Gemini 3.6 Flash through Google ADK on Vertex AI. The deployed workflow loads the current tenant's ordered private images, emits a strict evidence-linked activity/meal hypothesis, reserves and records model spend, and persists redacted application-visible traces. The backend also has immutable correction, question, and household-learning primitives. A private scale-to-zero worker now classifies authenticated Nemlig confirmations and final invoices into one provenance-preserving purchase lifecycle; item/substitution normalization, longitudinal evaluation, and the corresponding real-data UI remain backlog work. The backlog evidence distinguishes deterministic tests from real Gemini runs.
+Production groups captures into revisioned activity events and runs Gemini 3.6 Flash through Google ADK on Vertex AI. The deployed workflow loads the current tenant's ordered private images and relevant account context, emits a strict evidence-linked activity/meal hypothesis, reserves and records model spend, and persists redacted application-visible traces. The UI exposes the real chronological journal, fixed full-image viewer, rationale, corrections, discarded non-cooking history, pattern observations, context notes, household knowledge, purchases, and account data/export surfaces. Authenticated Nemlig confirmations and final invoices become provenance-preserving normalized purchase lifecycles. The backlog evidence distinguishes automatic production proof from the remaining human and long-running tests.
 
-See the working [MVP architecture and decision record](./docs/mvp-architecture.md), [credit-expiry runbook](./docs/credit-expiry-runbook.md), [source-controlled MVP backlog](./docs/mvp-backlog.html), and [historical preview record](./infra/preview/README.md). The original proposal is preserved verbatim in [CORE_IDEA.md](./CORE_IDEA.md).
+See the judge-facing [production architecture diagram](./docs/architecture-diagram.md), working [MVP architecture and decision record](./docs/mvp-architecture.md), [setup and deployment guide](./docs/deployment.md), [credit-expiry runbook](./docs/credit-expiry-runbook.md), [judge-availability runbook](./docs/judge-availability-runbook.md), [source-controlled MVP backlog](./docs/mvp-backlog.html), and [historical preview record](./infra/preview/README.md). The original proposal is preserved verbatim in [CORE_IDEA.md](./CORE_IDEA.md).
 
 The source-controlled [MVP backlog](./docs/mvp-backlog.html) lists every currently known build, deployment, testing, human-validation, and release task in intended phases with explicit dependencies. Mock and preview work is deliberately separated from production capabilities.
 
@@ -102,21 +102,9 @@ The source-controlled [MVP backlog](./docs/mvp-backlog.html) lists every current
 
 Requirements: Node.js 24+, npm, Python 3.12+, and [uv](https://docs.astral.sh/uv/).
 
-```bash
-npm install
+For a deterministic backend-only process, copy `services/backend/.env.example` to `services/backend/.env`, keep local authentication and in-memory storage, then run `uv sync --frozen` and `uv run uvicorn foodlog_backend.main:app --port 8080` from that package. API calls in this mode use `X-FoodLog-Local-User`; the React application does not manufacture that header.
 
-cd services/backend
-uv sync --all-groups
-uv run uvicorn foodlog_backend.main:app --port 8080
-```
-
-In another terminal, from the repository root:
-
-```bash
-npm run dev:web
-```
-
-Open `http://127.0.0.1:5173`, sign in with a verified Firebase account, and open the dedicated camera page. Local API mode is for deterministic development tests; it does not invoke Gemini.
+For the React sign-in flow against an ephemeral local API, switch only `FOODLOG_AUTH_BACKEND` in the ignored `.env` file to `firebase`, keep the local environment and memory storage, start the backend, then run `npm ci` and `npm run dev:web` from the repository root. This uses real Firebase identity but does not persist to Google Cloud or invoke Gemini. See the [setup and deployment guide](./docs/deployment.md) for exact verification, production planning, protected release, post-deploy proof, and recovery instructions.
 
 For production fixture or PC-webcam capture through the same device contract intended for firmware, use the locked [Python camera client](./clients/python/README.md).
 

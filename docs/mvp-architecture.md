@@ -57,22 +57,23 @@ This slice uses the production contracts and tenant boundary. It is not a throwa
 
 ### 1.4 Current implementation checkpoint
 
-As of 2026-08-25, the repository has a deliberately zero-model-cost implementation checkpoint plus a separately deployed historical preview:
+As of 2026-08-28, the durable authenticated production MVP is live alongside a separately retained historical preview:
 
-- a Firebase-authenticated React/Vite application with a protected standalone manual camera route and journal display;
+- a Firebase-authenticated React/Vite application with protected journal, manual and motion camera, context, knowledge, purchase, discarded-history, and account-data routes;
 - one shared FastAPI capture endpoint for browser, simulator, and physical clients, with Firebase or revocable device authentication, a 25-account cap, a 200-image trial quota, strict versioned metadata, idempotent durable capture acceptance, content validation, and authorization-checked image access;
 - production Firestore and private Cloud Storage adapters plus concurrency-safe in-memory test adapters;
-- immutable meal revisions, raw idempotent confirmation/correction records, and tenant-scoped clarification questions whose answers revise the original meal instead of creating a duplicate;
-- a prototype clarification inbox, meal feedback controls, and revision history in the web application; the generic standalone inbox is rejected UX and is not the production design;
-- tenant-isolation, retry/rollback, quota, content-validation, feedback, question, and deterministic domain tests;
-- a Google ADK `Agent` and `App` definition that is imported in tests without calling a model;
+- immutable meal revisions, idempotent state-correct confirmation/correction/not-cooking actions, event-scoped questions, and evidence-backed longitudinal pattern questions;
+- private scale-to-zero grouping, inference, purchase-mail, notification, and export workers with bounded Pub/Sub delivery and dead letters;
+- real Gemini 3.6 Flash reasoning through Google ADK on Vertex AI with account-scoped tools, application-visible redacted traces, atomic spend reservation, and a DKK 400 hard model ceiling;
+- authenticated App Engine inbound mail, deterministic Nemlig confirmation/invoice parsing, normalized purchase evidence, and purchase context available to the agent;
+- tenant-isolation, retry/rollback, quota, content-validation, prompt-injection, correction, knowledge, trace, export, and deployed integration tests;
 - seven immutable synthetic still-image fixtures generated with OpenAI image generation, not Veo: three deterministic ground-truth frames, three degraded distant-camera ambiguity tests, and one cat-on-counter negative-activity test.
 
-Application ingestion never maps fixture hashes to results and has no in-process inference hook. Deterministic tests seed their known inference result explicitly after exercising the same shared capture endpoint. Real processing will occur only through the durable worker and Gemini path described below. Production startup fails closed without the configured GCP storage and Firebase identity settings.
+Application ingestion never maps fixture hashes to results and has no in-process inference hook. Deterministic tests seed known results explicitly; production processing occurs only through the durable worker and real Gemini path described below. Production startup fails closed without configured GCP storage, Firebase identity, Pub/Sub, and model settings.
 
 Commit `ada2235` remains deployed as the private historical Cloud Run service `foodlog-preview-api` in `europe-west1`. It uses IAM plus a Secret Manager application secret, a dedicated runtime identity, zero minimum instances, and a one-instance maximum. Its authenticated smoke test created one ephemeral test account and camera, accepted two OpenAI-generated synthetic fixtures, produced the expected confident steak and chicken journal entries, and returned the stored private image bytes exactly. Cloud Logging showed no server errors. That isolated old revision still uses volatile preview state; its legacy upload route has been removed from the current application and generated OpenAPI and it is not the durable production slice.
 
-The dedicated Google Cloud project `gemini-foodlog-2026` is the only project linked to the dedicated `Gemini FoodLog Hackathon` billing account. The promotion is active with DKK 984.25 remaining and expires on 2026-09-24. A DKK 400 monthly gross-spend budget alerts at 25%, 50%, and 75% (DKK 100, 200, and 300); it excludes credits when measuring spend so the warning still works while the promotion pays the bill. No model call has been made, and the unrelated local gcloud default remains `ffutils`. Exact live identifiers and evidence are recorded in `infra/preview/README.md`.
+The dedicated Google Cloud project `gemini-foodlog-2026` is the only project linked to the dedicated `Gemini FoodLog Hackathon` billing account. The promotion showed DKK 984.25 remaining on 2026-08-25 and expires on 2026-09-24. A DKK 400 monthly gross-spend budget alerts at 25%, 50%, and 75% (DKK 100, 200, and 300); it excludes credits when measuring spend so the warning still works while the promotion pays the bill. The separately enforced Gemini-only DKK 400 ceiling reserves before every provider call. Exact live evidence is recorded in the backlog, [credit-expiry runbook](credit-expiry-runbook.md), and [judge-availability runbook](judge-availability-runbook.md).
 
 ## 2. System shape
 
@@ -92,26 +93,25 @@ The three areas do not imply exactly three packages or deployable processes. The
 - **Webcam simulator:** Python.
 - **Cross-language contracts:** generated OpenAPI and JSON Schema artifacts rather than manually duplicated types.
 
-### 2.2 Initial monorepo layout
+### 2.2 Monorepo layout
 
-This is a starting layout, not a commitment to create empty packages before they are used:
+The repository creates packages only when they are used:
 
 ```text
 apps/
   web/                    user-facing application and browser trial capture
 clients/
-  camera-firmware/        physical microcontroller client
-  webcam-simulator/       reproducible Python capture client
+  python/                 reproducible fixture and webcam capture client
+  camera-firmware/        planned physical microcontroller client
 services/
-  backend/                current API, domain core, local adapters, and ADK definition
-  api/                    future separately deployable ingestion and user API
-  worker/                 future asynchronous event and agent processing
-  mail-gateway/           future App Engine inbound-email adapter
-packages/
-  contracts/              generated API schemas and client types
+  backend/                API, workers, domain core, GCP adapters, and ADK agent
+  mail-gateway/           deployed App Engine inbound-email transport
+contracts/                generated OpenAPI and JSON Schema contracts
+infra/
+  firestore/              default-deny rules and indexes
+  terraform/production/   deployed Google Cloud resources and IAM
 tests/
-  fixtures/               reviewed image/video scenarios and ground truth
-  integration/            deployed and local end-to-end checks
+  fixtures/               reviewed image scenarios and ground truth
 ```
 
 Packages should only be created when the implementation needs them. Unused scaffolding is not part of the MVP.
@@ -147,33 +147,9 @@ Terraform plans can contain sensitive values. Full plan artifacts and output are
 
 ## 3. Architecture overview
 
-```mermaid
-flowchart LR
-    Camera[Microcontroller camera] -->|device-authenticated frames| API[Cloud Run API]
-    Simulator[Webcam simulator] -->|same capture protocol| API
-    BrowserCam[Browser trial camera] -->|user-authenticated frames| API
-
-    API --> Images[(Private Cloud Storage)]
-    API --> DB[(Cloud Firestore)]
-    API --> Events[Pub/Sub]
-
-    Nemlig[Nemlig email] --> Forward[User forwarding rule]
-    Forward --> Mail[App Engine Mail gateway]
-    Mail --> RawMail[(Private Cloud Storage)]
-    Mail --> Events
-
-    Events --> Worker[Cloud Run worker + Google ADK]
-    Worker --> Gemini[Gemini 3.6 Flash via EU Vertex endpoint]
-    Worker --> Images
-    Worker --> DB
-
-    Hosting[Firebase Hosting] --> Web[React + Vite web application]
-    Web --> Auth[Firebase Authentication]
-    Web -->|verified user token| API
-
-    Veo[Veo scenario generator] --> Fixtures[Reviewed regression fixtures]
-    Fixtures --> Simulator
-```
+The canonical [production architecture diagram](architecture-diagram.md) shows the
+deployed public, asynchronous, agentic, and private-data boundaries. Its accompanying
+audit maps every depicted arrow to the implementing source and infrastructure.
 
 The application account is the tenant boundary. Every camera, image, email, purchase, event, meal, question, feedback item, wiki page, and usage record belongs to exactly one account.
 
@@ -693,9 +669,9 @@ An image ceiling alone does not cap Gemini spending because costs depend on even
 
 Internal and judge test accounts can use unlimited entitlements, but they remain subject to the global safety controls.
 
-The hackathon promotion was redeemed into the dedicated FoodLog billing account on 2026-08-25. It is active with DKK 984.25 remaining and expires on 2026-09-24. The private no-model preview has a DKK 400 monthly gross-spend budget with current-spend notifications at 25%, 50%, and 75% (DKK 100, 200, and 300). The budget excludes credits when measuring spend, so an alert is not hidden merely because the promotion covers the invoice.
+The hackathon promotion was redeemed into the dedicated FoodLog billing account on 2026-08-25. The console showed DKK 984.25 remaining on that date; this is historical evidence rather than a current-balance claim. The promotion expires on 2026-09-24. The project has a DKK 400 monthly gross-spend budget with current-spend notifications at 25%, 50%, and 75% (DKK 100, 200, and 300). The budget excludes credits when measuring spend, so an alert is not hidden merely because the promotion covers the invoice.
 
-This budget is an alert, not a hard stop, and therefore cannot guarantee zero out-of-pocket spend. Public signup and model processing remain disabled. Before either is enabled, implement and verify the separate application-level model-spend kill switch, reserve headroom below the remaining credit, and define the shutdown action before credit expiry. The [credit-expiry runbook](credit-expiry-runbook.md) owns that operational boundary. The application must not silently invent or raise those limits.
+This budget is an alert, not a hard stop, and therefore cannot guarantee zero out-of-pocket spend. Public signup and model processing are now enabled behind the verified 25-account, 200-image, bounded-retry, and DKK 400 Gemini-only controls. The [credit-expiry runbook](credit-expiry-runbook.md) owns the mandatory shutdown/replacement-credit decision before 2026-09-24, while the [judge-availability runbook](judge-availability-runbook.md) records the seven-day gap to the end of judging. The application must not silently invent or raise those limits.
 
 ### 11.3 Working cost estimate
 
