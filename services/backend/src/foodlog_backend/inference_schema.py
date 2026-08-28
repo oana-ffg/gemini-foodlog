@@ -196,6 +196,69 @@ class ActivityMealInferenceV1(InferenceModel):
         if self.question:
             self._require_known_references(self.question.evidence_ids, all_evidence_ids)
 
+        visual_ids = set(observation_ids)
+        contextual_ids = set(context_ids + assumption_ids)
+        context_bridged_visuals = {
+            deduction.id: set(deduction.evidence_ids) & visual_ids
+            for deduction in self.deductions
+            if set(deduction.evidence_ids) & visual_ids
+            and set(deduction.evidence_ids) & contextual_ids
+        }
+        all_bridged_visuals = set().union(*context_bridged_visuals.values())
+
+        def normalized_phrase(value: str) -> str:
+            return " ".join(value.casefold().replace("-", " ").split())
+
+        normalized_best_guess = normalized_phrase(self.best_guess or "")
+        component_identity_phrases = {
+            normalized_phrase(component.name) for component in self.components
+        }
+
+        def preserves_visible_component_identity(alternative: Alternative) -> bool:
+            normalized_alternative = normalized_phrase(alternative.label)
+            return any(
+                f" {identity} " in f" {normalized_best_guess} "
+                and f" {identity} " in f" {normalized_alternative} "
+                for identity in component_identity_phrases
+            )
+
+        top_level_visual_tie = bool(all_bridged_visuals) and any(
+            set(alternative.evidence_ids) & all_bridged_visuals
+            and not preserves_visible_component_identity(alternative)
+            for alternative in self.alternatives
+        )
+        if top_level_visual_tie:
+            if self.confidence != InferenceConfidence.UNCERTAIN:
+                raise ValueError(
+                    "context cannot resolve a visually supported alternative at likely confidence"
+                )
+            if self.question is None:
+                raise ValueError(
+                    "a context-resolved visual tie requires a focused candidate question"
+                )
+        for component in self.components:
+            component_bridged_visuals = set().union(
+                *(
+                    context_bridged_visuals[evidence_id]
+                    for evidence_id in component.evidence_ids
+                    if evidence_id in context_bridged_visuals
+                )
+            )
+            if (
+                component_bridged_visuals
+                and any(
+                    set(alternative.evidence_ids) & component_bridged_visuals
+                    and normalized_phrase(component.name)
+                    not in normalized_phrase(alternative.label)
+                    for alternative in component.alternatives
+                )
+                and component.confidence != InferenceConfidence.UNCERTAIN
+            ):
+                raise ValueError(
+                    "context cannot resolve a visually supported component alternative "
+                    "at likely confidence"
+                )
+
         tentative_actions = [
             UserAction.CONFIRM_GUESS,
             UserAction.CORRECT,

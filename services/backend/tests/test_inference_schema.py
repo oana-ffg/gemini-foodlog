@@ -173,6 +173,46 @@ def test_harmless_uncertainty_can_remain_visible_without_interrupting_the_user()
     assert inference.alternatives[0].label == "Pan-seared steak"
 
 
+def test_availability_context_cannot_resolve_a_visual_identity_tie() -> None:
+    payload = deepcopy(base_payload())
+    payload["confidence"] = "likely"
+    payload["components"][0]["confidence"] = "likely"
+    payload["question"] = None
+
+    with pytest.raises(ValidationError, match="context cannot resolve"):
+        ActivityMealInferenceV1.model_validate(payload)
+
+
+def test_context_resolved_visual_tie_requires_a_focused_question() -> None:
+    payload = deepcopy(base_payload())
+    payload["question"] = None
+
+    with pytest.raises(ValidationError, match="requires a focused candidate question"):
+        ActivityMealInferenceV1.model_validate(payload)
+
+
+def test_context_resolved_component_tie_must_remain_uncertain() -> None:
+    payload = deepcopy(base_payload())
+    payload["components"][0]["confidence"] = "likely"
+
+    with pytest.raises(ValidationError, match="component alternative"):
+        ActivityMealInferenceV1.model_validate(payload)
+
+
+def test_likely_visual_result_can_keep_non_decisive_context() -> None:
+    payload = deepcopy(base_payload())
+    payload["confidence"] = "likely"
+    payload["components"][0]["confidence"] = "likely"
+    payload["deductions"][0]["evidence_ids"] = ["obs_meat"]
+    payload["components"][0]["evidence_ids"] = ["obs_meat", "ded_meat"]
+    payload["question"] = None
+
+    inference = ActivityMealInferenceV1.model_validate(payload)
+
+    assert inference.confidence == "likely"
+    assert inference.contextual_evidence[0].source_id == "purchase-001"
+
+
 @pytest.mark.parametrize(
     ("candidate_labels", "message"),
     [
