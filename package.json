@@ -1,6 +1,7 @@
 {
   "name": "gemini-foodlog",
   "private": true,
+  "license": "Apache-2.0",
   "workspaces": [
     "apps/web"
   ],

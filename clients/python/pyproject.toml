@@ -3,6 +3,7 @@ name = "gemini-foodlog-camera-client"
 version = "0.1.0"
 description = "Python fixture and webcam client for the Gemini FoodLog capture API"
 requires-python = ">=3.12"
+license = "Apache-2.0"
 dependencies = [
   "httpx>=0.28,<1",
   "pillow>=11,<13",

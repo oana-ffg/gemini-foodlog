@@ -1,0 +1,16 @@
+Gemini FoodLog
+Copyright 2026 Oana Goge
+
+This product is licensed under the Apache License, Version 2.0. See LICENSE.
+
+The source tree references third-party software through its package manifests
+and lockfiles. Those dependencies remain subject to their respective copyright
+notices and license terms; the Apache-2.0 license for Gemini FoodLog does not
+replace them. Generated deployment bundles must preserve any notices required by
+the dependencies they contain.
+
+The synthetic kitchen-image fixtures under tests/fixtures/images were generated
+for this project with OpenAI's image-generation tool. Their exact provenance,
+review status, and content hashes are documented in tests/fixtures/README.md and
+the adjacent provenance files. They are synthetic test inputs, not photographs
+of real people or evidence of real-world model accuracy.

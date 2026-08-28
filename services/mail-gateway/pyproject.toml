@@ -3,6 +3,7 @@ name = "gemini-foodlog-mail-gateway"
 version = "0.1.0"
 description = "Thin App Engine inbound MIME persistence boundary for Gemini FoodLog"
 requires-python = ">=3.13,<3.14"
+license = "Apache-2.0"
 dependencies = [
   "google-api-core[grpc]>=2.34,<2.35",
   "google-cloud-firestore>=2.29,<3",

@@ -98,6 +98,11 @@ See the judge-facing [Devpost submission copy and test plan](./docs/devpost-subm
 
 The source-controlled [MVP backlog](./docs/mvp-backlog.html) lists every currently known build, deployment, testing, human-validation, and release task in intended phases with explicit dependencies. Mock and preview work is deliberately separated from production capabilities.
 
+## License
+
+Gemini FoodLog is licensed under the [Apache License 2.0](./LICENSE). See
+[NOTICE](./NOTICE) for project, dependency, and generated-fixture attribution.
+
 ## Run the local slice
 
 Requirements: Node.js 24+, npm, Python 3.12+, [uv](https://docs.astral.sh/uv/), and Java for the Firestore Rules emulator. Testing the portable physical-camera core also requires GNU Make and a C++20 compiler.

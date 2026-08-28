@@ -3,6 +3,7 @@ name = "gemini-foodlog-backend"
 version = "0.1.0"
 description = "Gemini FoodLog ingestion API and agent worker"
 requires-python = ">=3.12"
+license = "Apache-2.0"
 dependencies = [
   "fastapi>=0.116,<1",
   "firebase-admin>=7.5,<8",
