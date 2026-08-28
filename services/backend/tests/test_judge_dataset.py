@@ -42,6 +42,12 @@ def test_judge_dataset_manifest_is_complete_and_hash_locked() -> None:
     assert scenario_idempotency_key(dataset.dataset_id, retry) == (
         "judge-demo-v1-ambiguous-with-context-v3-retry-3"
     )
+    cat_retry = dataset.real_inference_scenarios[3]
+    assert cat_retry.attempt == 2
+    assert scenario_client_version(cat_retry) == "judge-demo-v1-retry-2"
+    assert scenario_idempotency_key(dataset.dataset_id, cat_retry) == (
+        "judge-demo-v1-cat-negative-control-retry-2"
+    )
     assert len(dataset.synthetic_pattern_history.events) == 6
     assert dataset.synthetic_pattern_history.expected_claim_value == "steak"
     assert all(
