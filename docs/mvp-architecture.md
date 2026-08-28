@@ -66,7 +66,7 @@ As of 2026-08-25, the repository has a deliberately zero-model-cost implementati
 - a prototype clarification inbox, meal feedback controls, and revision history in the web application; the generic standalone inbox is rejected UX and is not the production design;
 - tenant-isolation, retry/rollback, quota, content-validation, feedback, question, and deterministic domain tests;
 - a Google ADK `Agent` and `App` definition that is imported in tests without calling a model;
-- six immutable synthetic still-image fixtures generated with OpenAI image generation, not Veo: three deterministic ground-truth frames and three degraded distant-camera ambiguity tests.
+- seven immutable synthetic still-image fixtures generated with OpenAI image generation, not Veo: three deterministic ground-truth frames, three degraded distant-camera ambiguity tests, and one cat-on-counter negative-activity test.
 
 Application ingestion never maps fixture hashes to results and has no in-process inference hook. Deterministic tests seed their known inference result explicitly after exercising the same shared capture endpoint. Real processing will occur only through the durable worker and Gemini path described below. Production startup fails closed without the configured GCP storage and Firebase identity settings.
 
@@ -896,7 +896,7 @@ Synthetic scenarios must be labeled clearly and isolated from real household lea
 
 Generated fixtures supplement real footage; they cannot establish real-world accuracy by themselves.
 
-The current fixture bootstrap uses six synthetic OpenAI-generated still images: deterministic frames covering steak, chicken, and reheated pasta, plus three degraded distant-camera views of a person opening red, pale, or genuinely ambiguous meat packaging beside a sink and air-fryer basket. The degraded fixtures currently test safe uncertainty and question creation without a model; they become model-evaluation inputs only after the spend kill switch is implemented. This does not count as the Veo bonus integration. Veo has not been used and will not be invoked until its separate evaluation budget and scenarios are approved.
+The current fixture set uses seven synthetic OpenAI-generated still images: deterministic frames covering steak, chicken, and reheated pasta; three degraded distant-camera views of a person opening red, pale, or genuinely ambiguous meat packaging beside a sink and air-fryer basket; and one cat visibly hopping onto an otherwise empty counter with no cooking evidence. The degraded fixtures test safe uncertainty without a model, while the cat fixture tests likely-non-cooking and explicit discard behavior through real Gemini. This does not count as the Veo bonus integration. Veo has not been used and will not be invoked until its separate evaluation budget and scenarios are approved.
 
 ### 14.1 Demo privacy boundary
 

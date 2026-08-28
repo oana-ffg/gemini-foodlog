@@ -1,6 +1,6 @@
 # Synthetic image fixtures
 
-These privacy-safe still images were generated with the built-in OpenAI image-generation tool on 2026-08-25. They were **not** generated with Veo. They are synthetic regression inputs, not evidence of real-world accuracy.
+These privacy-safe still images were generated with the built-in OpenAI image-generation tool on 2026-08-25 and 2026-08-28. They were **not** generated with Veo. They are synthetic regression inputs, not evidence of real-world accuracy.
 
 ## Ground truth
 
@@ -12,13 +12,19 @@ These privacy-safe still images were generated with the built-in OpenAI image-ge
 
 ## Adversarial camera fixtures
 
-These are deliberately difficult, out-of-distribution inputs. They are not registered in the deterministic local inference map: local and preview modes must accept them, mark them uncertain, and create a clarification question without calling a model.
+These are deliberately difficult, out-of-distribution inputs. They are not registered in the deterministic local inference map: local and preview modes must accept them and mark them uncertain without calling a model or manufacturing a meal-labeling question.
 
 | File | Intended ambiguity | SHA-256 |
 | --- | --- | --- |
 | `images/adversarial/synthetic-distant-red-meat-pack.png` | Side view from about 2 m; a person opens a pack beside the sink; basket nearby; dark-red meat is barely visible through hands, glare, blur, noise, and mixed lighting | `273a2e11050a5e7cc3464e6a45f039b8732ac0405244ada956c12e16c0fff906` |
 | `images/adversarial/synthetic-distant-pale-meat-pack.png` | Awkward high corner view; pale fillets are partly hidden by hands and film; backlight and a green cast make poultry likely but not certain | `64d25cdef45a5b23c308c76bd582a4bde76bee957014b063d25af8d6189de369` |
 | `images/adversarial/synthetic-distant-ambiguous-meat-pack.png` | Crooked side view; only a small pinkish glimpse is visible; the image intentionally preserves genuine poultry-versus-red-meat ambiguity | `9bc101311ae39bac06d36bd0df498735087c4c8ddce701c2f9a49dc0320164e6` |
+
+## Negative activity fixture
+
+| File | Expected activity | Required visible facts | SHA-256 |
+| --- | --- | --- | --- |
+| `images/adversarial/synthetic-cat-on-counter.png` | Pet activity; likely non-cooking and safe to discard as not cooking | One realistic cat visibly mid-hop onto an otherwise empty kitchen counter; inactive stove and sink visible; no person, food, ingredient package, meal, steam, flame, or active cooking | `cdace422e5141d6813f6f8de311b69cf75a48883c61a0fa021fb3aa621fd1133` |
 
 ## Prompt set
 
@@ -30,6 +36,7 @@ The three deterministic prompts requested a candid, photorealistic, wide consume
 - **Distant red:** a cheap fixed camera about 2 m away, side view of a person opening a generic meat pack by the sink with an air-fryer basket nearby; dark-red meat barely distinguishable through hands, glare, blur, noise, and poor mixed lighting.
 - **Distant pale:** an awkward high-corner webcam view of a person opening a tray near the sink; pale fillets partly obscured by hands and film, with backlight, greenish white balance, rolling-shutter smear, and an out-of-focus basket.
 - **Distant ambiguous:** a crooked, underexposed side view with the package near the frame edge; only a narrow pinkish glimpse that could plausibly be poultry or red meat, with background focus, motion blur, sensor grain, and lens haze.
+- **Cat negative:** a candid wide fixed-camera frame of one domestic cat mid-hop onto an otherwise empty kitchen counter in an ordinary European kitchen; cheap high-corner webcam viewpoint, inactive stove, no person, no food or cooking evidence, mundane mixed evening light, slight underexposure, motion blur, sensor grain, lens softness, and imperfect white balance. Generated on 2026-08-28 with the built-in OpenAI image-generation tool. The exact generation prompt is preserved in `images/adversarial/synthetic-cat-on-counter.provenance.md`.
 
 ## Evaluation rules
 
