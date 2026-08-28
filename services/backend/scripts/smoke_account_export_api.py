@@ -143,11 +143,17 @@ def smoke(args: argparse.Namespace) -> None:
     firebase_response.raise_for_status()
     token = firebase_response.json()["idToken"]
 
-    unauthenticated = httpx.post(
-        f"{args.api_url}/v1/exports",
-        headers={"Idempotency-Key": args.idempotency_key},
-        timeout=30,
-    )
+    if args.existing_export_id:
+        unauthenticated = httpx.get(
+            f"{args.api_url}/v1/exports/{args.existing_export_id}",
+            timeout=30,
+        )
+    else:
+        unauthenticated = httpx.post(
+            f"{args.api_url}/v1/exports",
+            headers={"Idempotency-Key": args.idempotency_key},
+            timeout=30,
+        )
     assert unauthenticated.status_code == 401, unauthenticated.text
 
     with httpx.Client(
@@ -163,21 +169,27 @@ def smoke(args: argparse.Namespace) -> None:
         assert account_response.status_code == 200, account_response.text
         account_id = account_response.json()["id"]
 
-        request_response = client.post(
-            "/v1/exports",
-            headers={"Idempotency-Key": args.idempotency_key},
-        )
-        assert request_response.status_code in {200, 202}, request_response.text
-        assert request_response.headers["cache-control"] == "no-store"
-        requested = request_response.json()
-        assert requested["snapshot_at"] == requested["requested_at"]
-        export_id = requested["id"]
+        if args.existing_export_id:
+            export_id = args.existing_export_id
+            request_status: str | int = "existing"
+        else:
+            request_response = client.post(
+                "/v1/exports",
+                headers={"Idempotency-Key": args.idempotency_key},
+            )
+            assert request_response.status_code in {200, 202}, request_response.text
+            assert request_response.headers["cache-control"] == "no-store"
+            requested = request_response.json()
+            assert requested["snapshot_at"] == requested["requested_at"]
+            export_id = requested["id"]
+            request_status = request_response.status_code
 
         export = _wait_for_export(
             client,
             export_id,
             timeout_seconds=args.timeout_seconds,
         )
+        assert export["snapshot_at"] == export["requested_at"]
         assert export["archive_size"] > 0
         assert export["expires_at"] > export["completed_at"]
 
@@ -187,15 +199,11 @@ def smoke(args: argparse.Namespace) -> None:
 
         with TemporaryFile("w+b") as archive:
             with client.stream("GET", download_path) as response:
-                assert response.status_code == 200, (
-                    f"full download returned {response.status_code}"
-                )
+                assert response.status_code == 200, f"full download returned {response.status_code}"
                 assert response.headers["cache-control"] == "private, no-store"
                 assert response.headers["content-type"] == "application/zip"
                 if export["archive_size"] <= MAX_HTTP1_FIXED_LENGTH_RESPONSE_BYTES:
-                    assert response.headers["content-length"] == str(
-                        export["archive_size"]
-                    )
+                    assert response.headers["content-length"] == str(export["archive_size"])
                 else:
                     assert "content-length" not in response.headers
                 assert response.headers["accept-ranges"] == "bytes"
@@ -226,16 +234,14 @@ def smoke(args: argparse.Namespace) -> None:
         audit_response = client.get("/v1/audit-events?limit=200")
         assert audit_response.status_code == 200, audit_response.text
         matching_actions = {
-            event["action"]
-            for event in audit_response.json()
-            if event["subject_id"] == export_id
+            event["action"] for event in audit_response.json() if event["subject_id"] == export_id
         }
         assert "account_export.requested" in matching_actions
         assert "account_export.downloaded" in matching_actions
 
     print(f"account_id={account_id}")
     print(f"export_id={export_id}")
-    print(f"request_status={request_response.status_code}")
+    print(f"request_status={request_status}")
     print(f"observed_statuses={','.join(export['observed_statuses'])}")
     print(f"archive_size={export['archive_size']}")
     print(f"archive_sha256={export['archive_sha256']}")
@@ -256,7 +262,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--api-url", required=True)
     parser.add_argument("--firebase-api-key", required=True)
     parser.add_argument("--origin", required=True)
-    parser.add_argument("--idempotency-key", required=True)
+    export_source = parser.add_mutually_exclusive_group(required=True)
+    export_source.add_argument(
+        "--idempotency-key",
+        help="Request or recover one export through the normal idempotent creation path.",
+    )
+    export_source.add_argument(
+        "--existing-export-id",
+        help="Revalidate an already-completed export without creating another archive.",
+    )
     parser.add_argument("--timeout-seconds", type=float, default=300)
     return parser.parse_args()
 
