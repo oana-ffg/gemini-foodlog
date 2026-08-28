@@ -14,11 +14,12 @@ existing account, kitchen image, mail, purchase, trace, or household note.
   at least 20 characters.
 - The account is an internal unlimited account, so it does not consume one of the
   25 public slots. The global DKK 400 model-spend ceiling remains unchanged.
-- The script permits no more than nine account-visible model traces. It stops
+- The script permits no more than 21 account-visible model traces. It stops
   before starting another fresh inference if a possible repair call could exceed
-  that ceiling. Oana approved this increase from six to nine on 28 Aug 2026 for
-  only the missing post-v11 ambiguity and cat controls, allowing at most four
-  additional traces from the five-trace starting inventory.
+  that ceiling. The account already contains 17 immutable traces, including the
+  retained retry-safety incident evidence. Oana authorized up to DKK 200 of new
+  testing spend on 28 Aug 2026; this recovery remains narrower, allowing at most
+  four additional traces for only the missing ambiguity and cat controls.
 - The script creates no purchase evidence. A fixture message cannot honestly
   stand in for aligned DKIM from Nemlig.
 - The six dated pattern meals are plainly labelled in their immutable evidence as
@@ -48,7 +49,7 @@ It defines:
 - six explicitly synthetic, no-model Thursday meals with one chicken
   counterexample, yielding one open steak-pattern question.
 
-If the nine-trace ceiling is reached, lower-priority remaining real scenarios are
+If the 21-trace ceiling is reached, lower-priority remaining real scenarios are
 left absent rather than exceeding the approved spend. The final inventory reports
 how many were completed and skipped without printing generated resource IDs.
 
@@ -88,7 +89,7 @@ The sanitized summary must report:
 - verified identity and unlimited entitlement;
 - published account-created notification;
 - completed and call-cap-skipped real scenario counts;
-- model trace count no greater than nine;
+- model trace count no greater than 21;
 - six synthetic pattern meals and exactly one open Thursday steak question;
 - final journal, discarded-history, and active-note counts;
 - confirmation that credentials and generated resource IDs were omitted.
