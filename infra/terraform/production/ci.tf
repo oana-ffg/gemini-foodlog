@@ -70,6 +70,19 @@ resource "google_project_iam_custom_role" "ci_service_user" {
   }
 }
 
+resource "google_project_iam_custom_role" "ci_artifact_tag_rotator" {
+  project     = var.project_id
+  role_id     = "foodlogArtifactTagRotator"
+  title       = "FoodLog Artifact Registry tag rotator"
+  description = "Move protected release tags without permission to delete image versions."
+  permissions = ["artifactregistry.tags.delete"]
+  stage       = "GA"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 resource "google_project_iam_member" "ci_deploy_service_user" {
   project = var.project_id
   role    = google_project_iam_custom_role.ci_service_user.name
@@ -101,5 +114,13 @@ resource "google_artifact_registry_repository_iam_member" "ci_deploy_backend_wri
   location   = google_artifact_registry_repository.backend.location
   repository = google_artifact_registry_repository.backend.repository_id
   role       = "roles/artifactregistry.writer"
+  member     = "serviceAccount:${google_service_account.runtime["ci_deploy"].email}"
+}
+
+resource "google_artifact_registry_repository_iam_member" "ci_deploy_tag_rotator" {
+  project    = var.project_id
+  location   = google_artifact_registry_repository.backend.location
+  repository = google_artifact_registry_repository.backend.repository_id
+  role       = google_project_iam_custom_role.ci_artifact_tag_rotator.name
   member     = "serviceAccount:${google_service_account.runtime["ci_deploy"].email}"
 }

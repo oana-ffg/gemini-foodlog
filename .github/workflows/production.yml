@@ -133,6 +133,11 @@ jobs:
         if: inputs.operation == 'deploy'
         id: image
         run: |
+          current_image="$(awk -F'"' '/^api_container_image/ { print $2 }' infra/terraform/production/production.auto.tfvars)"
+          if [[ "$current_image" != "${IMAGE_REPOSITORY}@sha256:"* ]]; then
+            echo "The checked-in production image is not an immutable digest." >&2
+            exit 1
+          fi
           release_tag="candidate-${GITHUB_SHA}"
           candidate_image="${IMAGE_REPOSITORY}:${release_tag}"
           gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
@@ -144,19 +149,7 @@ jobs:
             exit 1
           fi
           echo "qualified_digest=$qualified_digest" >> "$GITHUB_OUTPUT"
-
-      - name: Rotate protected active and rollback tags
-        if: inputs.operation == 'deploy'
-        env:
-          NEW_IMAGE: ${{ steps.image.outputs.qualified_digest }}
-        run: |
-          current_image="$(awk -F'"' '/^api_container_image/ { print $2 }' infra/terraform/production/production.auto.tfvars)"
-          if [[ "$current_image" != "${IMAGE_REPOSITORY}@sha256:"* ]]; then
-            echo "The checked-in production image is not an immutable digest." >&2
-            exit 1
-          fi
-          gcloud artifacts docker tags add "$current_image" "${IMAGE_REPOSITORY}:protected-rollback" --quiet
-          gcloud artifacts docker tags add "$NEW_IMAGE" "${IMAGE_REPOSITORY}:protected-active" --quiet
+          echo "previous_digest=$current_image" >> "$GITHUB_OUTPUT"
 
       - name: Create and validate the exact deployment plan
         if: inputs.operation == 'deploy'
@@ -198,6 +191,15 @@ jobs:
         if: inputs.operation == 'deploy'
         working-directory: infra/terraform/production
         run: terraform apply -auto-approve "$RUNNER_TEMP/foodlog-deploy.tfplan"
+
+      - name: Rotate protected active and rollback tags
+        if: inputs.operation == 'deploy'
+        env:
+          NEW_IMAGE: ${{ steps.image.outputs.qualified_digest }}
+          PREVIOUS_IMAGE: ${{ steps.image.outputs.previous_digest }}
+        run: |
+          gcloud artifacts docker tags add "$PREVIOUS_IMAGE" "${IMAGE_REPOSITORY}:protected-rollback" --quiet
+          gcloud artifacts docker tags add "$NEW_IMAGE" "${IMAGE_REPOSITORY}:protected-active" --quiet
 
       - name: Verify exact live release
         if: inputs.operation == 'deploy'
