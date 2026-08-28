@@ -213,6 +213,7 @@ data "google_iam_policy" "exports" {
 
     members = [
       "serviceAccount:${google_service_account.runtime["api"].email}",
+      "serviceAccount:${google_service_account.runtime["worker"].email}",
     ]
   }
 }

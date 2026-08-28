@@ -1,5 +1,6 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 
 import pytest
 from google.api_core.exceptions import PreconditionFailed
@@ -72,6 +73,10 @@ class FakeBlob:
 
     def download_as_bytes(self) -> bytes:
         return self.objects[self.key][0]
+
+    def open(self, mode: str):
+        assert mode == "rb"
+        return BytesIO(self.objects[self.key][0])
 
 
 class FakeBucket:
@@ -253,6 +258,32 @@ def test_gcs_adapter_writes_once_and_round_trips_private_bytes() -> None:
     assert client.bucket_instance.objects[key][1] == "image/jpeg"
 
 
+def test_gcs_adapter_streams_only_the_requested_private_byte_range() -> None:
+    async def scenario() -> bytes:
+        client = FakeStorageClient()
+        store = GCSObjectStore(
+            project_id="test-project",
+            bucket_name="private-exports",
+            client=client,  # type: ignore[arg-type]
+        )
+        key = "accounts/account-a/exports/export-a.zip"
+        await store.put("account-a", key, b"0123456789", "application/zip")
+        return b"".join(
+            [
+                chunk
+                async for chunk in store.iter_range(
+                    "account-a",
+                    key,
+                    start=2,
+                    end=8,
+                    chunk_size=3,
+                )
+            ]
+        )
+
+    assert asyncio.run(scenario()) == b"2345678"
+
+
 def test_gcs_adapter_never_accepts_different_bytes_for_an_existing_key() -> None:
     client = FakeStorageClient()
     store = GCSObjectStore(
@@ -324,7 +355,7 @@ def test_gcs_adapter_supports_server_derived_private_object_families() -> None:
 def test_production_cannot_select_partial_or_volatile_storage() -> None:
     with pytest.raises(ValidationError, match="in-memory storage"):
         Settings(environment="production", storage_backend="memory")
-    with pytest.raises(ValidationError, match="gcp_project_id and media_bucket"):
+    with pytest.raises(ValidationError, match="gcp_project_id, media_bucket, and export_bucket"):
         Settings(environment="production", storage_backend="gcp")
     with pytest.raises(ValidationError, match="account notification topic"):
         Settings(
@@ -334,6 +365,7 @@ def test_production_cannot_select_partial_or_volatile_storage() -> None:
             gcp_project_id="gemini-foodlog-2026",
             firebase_project_id="gemini-foodlog-2026",
             media_bucket="gemini-foodlog-2026-media-163029863855",
+            export_bucket="gemini-foodlog-2026-exports-163029863855",
         )
     with pytest.raises(ValidationError, match="capture image topic"):
         Settings(
@@ -343,6 +375,7 @@ def test_production_cannot_select_partial_or_volatile_storage() -> None:
             gcp_project_id="gemini-foodlog-2026",
             firebase_project_id="gemini-foodlog-2026",
             media_bucket="gemini-foodlog-2026-media-163029863855",
+            export_bucket="gemini-foodlog-2026-exports-163029863855",
             notification_topic=("projects/gemini-foodlog-2026/topics/foodlog-notification-events"),
         )
     with pytest.raises(ValidationError, match="account export topic"):
@@ -353,6 +386,7 @@ def test_production_cannot_select_partial_or_volatile_storage() -> None:
             gcp_project_id="gemini-foodlog-2026",
             firebase_project_id="gemini-foodlog-2026",
             media_bucket="gemini-foodlog-2026-media-163029863855",
+            export_bucket="gemini-foodlog-2026-exports-163029863855",
             notification_topic=("projects/gemini-foodlog-2026/topics/foodlog-notification-events"),
             image_topic="projects/gemini-foodlog-2026/topics/foodlog-image-events",
         )
@@ -364,6 +398,7 @@ def test_production_cannot_select_partial_or_volatile_storage() -> None:
         gcp_project_id="gemini-foodlog-2026",
         firebase_project_id="gemini-foodlog-2026",
         media_bucket="gemini-foodlog-2026-media-163029863855",
+        export_bucket="gemini-foodlog-2026-exports-163029863855",
         notification_topic=("projects/gemini-foodlog-2026/topics/foodlog-notification-events"),
         image_topic="projects/gemini-foodlog-2026/topics/foodlog-image-events",
         export_topic="projects/gemini-foodlog-2026/topics/foodlog-export-events",

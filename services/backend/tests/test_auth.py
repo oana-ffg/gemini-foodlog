@@ -279,6 +279,7 @@ def test_production_rejects_local_authentication() -> None:
             storage_backend="gcp",
             gcp_project_id="gemini-foodlog-2026",
             media_bucket="gemini-foodlog-2026-media-163029863855",
+            export_bucket="gemini-foodlog-2026-exports-163029863855",
             notification_topic="projects/test/topics/notifications",
             image_topic="projects/test/topics/images",
         )

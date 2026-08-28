@@ -339,6 +339,7 @@ class AuditSource(StrEnum):
 class AuditAction(StrEnum):
     ACCOUNT_PROVISIONED = "account.provisioned"
     ACCOUNT_EXPORT_REQUESTED = "account_export.requested"
+    ACCOUNT_EXPORT_DOWNLOADED = "account_export.downloaded"
     CAPTURE_STORED = "capture.stored"
     CAPTURE_IMAGE_READ = "capture.image_read"
     MEAL_FEEDBACK_RECORDED = "meal.feedback_recorded"

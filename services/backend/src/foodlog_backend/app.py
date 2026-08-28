@@ -9,7 +9,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Form, Header, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from PIL import Image
 from pydantic import ValidationError
 
@@ -19,6 +19,7 @@ from .account_export_events import (
     InMemoryAccountExportEventPublisher,
     PubSubAccountExportEventPublisher,
 )
+from .account_exports import EXPORT_CONTENT_TYPE, export_archive_object_key
 from .audit import record_audit_event
 from .auth import (
     FirebaseIdentityTokenVerifier,
@@ -60,6 +61,7 @@ from .errors import (
 from .feedback_learning import FeedbackLearningService, MealFeedbackLearningResult
 from .firestore_repository import FirestoreRepository
 from .household_teaching import HouseholdTeachingService
+from .http_ranges import ByteRange, RangeNotSatisfiable, parse_single_byte_range
 from .image_events import (
     CaptureEventPublisher,
     InMemoryCaptureEventPublisher,
@@ -69,6 +71,7 @@ from .inbound_mail import InboundMailAddressService
 from .models import (
     Account,
     AccountExport,
+    AccountExportStatus,
     AccountExportView,
     AuditAction,
     AuditActorKind,
@@ -206,6 +209,7 @@ async def validated_image_content(image: UploadFile) -> tuple[bytes, str]:
 class Container:
     repository: Repository
     object_store: ObjectStore
+    export_object_store: ObjectStore
     capture_service: CaptureService
     account_service: AccountProvisioningService
     notification_publisher: NotificationPublisher
@@ -249,6 +253,11 @@ def create_app(
             project_id=active_settings.gcp_project_id,
             bucket_name=active_settings.media_bucket,
         )
+        assert active_settings.export_bucket is not None
+        export_object_store: ObjectStore = GCSObjectStore(
+            project_id=active_settings.gcp_project_id,
+            bucket_name=active_settings.export_bucket,
+        )
     else:
         repository = InMemoryRepository(
             public_account_limit=active_settings.public_account_limit,
@@ -257,6 +266,7 @@ def create_app(
             model_spend_limit_dkk_micros=(active_settings.model_spend_limit_dkk_micros),
         )
         object_store = InMemoryObjectStore()
+        export_object_store = InMemoryObjectStore()
     if active_settings.environment == "production":
         assert active_settings.notification_topic is not None
         assert active_settings.image_topic is not None
@@ -280,6 +290,7 @@ def create_app(
     container = Container(
         repository=repository,
         object_store=object_store,
+        export_object_store=export_object_store,
         capture_service=CaptureService(
             repository=repository,
             object_store=object_store,
@@ -677,6 +688,113 @@ def create_app(
         )
         response.headers["Cache-Control"] = "no-store"
         return account_export_view(account_export)
+
+    @app.get("/v1/exports/{export_id}/download")
+    async def download_account_export(
+        export_id: str,
+        range_header: Annotated[str | None, Header(alias="Range")] = None,
+        user_id: str = Depends(request_user_id),
+    ) -> Response:
+        account_export = await container.repository.account_export_for_owner(
+            owner_user_id=user_id,
+            export_id=export_id,
+        )
+        if account_export.status == AccountExportStatus.FAILED:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="account_export_failed",
+            )
+        if account_export.status != AccountExportStatus.COMPLETED:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="account_export_not_ready",
+            )
+        assert account_export.expires_at is not None
+        if account_export.expires_at <= utc_now():
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail="account_export_expired",
+            )
+        assert account_export.archive_object_key is not None
+        assert account_export.archive_size is not None
+        expected_key = export_archive_object_key(account_export.account_id, account_export.id)
+        if account_export.archive_object_key != expected_key:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="account_export_unavailable",
+            )
+        try:
+            metadata = await container.export_object_store.metadata(
+                account_export.account_id,
+                expected_key,
+            )
+        except Exception as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="account_export_unavailable",
+            ) from error
+        if (
+            metadata.size != account_export.archive_size
+            or metadata.content_type != EXPORT_CONTENT_TYPE
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="account_export_unavailable",
+            )
+        requested_range = ByteRange(
+            start=0,
+            end=account_export.archive_size - 1,
+            total=account_export.archive_size,
+        )
+        response_status = status.HTTP_200_OK
+        if range_header is not None:
+            try:
+                requested_range = parse_single_byte_range(
+                    range_header,
+                    total=account_export.archive_size,
+                )
+            except RangeNotSatisfiable:
+                return Response(
+                    status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
+                    headers={
+                        "Accept-Ranges": "bytes",
+                        "Cache-Control": "private, no-store",
+                        "Content-Range": f"bytes */{account_export.archive_size}",
+                        "X-Content-Type-Options": "nosniff",
+                    },
+                )
+            response_status = status.HTTP_206_PARTIAL_CONTENT
+        await record_audit_event(
+            container.repository,
+            account_id=account_export.account_id,
+            action=AuditAction.ACCOUNT_EXPORT_DOWNLOADED,
+            actor_kind=AuditActorKind.USER,
+            source=AuditSource.API,
+            subject_kind="account_export",
+            subject_id=account_export.id,
+        )
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": (
+                f'attachment; filename="foodlog-export-{account_export.id}.zip"'
+            ),
+            "Content-Length": str(requested_range.length),
+            "X-Content-Type-Options": "nosniff",
+        }
+        if response_status == status.HTTP_206_PARTIAL_CONTENT:
+            headers["Content-Range"] = requested_range.content_range
+        return StreamingResponse(
+            container.export_object_store.iter_range(
+                account_export.account_id,
+                expected_key,
+                start=requested_range.start,
+                end=requested_range.end,
+            ),
+            status_code=response_status,
+            media_type=EXPORT_CONTENT_TYPE,
+            headers=headers,
+        )
 
     @app.post("/v1/consents/launch-mail", response_model=LaunchMailConsent)
     async def record_launch_mail_consent(

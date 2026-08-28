@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
@@ -63,6 +64,16 @@ class ObjectStore(Protocol):
         key: str,
         destination: BinaryIO,
     ) -> None: ...
+
+    def iter_range(
+        self,
+        account_id: str,
+        key: str,
+        *,
+        start: int,
+        end: int,
+        chunk_size: int = 1024 * 1024,
+    ) -> AsyncIterator[bytes]: ...
 
 
 def file_sha256(source: BinaryIO) -> str:
@@ -142,6 +153,23 @@ class InMemoryObjectStore:
         content = await self.get(account_id, key)
         destination.write(content)
         destination.seek(0)
+
+    async def iter_range(
+        self,
+        account_id: str,
+        key: str,
+        *,
+        start: int,
+        end: int,
+        chunk_size: int = 1024 * 1024,
+    ) -> AsyncIterator[bytes]:
+        if chunk_size < 1 or start < 0 or end < start:
+            raise ValueError("invalid object byte range")
+        content = await self.get(account_id, key)
+        if end >= len(content):
+            raise ValueError("object byte range exceeds content")
+        for offset in range(start, end + 1, chunk_size):
+            yield content[offset : min(offset + chunk_size, end + 1)]
 
 
 class GCSObjectStore:
@@ -239,3 +267,28 @@ class GCSObjectStore:
         validate_account_object_key(account_id, key)
         await asyncio.to_thread(self._bucket.blob(key).download_to_file, destination)
         destination.seek(0)
+
+    async def iter_range(
+        self,
+        account_id: str,
+        key: str,
+        *,
+        start: int,
+        end: int,
+        chunk_size: int = 1024 * 1024,
+    ) -> AsyncIterator[bytes]:
+        validate_account_object_key(account_id, key)
+        if chunk_size < 1 or start < 0 or end < start:
+            raise ValueError("invalid object byte range")
+        reader = await asyncio.to_thread(self._bucket.blob(key).open, "rb")
+        try:
+            await asyncio.to_thread(reader.seek, start)
+            remaining = end - start + 1
+            while remaining:
+                content = await asyncio.to_thread(reader.read, min(chunk_size, remaining))
+                if not content:
+                    raise ValueError("object ended before the requested byte range")
+                remaining -= len(content)
+                yield content
+        finally:
+            await asyncio.to_thread(reader.close)

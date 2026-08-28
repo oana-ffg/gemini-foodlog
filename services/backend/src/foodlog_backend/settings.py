@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     gcp_project_id: str | None = None
     firebase_project_id: str | None = None
     media_bucket: str | None = None
+    export_bucket: str | None = None
     image_topic: str | None = None
     export_topic: str | None = None
     notification_topic: str | None = None
@@ -51,9 +52,13 @@ class Settings(BaseSettings):
         if self.environment == "production" and self.storage_backend == "memory":
             raise ValueError("Production cannot start with the in-memory storage adapter")
         if self.storage_backend == "gcp" and (
-            self.gcp_project_id is None or self.media_bucket is None
+            self.gcp_project_id is None
+            or self.media_bucket is None
+            or self.export_bucket is None
         ):
-            raise ValueError("GCP storage requires gcp_project_id and media_bucket")
+            raise ValueError(
+                "GCP storage requires gcp_project_id, media_bucket, and export_bucket"
+            )
         if self.environment == "production" and self.auth_backend != "firebase":
             raise ValueError("Production requires Firebase authentication")
         if self.environment == "production" and self.notification_topic is None:

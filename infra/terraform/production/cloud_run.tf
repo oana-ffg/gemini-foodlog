@@ -38,6 +38,7 @@ locals {
     FOODLOG_ENVIRONMENT                     = var.environment
     FOODLOG_EXPORT_RECENT_AUTH_SECONDS      = "300"
     FOODLOG_EXPORT_REQUEST_COOLDOWN_SECONDS = "3600"
+    FOODLOG_EXPORT_BUCKET                   = google_storage_bucket.exports.name
     FOODLOG_FIREBASE_PROJECT_ID             = var.project_id
     FOODLOG_GCP_PROJECT_ID                  = var.project_id
     FOODLOG_EXPORT_TOPIC                    = google_pubsub_topic.events["export"].id
