@@ -37,9 +37,10 @@ Operational rules:
 | 2026-08-28 22:03 CEST | Fresh judge ambiguity release control | 0.041811 | 0.041811 | Persisted production `model_usage_recorded` event for event `811a98ae-514e-41c8-a832-8323a964c426`: Gemini 3.6 Flash, 4,191 tokens, primary attempt succeeded, `actual_dkk_micros=41811`. The result was safely uncertain and included a focused candidate question, but the judge acceptance check rejected it because it did not cite the synthetic availability note. |
 | 2026-08-28 22:06 CEST | Judge cat-control terminal-resume check | 0.000000 | 0.041811 | The existing exhausted cat event remained safely terminal at `attention_required`; no activity was published and the post-attempt production query found no new `model_usage_recorded` event. This verifies retry containment but does not constitute a fresh cat classification. |
 | 2026-08-28 22:08 CEST | Fresh judge cat negative control | 0.283721 | 0.325532 | Two immutable production usage rows for event `524d2dc0-ebe8-4757-81b8-8eb9b1fd7e7e`: primary Gemini 3.6 Flash attempt failed after 34,523 tokens at DKK 0.244484; its single repair attempt failed after 4,261 tokens at DKK 0.039237. The event failed closed at `attention_required`; no activity or discard revision was published. |
+| 2026-08-28 22:21 CEST | Post-v12 judge cat negative control | 0.546098 | 0.871630 | Two immutable production usage rows for revised event `524d2dc0-ebe8-4757-81b8-8eb9b1fd7e7e`: primary Gemini 3.6 Flash attempt failed after 37,232 tokens at DKK 0.269518; its bounded repair succeeded after 37,878 tokens at DKK 0.276580. The seeder then verified `likely_non_cooking`, wrote immutable not-cooking feedback, and reported one discarded entry. |
 
 ## Current balance
 
 - Authorized ceiling: **DKK 200.000000**
-- Recorded spend since authorization: **DKK 0.325532**
-- Remaining authorized testing budget: **DKK 199.674468**
+- Recorded spend since authorization: **DKK 0.871630**
+- Remaining authorized testing budget: **DKK 199.128370**
