@@ -19,6 +19,7 @@ import {
   useState,
 } from "react";
 import { auth } from "./firebase";
+import PrototypeDataNotice from "./PrototypeDataNotice";
 import { saveSignupLaunchMailIntent } from "./signupIntent";
 
 interface AuthContextValue {
@@ -119,6 +120,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [launchMailOptIn, setLaunchMailOptIn] = useState(false);
+  const [prototypeDataAcknowledged, setPrototypeDataAcknowledged] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
 
@@ -150,6 +152,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     setMode((current) => current === "sign-in" ? "sign-up" : "sign-in");
     setPassword("");
     setLaunchMailOptIn(false);
+    setPrototypeDataAcknowledged(false);
     setMessage(undefined);
   };
 
@@ -182,16 +185,31 @@ export function AuthGate({ children }: { children: ReactNode }) {
             />
           </label>
           {mode === "sign-up" ? (
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={launchMailOptIn}
-                onChange={(event) => setLaunchMailOptIn(event.target.checked)}
-              />
-              Notify me when FoodLog becomes a full product
-            </label>
+            <>
+              <PrototypeDataNotice />
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  required
+                  checked={prototypeDataAcknowledged}
+                  onChange={(event) => setPrototypeDataAcknowledged(event.target.checked)}
+                />
+                I understand how this prototype uses and retains my data
+              </label>
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={launchMailOptIn}
+                  onChange={(event) => setLaunchMailOptIn(event.target.checked)}
+                />
+                Notify me when FoodLog becomes a full product
+              </label>
+            </>
           ) : null}
-          <button type="submit" disabled={busy}>
+          <button
+            type="submit"
+            disabled={busy || (mode === "sign-up" && !prototypeDataAcknowledged)}
+          >
             {busy ? "Please wait…" : mode === "sign-in" ? "Sign in" : "Create account"}
           </button>
           {message ? <p className="form-message form-message--error" role="alert">{message}</p> : null}

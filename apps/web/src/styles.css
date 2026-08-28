@@ -37,6 +37,26 @@ button { font: inherit; }
   line-height: 1.45;
 }
 .checkbox-label input { width: auto; margin: 3px 0 0; accent-color: #315c44; }
+.prototype-data-notice {
+  border: 1px solid #d9d4c8;
+  border-radius: 14px;
+  background: #f7f4ec;
+  color: #414943;
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+.prototype-data-notice summary {
+  cursor: pointer;
+  padding: 14px 16px;
+  color: #1f2521;
+  font-weight: 750;
+}
+.prototype-data-notice__body {
+  display: grid;
+  gap: 10px;
+  padding: 0 16px 16px;
+}
+.prototype-data-notice__body p { margin: 0; }
 .form-message--error { color: #9b3827; }
 .capacity-card { display: grid; gap: 20px; }
 .capacity-card .session-controls { justify-items: start; margin-bottom: 12px; }
