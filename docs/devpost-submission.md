@@ -91,8 +91,9 @@ product record. Its core action is maintaining the journal over time.
   Federation, immutable container digests, protected deployment approval,
   bounded model-spend reservation, and source-controlled operational runbooks.
 
-The [production architecture diagram](architecture-diagram.md) shows the public,
-asynchronous, agentic, and tenant-data boundaries. The [deployment guide](deployment.md)
+The [production architecture diagram](https://github.com/oana-ffg/gemini-foodlog/blob/main/docs/architecture-diagram.md)
+shows the public, asynchronous, agentic, and tenant-data boundaries. The
+[deployment guide](https://github.com/oana-ffg/gemini-foodlog/blob/main/docs/deployment.md)
 contains the clean-checkout and cloud release procedure.
 
 ## Authorized data sources
@@ -148,13 +149,14 @@ reasoning as a product claim.
   ordinary-kitchen dataset and Oana's final normal-user evaluation.
 - Purchase grounding currently targets Nemlig confirmation and invoice emails;
   it is optional and not a general retailer parser.
-- The judge account and reviewed synthetic dataset are a release artifact and
-  are not stored in this repository. They must be completed and verified before
-  submission.
+- The judge account credentials and provisioned production records are release
+  artifacts and are not stored in this repository. The reviewed fixture bytes,
+  hashes, and declarative seed manifest are source-controlled for auditability;
+  provisioning and verification must finish before submission.
 - The known promotional Google Cloud credit expires on 2026-09-24 while judging
   ends on 2026-10-01. The project has hard usage controls, but availability for
   that final seven-day interval still requires the explicit pre-expiry decision
-  in the [judge availability runbook](judge-availability-runbook.md).
+  in the [judge availability runbook](https://github.com/oana-ffg/gemini-foodlog/blob/main/docs/judge-availability-runbook.md).
 - The product supports exploratory food/symptom journaling; it is not a medical
   device and does not make diagnostic or causal claims.
 
@@ -164,9 +166,12 @@ reasoning as a product claim.
 
 1. Open <https://gemini-foodlog-2026.web.app> in a fresh browser session.
 2. Confirm the sign-in boundary loads over HTTPS.
-3. Directly open `/camera`, `/context`, `/knowledge`, `/purchases`, and `/data`.
-   Each protected route should return the sign-in boundary rather than exposing
-   account data.
+3. Directly open [camera](https://gemini-foodlog-2026.web.app/camera),
+   [context](https://gemini-foodlog-2026.web.app/context),
+   [knowledge](https://gemini-foodlog-2026.web.app/knowledge),
+   [purchases](https://gemini-foodlog-2026.web.app/purchases), and
+   [account data](https://gemini-foodlog-2026.web.app/data). Each protected route
+   should return the sign-in boundary rather than exposing account data.
 
 ### Authenticated workflow
 
@@ -174,23 +179,26 @@ The final Devpost testing field must include the verified dedicated judge
 account's email and password. Those values must never be copied into this file,
 the repository, screenshots, logs, or the public video.
 
-After signing in with that dedicated account:
+After signing in with that dedicated account, use the read-only path below so
+the same prepared evidence remains useful to every reviewer:
 
 1. On **Your food timeline**, open one reviewed synthetic cooking event. Switch
    between its captured frames and inspect **Evidence and alternatives**,
    **Context used**, and **View revision history**.
-2. Open one uncertain but tentative meal. Use **Correct it** to correct only a
-   meal or component and read the newly appended revision. Do not use private or
-   identifying text in the correction.
-3. Open the reviewed synthetic non-cooking event and use **Discard as not
-   cooking** if it is still provisional. Confirm it moves to **Discarded
-   non-cooking activity** while its evidence and revision history remain.
-4. Under **Patterns FoodLog wants you to check**, answer the reviewed synthetic
-   longitudinal question. Confirm the response is stored and the active
-   household knowledge reflects only the supported scope.
-5. Open **Tell FoodLog something**. Add a short time-bounded synthetic note,
-   confirm its visible validity window, then retire it so no test residue remains
-   active.
+2. Open the prepared red-meat event and inspect its correction revision, linked
+   household-knowledge revision, and later real Gemini event that cites that
+   exact learning. Leave **Correct it** untouched so the shared judge dataset
+   stays deterministic.
+3. Open **Discarded non-cooking activity**, select the reviewed synthetic cat
+   event, and verify its original likely-non-cooking inference, immutable discard
+   revision, image, and rationale. It must not appear in the food timeline.
+4. Under **Patterns FoodLog wants you to check**, open the reviewed synthetic
+   Thursday-steak question and inspect its five supporting meals, one chicken
+   counterexample, date span, and uncertainty. Please leave it unanswered so
+   later reviewers can inspect the same open question.
+5. Open **Tell FoodLog something** and inspect the prepared time-bounded
+   synthetic chicken-availability note and its visible validity window. No edit
+   is required.
 6. Open **Open the household wiki** and inspect the selected page's immutable
    revision history. No edit is required.
 7. Open **Inspect purchase evidence** and read the optional forwarding workflow.
@@ -200,10 +208,12 @@ After signing in with that dedicated account:
 8. Open **View all stored account data** and inspect the collection counts. If
    testing export, request it once, wait for completion, download the private
    archive, and sign out before sharing the browser.
-9. Open **Open the phone camera page** only for a manual synthetic snapshot.
-   Grant camera permission, register a browser camera, start it, use **Send
-   snapshot**, pause it, then return to the journal and refresh. Do not start an
-   unattended motion test during a short judge session.
+9. Optional write test: open **Open the phone camera page** for one manual,
+   non-private snapshot. Grant camera permission, register a browser camera,
+   start it, use **Send snapshot**, pause it, then return to the journal and
+   refresh. This adds a durable event to the shared judge account, so the
+   prepared read-only workflow above is preferred. Do not start an unattended
+   motion test during a short judge session.
 
 REL-003 owns creating this dedicated identity, loading only reviewed synthetic
 evidence, and replaying every step above. Until that ticket passes, these are the
