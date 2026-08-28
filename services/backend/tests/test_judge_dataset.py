@@ -25,7 +25,7 @@ from scripts.synthetic_dataset_support import seed_synthetic_meal
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_ROOT = REPOSITORY_ROOT / "tests" / "fixtures"
-MANIFEST = FIXTURE_ROOT / "judge-demo-dataset.v3.json"
+MANIFEST = FIXTURE_ROOT / "judge-demo-dataset.v4.json"
 
 
 def test_judge_identity_uses_target_project_for_adc_quota(monkeypatch) -> None:
@@ -65,14 +65,14 @@ def test_judge_dataset_manifest_is_complete_and_hash_locked() -> None:
     assert [item.key for item in dataset.real_inference_scenarios] == [
         "red-before-learning",
         "red-after-learning",
-        "ambiguous-with-context-v3",
+        "ambiguous-with-context-v4",
         "cat-negative-control",
     ]
     retry = dataset.real_inference_scenarios[2]
-    assert retry.attempt == 3
-    assert scenario_client_version(retry) == "judge-demo-v1-retry-3"
+    assert retry.attempt == 4
+    assert scenario_client_version(retry) == "judge-demo-v1-retry-4"
     assert scenario_idempotency_key(dataset.dataset_id, retry) == (
-        "judge-demo-v1-ambiguous-with-context-v3-retry-3"
+        "judge-demo-v1-ambiguous-with-context-v4-retry-4"
     )
     cat_retry = dataset.real_inference_scenarios[3]
     assert cat_retry.attempt == 3
@@ -102,6 +102,20 @@ def test_default_scenario_preserves_original_upload_identity() -> None:
     assert scenario_idempotency_key("judge-demo-v1", scenario) == (
         "judge-demo-v1-red-before-learning-v1"
     )
+
+
+def test_judge_recovery_attempts_remain_bounded() -> None:
+    with pytest.raises(ValueError, match="less than or equal to 5"):
+        RealScenarioSpec.model_validate(
+            {
+                "key": "bounded-retry",
+                "attempt": 6,
+                "fixture": "images/adversarial/synthetic-distant-red-meat-pack.png",
+                "sha256": "0" * 64,
+                "captured_at": "2026-08-26T18:00:00+02:00",
+                "expected_kind": "tentative_meal",
+            }
+        )
 
 
 def test_judge_recovery_can_select_one_frozen_scenario_without_renumbering() -> None:

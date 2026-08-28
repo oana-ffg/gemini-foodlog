@@ -76,7 +76,7 @@ class RealScenarioSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     key: str = Field(pattern=r"^[a-z0-9-]+$")
-    attempt: int = Field(default=1, ge=1, le=3)
+    attempt: int = Field(default=1, ge=1, le=5)
     fixture: Path
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     captured_at: datetime
