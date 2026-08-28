@@ -116,6 +116,18 @@ data "google_iam_policy" "retained_bucket" {
     for_each = each.key == "raw_mail" ? [1] : []
 
     content {
+      role = google_project_iam_custom_role.mail_raw_object_verifier.name
+
+      members = [
+        "serviceAccount:${google_service_account.runtime["mail"].email}",
+      ]
+    }
+  }
+
+  dynamic "binding" {
+    for_each = each.key == "raw_mail" ? [1] : []
+
+    content {
       role = "roles/storage.objectViewer"
 
       members = [

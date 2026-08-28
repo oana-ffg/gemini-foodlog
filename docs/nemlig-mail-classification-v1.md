@@ -20,6 +20,12 @@ purchase. It never links messages by dates, totals, product similarity, or timin
 
 ## Trust and fallback behavior
 
+Before inspecting MIME structure, the public gateway resolves an active opaque
+recipient and atomically charges that account's request/byte rate window. After MIME
+validation it revalidates the exact address generation and atomically reserves bounded
+retained message/byte capacity. Revoked or rotated recipients, exhausted quotas, and
+generation races are terminally discarded without storage or publication.
+
 Purchase promotion requires all of the following:
 
 - the exact normalized sender `kontakt@nemlig.com`;

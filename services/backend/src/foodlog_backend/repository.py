@@ -93,6 +93,7 @@ from .models import (
     DurableJob,
     EntitlementMode,
     InboundMailAddress,
+    InboundMailAddressStatus,
     InboundMailRoute,
     IngredientCorrection,
     JobKind,
@@ -675,6 +676,22 @@ class Repository(Protocol):
         owner_user_id: str,
         address: str,
         address_hash: str,
+    ) -> InboundMailAddress: ...
+
+    async def rotate_inbound_mail_address(
+        self,
+        *,
+        owner_user_id: str,
+        expected_generation: int,
+        address: str,
+        address_hash: str,
+    ) -> InboundMailAddress: ...
+
+    async def revoke_inbound_mail_address(
+        self,
+        *,
+        owner_user_id: str,
+        expected_generation: int,
     ) -> InboundMailAddress: ...
 
     async def raw_mail_authentication(
@@ -1762,7 +1779,12 @@ class InMemoryRepository:
                 route = self._inbound_mail_routes.get(
                     sha256(existing.address.casefold().encode()).hexdigest()
                 )
-                if route is None or route.account_id != account_id:
+                if (
+                    route is None
+                    or route.account_id != account_id
+                    or route.status != existing.status
+                    or route.generation != existing.generation
+                ):
                     raise InboundAddressStateConflict
                 return existing.model_copy(deep=True)
             route = self._inbound_mail_routes.get(address_hash)
@@ -1783,6 +1805,98 @@ class InMemoryRepository:
                 created_at=created_at,
             )
             return inbound_address.model_copy(deep=True)
+
+    async def rotate_inbound_mail_address(
+        self,
+        *,
+        owner_user_id: str,
+        expected_generation: int,
+        address: str,
+        address_hash: str,
+    ) -> InboundMailAddress:
+        async with self._lock:
+            account_id = self._account_by_owner.get(owner_user_id)
+            if not account_id:
+                raise AccountNotProvisioned
+            current = self._inbound_mail_addresses.get(account_id)
+            if current is None or current.generation != expected_generation:
+                raise InboundAddressStateConflict
+            current_hash = sha256(current.address.casefold().encode()).hexdigest()
+            current_route = self._inbound_mail_routes.get(current_hash)
+            if (
+                current_route is None
+                or current_route.account_id != account_id
+                or current_route.status != current.status
+                or current_route.generation != current.generation
+            ):
+                raise InboundAddressStateConflict
+            if address_hash in self._inbound_mail_routes:
+                raise InboundAddressCollision
+            now = utc_now()
+            revoked_route = current_route
+            if current_route.status == InboundMailAddressStatus.ACTIVE:
+                revoked_route = current_route.model_copy(
+                    update={
+                        "status": InboundMailAddressStatus.REVOKED,
+                        "revoked_at": now,
+                    }
+                )
+            replacement = InboundMailAddress(
+                account_id=account_id,
+                address=address,
+                generation=current.generation + 1,
+                created_at=now,
+            )
+            replacement_route = InboundMailRoute(
+                id=address_hash,
+                account_id=account_id,
+                generation=replacement.generation,
+                created_at=now,
+            )
+            self._inbound_mail_routes[current_hash] = revoked_route
+            self._inbound_mail_routes[address_hash] = replacement_route
+            self._inbound_mail_addresses[account_id] = replacement
+            return replacement.model_copy(deep=True)
+
+    async def revoke_inbound_mail_address(
+        self,
+        *,
+        owner_user_id: str,
+        expected_generation: int,
+    ) -> InboundMailAddress:
+        async with self._lock:
+            account_id = self._account_by_owner.get(owner_user_id)
+            if not account_id:
+                raise AccountNotProvisioned
+            current = self._inbound_mail_addresses.get(account_id)
+            if current is None or current.generation != expected_generation:
+                raise InboundAddressStateConflict
+            current_hash = sha256(current.address.casefold().encode()).hexdigest()
+            route = self._inbound_mail_routes.get(current_hash)
+            if (
+                route is None
+                or route.account_id != account_id
+                or route.status != current.status
+                or route.generation != current.generation
+            ):
+                raise InboundAddressStateConflict
+            if current.status == InboundMailAddressStatus.REVOKED:
+                return current.model_copy(deep=True)
+            now = utc_now()
+            revoked = current.model_copy(
+                update={
+                    "status": InboundMailAddressStatus.REVOKED,
+                    "revoked_at": now,
+                }
+            )
+            self._inbound_mail_addresses[account_id] = revoked
+            self._inbound_mail_routes[current_hash] = route.model_copy(
+                update={
+                    "status": InboundMailAddressStatus.REVOKED,
+                    "revoked_at": now,
+                }
+            )
+            return revoked.model_copy(deep=True)
 
     async def seed_published_raw_mail(
         self,

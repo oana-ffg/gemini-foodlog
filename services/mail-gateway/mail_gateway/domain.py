@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 from email import policy
 from email.message import Message
 from email.parser import BytesParser
@@ -56,6 +56,22 @@ class MailIdentityCollision(ValueError):
     pass
 
 
+class MailQuotaExceeded(ValueError):
+    """A durable per-account admission limit that must not trigger mail redelivery."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+class MailReservationNotFound(RuntimeError):
+    pass
+
+
+class MailUsageBackfillRequired(RuntimeError):
+    pass
+
+
 class InvalidRawMailObjectKey(ValueError):
     pass
 
@@ -70,6 +86,177 @@ class UnsafeMail(ValueError):
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+@dataclass(frozen=True)
+class MailQuotaPolicy:
+    max_retained_messages: int
+    max_retained_bytes: int
+    max_rate_messages: int
+    max_rate_bytes: int
+    rate_window_seconds: int = 3_600
+
+    def __post_init__(self) -> None:
+        for field_name, value in self.__dict__.items():
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise ValueError(f"{field_name} must be a positive integer")
+
+
+@dataclass(frozen=True)
+class RawMailUsage:
+    max_retained_messages: int
+    max_retained_bytes: int
+    max_rate_messages: int
+    max_rate_bytes: int
+    rate_window_seconds: int
+    retained_message_count: int = 0
+    retained_bytes: int = 0
+    pending_message_count: int = 0
+    pending_bytes: int = 0
+    rate_request_count: int = 0
+    rate_request_bytes: int = 0
+    rate_window_started_at: datetime = field(default_factory=utc_now)
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
+
+    @classmethod
+    def create(cls, policy: MailQuotaPolicy, *, now: datetime) -> RawMailUsage:
+        return cls(
+            max_retained_messages=policy.max_retained_messages,
+            max_retained_bytes=policy.max_retained_bytes,
+            max_rate_messages=policy.max_rate_messages,
+            max_rate_bytes=policy.max_rate_bytes,
+            rate_window_seconds=policy.rate_window_seconds,
+            rate_window_started_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "max_retained_messages",
+            "max_retained_bytes",
+            "max_rate_messages",
+            "max_rate_bytes",
+            "rate_window_seconds",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise ValueError(f"raw-mail usage {field_name} is invalid")
+        for field_name in (
+            "retained_message_count",
+            "retained_bytes",
+            "pending_message_count",
+            "pending_bytes",
+            "rate_request_count",
+            "rate_request_bytes",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError(f"raw-mail usage {field_name} is invalid")
+        for field_name in ("rate_window_started_at", "created_at", "updated_at"):
+            value = getattr(self, field_name)
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError(f"raw-mail usage {field_name} must be timezone-aware")
+
+    def effective_policy(self, configured: MailQuotaPolicy) -> MailQuotaPolicy:
+        return MailQuotaPolicy(
+            max_retained_messages=min(
+                self.max_retained_messages,
+                configured.max_retained_messages,
+            ),
+            max_retained_bytes=min(self.max_retained_bytes, configured.max_retained_bytes),
+            max_rate_messages=min(self.max_rate_messages, configured.max_rate_messages),
+            max_rate_bytes=min(self.max_rate_bytes, configured.max_rate_bytes),
+            rate_window_seconds=max(
+                self.rate_window_seconds,
+                configured.rate_window_seconds,
+            ),
+        )
+
+    def admit(
+        self,
+        configured: MailQuotaPolicy,
+        *,
+        size_bytes: int,
+        now: datetime,
+    ) -> RawMailUsage:
+        if size_bytes < 1:
+            raise ValueError("raw-mail admission size must be positive")
+        policy = self.effective_policy(configured)
+        if now < self.rate_window_started_at:
+            raise ValueError("raw-mail admission clock moved backwards")
+        window_elapsed = now - self.rate_window_started_at >= timedelta(
+            seconds=policy.rate_window_seconds
+        )
+        count = 0 if window_elapsed else self.rate_request_count
+        byte_count = 0 if window_elapsed else self.rate_request_bytes
+        if count + 1 > policy.max_rate_messages:
+            raise MailQuotaExceeded("mail_rate_messages_exceeded")
+        if byte_count + size_bytes > policy.max_rate_bytes:
+            raise MailQuotaExceeded("mail_rate_bytes_exceeded")
+        return replace(
+            self,
+            max_retained_messages=policy.max_retained_messages,
+            max_retained_bytes=policy.max_retained_bytes,
+            max_rate_messages=policy.max_rate_messages,
+            max_rate_bytes=policy.max_rate_bytes,
+            rate_window_seconds=policy.rate_window_seconds,
+            rate_request_count=count + 1,
+            rate_request_bytes=byte_count + size_bytes,
+            rate_window_started_at=now if window_elapsed else self.rate_window_started_at,
+            updated_at=now,
+        )
+
+    def reserve(
+        self,
+        configured: MailQuotaPolicy,
+        *,
+        size_bytes: int,
+        now: datetime,
+    ) -> RawMailUsage:
+        if size_bytes < 1:
+            raise ValueError("raw-mail reservation size must be positive")
+        policy = self.effective_policy(configured)
+        if self.retained_message_count + self.pending_message_count + 1 > (
+            policy.max_retained_messages
+        ):
+            raise MailQuotaExceeded("mail_retained_messages_exceeded")
+        if self.retained_bytes + self.pending_bytes + size_bytes > policy.max_retained_bytes:
+            raise MailQuotaExceeded("mail_retained_bytes_exceeded")
+        return replace(
+            self,
+            max_retained_messages=policy.max_retained_messages,
+            max_retained_bytes=policy.max_retained_bytes,
+            max_rate_messages=policy.max_rate_messages,
+            max_rate_bytes=policy.max_rate_bytes,
+            rate_window_seconds=policy.rate_window_seconds,
+            pending_message_count=self.pending_message_count + 1,
+            pending_bytes=self.pending_bytes + size_bytes,
+            updated_at=now,
+        )
+
+    def mark_stored(self, *, size_bytes: int, now: datetime) -> RawMailUsage:
+        if self.pending_message_count < 1 or self.pending_bytes < size_bytes:
+            raise MailReservationNotFound
+        return replace(
+            self,
+            retained_message_count=self.retained_message_count + 1,
+            retained_bytes=self.retained_bytes + size_bytes,
+            pending_message_count=self.pending_message_count - 1,
+            pending_bytes=self.pending_bytes - size_bytes,
+            updated_at=now,
+        )
+
+    def cancel(self, *, size_bytes: int, now: datetime) -> RawMailUsage:
+        if self.pending_message_count < 1 or self.pending_bytes < size_bytes:
+            raise MailReservationNotFound
+        return replace(
+            self,
+            pending_message_count=self.pending_message_count - 1,
+            pending_bytes=self.pending_bytes - size_bytes,
+            updated_at=now,
+        )
 
 
 def validate_raw_mail_object_key(*, account_id: str, mail_id: str, object_key: str) -> None:

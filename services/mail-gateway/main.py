@@ -12,7 +12,13 @@ from mail_gateway.adapters import (
     GCSRawMailStore,
     PubSubMailEventPublisher,
 )
-from mail_gateway.domain import InvalidRecipient, UnknownRecipient, UnsafeMail
+from mail_gateway.config import quota_policy_from_environment
+from mail_gateway.domain import (
+    InvalidRecipient,
+    MailQuotaExceeded,
+    UnknownRecipient,
+    UnsafeMail,
+)
 from mail_gateway.operational_logging import (
     emit_gateway_event,
     safe_error_kind,
@@ -26,9 +32,14 @@ MAIL_PATH_PATTERN = re.compile(r"^/_ah/mail/(.+)$")
 
 def build_service() -> MailGatewayService:
     project_id = os.environ["FOODLOG_MAIL_GCP_PROJECT_ID"]
+    domain = os.environ["FOODLOG_MAIL_INBOUND_DOMAIN"]
     return MailGatewayService(
-        domain=os.environ["FOODLOG_MAIL_INBOUND_DOMAIN"],
-        repository=FirestoreMailRepository(project_id=project_id),
+        domain=domain,
+        repository=FirestoreMailRepository(
+            project_id=project_id,
+            domain=domain,
+            quota_policy=quota_policy_from_environment(),
+        ),
         object_store=GCSRawMailStore(
             project_id=project_id,
             bucket_name=os.environ["FOODLOG_MAIL_RAW_BUCKET"],
@@ -99,16 +110,19 @@ class MailGatewayApplication:
             return self._respond(start_response, "400 Bad Request")
         if content_length < 1:
             return self._respond(start_response, "400 Bad Request")
-        if content_length > MAX_RAW_MESSAGE_BYTES:
-            return self._respond(start_response, "413 Payload Too Large")
-        raw_message = environ["wsgi.input"].read(MAX_RAW_MESSAGE_BYTES + 1)
-        if not raw_message or len(raw_message) > MAX_RAW_MESSAGE_BYTES:
-            return self._respond(start_response, "413 Payload Too Large")
+        service = self._service or build_service()
         try:
-            record = (self._service or build_service()).receive(
-                recipient=unquote(match.group(1)),
-                raw_message=raw_message,
-            )
+            recipient = unquote(match.group(1))
+            if content_length > MAX_RAW_MESSAGE_BYTES:
+                service.record_attempt(recipient=recipient, size_bytes=content_length)
+                raise UnsafeMail("message_too_large")
+            raw_message = environ["wsgi.input"].read(MAX_RAW_MESSAGE_BYTES + 1)
+            if not raw_message:
+                return self._respond(start_response, "400 Bad Request")
+            if len(raw_message) > MAX_RAW_MESSAGE_BYTES:
+                service.record_attempt(recipient=recipient, size_bytes=len(raw_message))
+                raise UnsafeMail("message_too_large")
+            record = service.receive(recipient=recipient, raw_message=raw_message)
         except (InvalidRecipient, UnknownRecipient):
             emit_gateway_event(
                 "WARNING",
@@ -119,6 +133,15 @@ class MailGatewayApplication:
             )
             return self._respond(start_response, "204 No Content")
         except UnsafeMail as error:
+            emit_gateway_event(
+                "WARNING",
+                "inbound_mail_discarded",
+                request_id=request_id,
+                trace_id=trace_id,
+                outcome=error.code,
+            )
+            return self._respond(start_response, "204 No Content")
+        except MailQuotaExceeded as error:
             emit_gateway_event(
                 "WARNING",
                 "inbound_mail_discarded",

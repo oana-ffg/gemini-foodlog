@@ -17,6 +17,7 @@ from foodlog_backend.inbound_mail import (
     normalize_inbound_mail_domain,
     normalize_inbound_recipient,
 )
+from foodlog_backend.models import InboundMailAddressStatus
 from foodlog_backend.repository import InMemoryRepository
 from foodlog_backend.settings import Settings
 
@@ -150,3 +151,91 @@ def test_authenticated_api_returns_one_private_address_per_account() -> None:
     assert first.json() == repeated.json()
     assert first.headers["cache-control"] == "no-store"
     assert first.json()["address"].endswith(f"@{DOMAIN}")
+    assert first.json()["generation"] == 1
+    assert first.json()["revoked_at"] is None
+
+
+def test_owner_can_revoke_and_atomically_replace_the_current_address() -> None:
+    repository = InMemoryRepository(public_account_limit=25, trial_image_limit=200)
+    tokens = token_factory([TOKEN_A, TOKEN_B, TOKEN_A])
+    service = InboundMailAddressService(
+        repository=repository,
+        domain=DOMAIN,
+        token_factory=lambda: next(tokens),
+    )
+
+    async def scenario():
+        await repository.provision_account("owner-a")
+        original = await service.get_or_create("owner-a")
+        revoked = await service.revoke("owner-a", expected_generation=1)
+        repeated_revoke = await service.revoke("owner-a", expected_generation=1)
+        replacement = await service.rotate("owner-a", expected_generation=1)
+        with pytest.raises(InboundAddressStateConflict):
+            await service.rotate("owner-a", expected_generation=1)
+        return original, revoked, repeated_revoke, replacement
+
+    original, revoked, repeated_revoke, replacement = asyncio.run(scenario())
+
+    assert original.address == f"f-{TOKEN_A}@{DOMAIN}"
+    assert revoked == repeated_revoke
+    assert revoked.status == InboundMailAddressStatus.REVOKED
+    assert revoked.revoked_at is not None
+    assert replacement.address == f"f-{TOKEN_B}@{DOMAIN}"
+    assert replacement.status == InboundMailAddressStatus.ACTIVE
+    assert replacement.generation == 2
+    assert replacement.revoked_at is None
+    original_route = repository._inbound_mail_routes[
+        sha256(original.address.encode()).hexdigest()
+    ]
+    replacement_route = repository._inbound_mail_routes[
+        sha256(replacement.address.encode()).hexdigest()
+    ]
+    assert original_route.status == InboundMailAddressStatus.REVOKED
+    assert original_route.revoked_at == revoked.revoked_at
+    assert replacement_route.status == InboundMailAddressStatus.ACTIVE
+    assert replacement_route.generation == 2
+
+
+def test_authenticated_api_exposes_revocation_and_rotation_lifecycle() -> None:
+    settings = Settings(environment="test", inbound_mail_domain=DOMAIN)
+    headers = {"X-FoodLog-Local-User": "owner-a"}
+    with TestClient(create_app(settings)) as client:
+        client.post("/v1/accounts", headers=headers)
+        original = client.post("/v1/inbound-mail-address", headers=headers)
+        revoked = client.post(
+            "/v1/inbound-mail-address/revoke",
+            headers=headers,
+            json={"expected_generation": original.json()["generation"]},
+        )
+        repeated_revoke = client.post(
+            "/v1/inbound-mail-address/revoke",
+            headers=headers,
+            json={"expected_generation": original.json()["generation"]},
+        )
+        rotated = client.post(
+            "/v1/inbound-mail-address/rotate",
+            headers=headers,
+            json={"expected_generation": revoked.json()["generation"]},
+        )
+        stale = client.post(
+            "/v1/inbound-mail-address/rotate",
+            headers=headers,
+            json={"expected_generation": original.json()["generation"]},
+        )
+        unauthenticated = client.post(
+            "/v1/inbound-mail-address/revoke",
+            json={"expected_generation": rotated.json()["generation"]},
+        )
+
+    assert original.status_code == revoked.status_code == repeated_revoke.status_code == 200
+    assert revoked.json() == repeated_revoke.json()
+    assert revoked.json()["status"] == "revoked"
+    assert revoked.json()["revoked_at"] is not None
+    assert rotated.status_code == 200
+    assert rotated.json()["status"] == "active"
+    assert rotated.json()["generation"] == original.json()["generation"] + 1
+    assert rotated.json()["address"] != original.json()["address"]
+    assert rotated.headers["cache-control"] == "no-store"
+    assert stale.status_code == 409
+    assert stale.json() == {"detail": "inbound_address_state_conflict"}
+    assert unauthenticated.status_code == 401

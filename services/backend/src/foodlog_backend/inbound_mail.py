@@ -24,6 +24,22 @@ class InboundMailAddressRepository(Protocol):
         address_hash: str,
     ) -> InboundMailAddress: ...
 
+    async def rotate_inbound_mail_address(
+        self,
+        *,
+        owner_user_id: str,
+        expected_generation: int,
+        address: str,
+        address_hash: str,
+    ) -> InboundMailAddress: ...
+
+    async def revoke_inbound_mail_address(
+        self,
+        *,
+        owner_user_id: str,
+        expected_generation: int,
+    ) -> InboundMailAddress: ...
+
 
 def normalize_inbound_mail_domain(value: str) -> str:
     domain = value.strip().casefold().rstrip(".")
@@ -66,6 +82,36 @@ class InboundMailAddressService:
         self._max_attempts = max_attempts
 
     async def get_or_create(self, owner_user_id: str) -> InboundMailAddress:
+        return await self._create_or_rotate(owner_user_id=owner_user_id)
+
+    async def rotate(
+        self,
+        owner_user_id: str,
+        *,
+        expected_generation: int,
+    ) -> InboundMailAddress:
+        return await self._create_or_rotate(
+            owner_user_id=owner_user_id,
+            expected_generation=expected_generation,
+        )
+
+    async def revoke(
+        self,
+        owner_user_id: str,
+        *,
+        expected_generation: int,
+    ) -> InboundMailAddress:
+        return await self._repository.revoke_inbound_mail_address(
+            owner_user_id=owner_user_id,
+            expected_generation=expected_generation,
+        )
+
+    async def _create_or_rotate(
+        self,
+        *,
+        owner_user_id: str,
+        expected_generation: int | None = None,
+    ) -> InboundMailAddress:
         for _ in range(self._max_attempts):
             token = self._token_factory()
             candidate = normalize_inbound_recipient(
@@ -73,13 +119,19 @@ class InboundMailAddressService:
                 expected_domain=self._domain,
             )
             try:
-                return await self._repository.create_inbound_mail_address(
-                    owner_user_id=owner_user_id,
-                    address=candidate,
-                    address_hash=inbound_recipient_hash(
+                arguments = {
+                    "owner_user_id": owner_user_id,
+                    "address": candidate,
+                    "address_hash": inbound_recipient_hash(
                         candidate,
                         expected_domain=self._domain,
                     ),
+                }
+                if expected_generation is None:
+                    return await self._repository.create_inbound_mail_address(**arguments)
+                return await self._repository.rotate_inbound_mail_address(
+                    expected_generation=expected_generation,
+                    **arguments,
                 )
             except InboundAddressCollision:
                 continue

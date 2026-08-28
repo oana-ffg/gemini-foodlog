@@ -89,6 +89,8 @@ def test_verified_bearer_token_is_the_only_source_of_user_identity() -> None:
     [
         ("POST", "/v1/accounts"),
         ("POST", "/v1/inbound-mail-address"),
+        ("POST", "/v1/inbound-mail-address/rotate"),
+        ("POST", "/v1/inbound-mail-address/revoke"),
         ("POST", "/v1/consents/launch-mail"),
         ("GET", "/v1/consents"),
         ("POST", "/v1/consents/launch-mail/withdraw"),

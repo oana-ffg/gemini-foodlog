@@ -94,6 +94,26 @@ resource "google_project_iam_member" "worker_vertex_model_invoker" {
   member  = "serviceAccount:${google_service_account.runtime["worker"].email}"
 }
 
+# The mail gateway must verify an exact immutable object after an idempotent
+# create conflict or a commit-ambiguous upload failure. A one-permission custom
+# role avoids granting object listing or broad read access to the public gateway.
+resource "google_project_iam_custom_role" "mail_raw_object_verifier" {
+  project     = var.project_id
+  role_id     = "foodlogMailRawObjectVerifier"
+  title       = "FoodLog mail raw-object verifier"
+  description = "Read an exact raw-mail object to reconcile idempotent and ambiguous immutable writes."
+  permissions = ["storage.objects.get"]
+  stage       = "GA"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [
+    google_project_service.required["storage.googleapis.com"],
+  ]
+}
+
 # App Engine uses the selected version identity for its managed Cloud Build. The
 # grant is limited to writing build logs and the platform-created App Engine image
 # repository; it cannot write the API's Cloud Run repository or administer builds.

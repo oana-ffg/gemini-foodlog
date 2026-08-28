@@ -17,6 +17,11 @@ env_variables:
   FOODLOG_MAIL_INBOUND_DOMAIN: gemini-foodlog-2026.appspotmail.com
   FOODLOG_MAIL_RAW_BUCKET: gemini-foodlog-2026-raw-mail-163029863855
   FOODLOG_MAIL_TOPIC: projects/gemini-foodlog-2026/topics/foodlog-mail-events
+  FOODLOG_MAIL_MAX_RETAINED_MESSAGES: "400"
+  FOODLOG_MAIL_MAX_RETAINED_BYTES: "268435456"
+  FOODLOG_MAIL_MAX_RATE_MESSAGES: "30"
+  FOODLOG_MAIL_MAX_RATE_BYTES: "67108864"
+  FOODLOG_MAIL_RATE_WINDOW_SECONDS: "3600"
 
 handlers:
   - url: /_ah/mail/.+

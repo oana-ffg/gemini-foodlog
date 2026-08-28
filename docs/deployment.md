@@ -208,7 +208,7 @@ Each command targets `gemini-foodlog-2026`. Review the built web bundle and rele
 
 ## Inbound-mail release
 
-The App Engine Standard default service is the only inbound-mail transport. Follow `services/mail-gateway/README.md`: build and test its locked package, review `app.yaml`, deploy a unique non-promoted version under the dedicated `foodlog-mail` identity, inspect configuration and logs, and move traffic only after an actual App Engine inbound-mail smoke succeeds. An ordinary external HTTP POST is not a valid mail-transport test. Never send private mailbox contents as a fixture.
+The App Engine Standard default service is the only inbound-mail transport. Follow `services/mail-gateway/README.md`: build and test its locked package, review `app.yaml`, deploy a unique non-promoted version under the dedicated `foodlog-mail` identity, and inspect configuration and logs. For the first quota-aware cutover, apply the narrow raw-object verifier IAM role, promote the new version so existing accounts fail retryably while their quota ledger is absent, run and verify the exact usage backfill, then perform the actual App Engine inbound-mail smoke. Never run the backfill while an older version can accept unaccounted mail. An ordinary external HTTP POST is not a valid mail-transport test. Never send private mailbox contents as a fixture.
 
 ## Post-release evidence
 

@@ -4,6 +4,8 @@ import {
   getOrCreateInboundMailAddress,
   getPurchase,
   listPurchases,
+  revokeInboundMailAddress,
+  rotateInboundMailAddress,
   type InboundMailAddress,
   type PurchaseDetail,
   type PurchaseSummary,
@@ -103,15 +105,29 @@ interface ForwardingSetupProps {
   address: InboundMailAddress | undefined;
   purchaseCount: number;
   message: string;
+  busy: boolean;
   onCopy: () => void;
+  onRevoke: () => void;
+  onRotate: () => void;
 }
 
 export function ForwardingSetup({
   address,
   purchaseCount,
   message,
+  busy,
   onCopy,
+  onRevoke,
+  onRotate,
 }: ForwardingSetupProps) {
+  const addressIsActive = address?.status === "active";
+  const state = !address
+    ? "Preparing forwarding address"
+    : !addressIsActive
+    ? "Forwarding disabled"
+    : purchaseCount > 0
+      ? "Purchase evidence received"
+      : "Awaiting first purchase email";
   return (
     <section className="forwarding-setup" aria-labelledby="forwarding-setup-title">
       <div className="section-heading">
@@ -119,8 +135,8 @@ export function ForwardingSetup({
           <p className="section-kicker">Optional one-time setup</p>
           <h2 id="forwarding-setup-title">Send Nemlig purchase mail automatically</h2>
         </div>
-        <span className={`forwarding-state forwarding-state--${purchaseCount > 0 ? "received" : "waiting"}`}>
-          {purchaseCount > 0 ? "Purchase evidence received" : "Awaiting first purchase email"}
+        <span className={`forwarding-state forwarding-state--${addressIsActive && purchaseCount > 0 ? "received" : "waiting"}`}>
+          {state}
         </span>
       </div>
       <p>
@@ -129,8 +145,20 @@ export function ForwardingSetup({
       </p>
       <div className="forwarding-address">
         <code>{address?.address ?? "Preparing your private forwarding address…"}</code>
-        <button type="button" disabled={!address} onClick={onCopy}>Copy address</button>
+        <button type="button" disabled={!addressIsActive || busy} onClick={onCopy}>Copy address</button>
       </div>
+      {address ? (
+        <div className="button-row">
+          <button type="button" disabled={busy} onClick={onRotate}>
+            {addressIsActive ? "Rotate address" : "Create replacement address"}
+          </button>
+          {addressIsActive ? (
+            <button type="button" disabled={busy} onClick={onRevoke}>
+              Disable forwarding
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <ol className="forwarding-steps">
         <li>Open rules or filters in the mailbox where Nemlig sends your receipts.</li>
         <li>Match Nemlig purchase messages—not all of your mail.</li>
@@ -141,6 +169,12 @@ export function ForwardingSetup({
         accepts the message as untrusted evidence and only recognizes authenticated Nemlig purchase
         mail; unrelated forwarded mail does not become purchase data.
       </p>
+      {address && !addressIsActive ? (
+        <p className="fine-print">
+          This address is revoked and new messages sent to it are discarded. Create a replacement,
+          then update your mailbox rule before forwarding resumes.
+        </p>
+      ) : null}
       <p className="form-message" role="status">{message}</p>
     </section>
   );
@@ -152,8 +186,9 @@ export default function PurchasesPage() {
   const [detail, setDetail] = useState<PurchaseDetail>();
   const [message, setMessage] = useState("Loading purchase evidence…");
   const [forwardingAddress, setForwardingAddress] = useState<InboundMailAddress>();
+  const [forwardingBusy, setForwardingBusy] = useState(false);
   const [forwardingMessage, setForwardingMessage] = useState(
-    "Preparing your stable private forwarding address…",
+    "Preparing your private forwarding address…",
   );
 
   useEffect(() => {
@@ -163,7 +198,9 @@ export default function PurchasesPage() {
         if (!active) return;
         setForwardingAddress(value);
         setForwardingMessage(
-          "The address is stable for this account. Copy it into your mailbox rule once.",
+          value.status === "active"
+            ? "This address stays active until you disable or rotate it."
+            : "Forwarding is disabled. Create a replacement to resume it.",
         );
       },
       (error: unknown) => {
@@ -217,12 +254,57 @@ export default function PurchasesPage() {
   }, [selectedId]);
 
   const copyForwardingAddress = async () => {
-    if (!forwardingAddress) return;
+    if (!forwardingAddress || forwardingAddress.status !== "active") return;
     try {
       await navigator.clipboard.writeText(forwardingAddress.address);
       setForwardingMessage("Private forwarding address copied.");
     } catch {
       setForwardingMessage("Clipboard access failed. Select and copy the address manually.");
+    }
+  };
+
+  const rotateForwardingAddress = async () => {
+    if (!forwardingAddress) return;
+    if (
+      forwardingAddress.status === "active"
+      && !window.confirm(
+        "Rotate this address now? The old address will stop accepting mail, and you must update your mailbox rule.",
+      )
+    ) return;
+    setForwardingBusy(true);
+    try {
+      const replacement = await rotateInboundMailAddress(forwardingAddress.generation);
+      setForwardingAddress(replacement);
+      setForwardingMessage(
+        "Replacement created. Copy it and update your mailbox rule before forwarding resumes.",
+      );
+    } catch (error: unknown) {
+      setForwardingMessage(
+        error instanceof Error ? error.message : "The forwarding address could not be replaced.",
+      );
+    } finally {
+      setForwardingBusy(false);
+    }
+  };
+
+  const revokeForwardingAddress = async () => {
+    if (!forwardingAddress || forwardingAddress.status !== "active") return;
+    if (
+      !window.confirm(
+        "Disable this forwarding address now? New messages sent to it will be discarded until you create a replacement.",
+      )
+    ) return;
+    setForwardingBusy(true);
+    try {
+      const revoked = await revokeInboundMailAddress(forwardingAddress.generation);
+      setForwardingAddress(revoked);
+      setForwardingMessage("Forwarding disabled. New messages to the old address are discarded.");
+    } catch (error: unknown) {
+      setForwardingMessage(
+        error instanceof Error ? error.message : "The forwarding address could not be disabled.",
+      );
+    } finally {
+      setForwardingBusy(false);
     }
   };
 
@@ -243,7 +325,10 @@ export default function PurchasesPage() {
         address={forwardingAddress}
         purchaseCount={purchases.length}
         message={forwardingMessage}
+        busy={forwardingBusy}
         onCopy={() => void copyForwardingAddress()}
+        onRevoke={() => void revokeForwardingAddress()}
+        onRotate={() => void rotateForwardingAddress()}
       />
       <div className="purchase-workspace">
         <nav className="purchase-index" aria-label="Purchases">

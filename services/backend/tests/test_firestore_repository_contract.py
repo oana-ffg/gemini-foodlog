@@ -17,6 +17,7 @@ from foodlog_backend.errors import (
     AiTraceConflict,
     AiTraceNotFound,
     IdempotencyConflict,
+    InboundAddressStateConflict,
     InvalidMealFeedbackTransition,
     KnowledgePageNotFound,
     KnowledgeRevisionConflict,
@@ -33,6 +34,7 @@ from foodlog_backend.firestore_repository_smoke import (
     ensure_smoke_fixture,
     run_smoke,
 )
+from foodlog_backend.inbound_mail import InboundMailAddressService, inbound_recipient_hash
 from foodlog_backend.inference_schema import ActivityMealInferenceV1
 from foodlog_backend.models import (
     ActivityEvent,
@@ -79,6 +81,64 @@ from tests.inference_fixtures import base_payload
     "FIRESTORE_EMULATOR_HOST" not in os.environ,
     reason="requires the Firestore emulator",
 )
+def test_firestore_inbound_address_rotation_is_atomic_under_competing_requests() -> None:
+    async def scenario() -> None:
+        project_id = f"gemini-foodlog-mail-address-race-{uuid4().hex}"
+        client = AsyncClient(project=project_id)
+        repository = FirestoreRepository(
+            project_id=project_id,
+            public_account_limit=25,
+            trial_image_limit=200,
+            client=client,
+        )
+        account = await repository.provision_account("mail-address-race-owner")
+        tokens = iter(("a" * 48, "b" * 48, "c" * 48))
+        domain = "gemini-foodlog-2026.appspotmail.com"
+        service = InboundMailAddressService(
+            repository=repository,
+            domain=domain,
+            token_factory=lambda: next(tokens),
+        )
+        initial = await service.get_or_create(account.owner_user_id)
+
+        outcomes = await asyncio.gather(
+            service.rotate(account.owner_user_id, expected_generation=initial.generation),
+            service.rotate(account.owner_user_id, expected_generation=initial.generation),
+            return_exceptions=True,
+        )
+        accepted = [outcome for outcome in outcomes if not isinstance(outcome, Exception)]
+        rejected = [outcome for outcome in outcomes if isinstance(outcome, Exception)]
+
+        assert len(accepted) == 1
+        assert len(rejected) == 1
+        assert isinstance(rejected[0], InboundAddressStateConflict)
+        replacement = accepted[0]
+        assert replacement.generation == 2
+        assert await service.get_or_create(account.owner_user_id) == replacement
+
+        old_route = (
+            await client.collection("inbound_mail_routes")
+            .document(inbound_recipient_hash(initial.address, expected_domain=domain))
+            .get()
+        )
+        replacement_route = (
+            await client.collection("inbound_mail_routes")
+            .document(inbound_recipient_hash(replacement.address, expected_domain=domain))
+            .get()
+        )
+        assert old_route.get("status") == "revoked"
+        assert old_route.get("generation") == 1
+        assert replacement_route.get("status") == "active"
+        assert replacement_route.get("generation") == 2
+        client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.skipif(
+    "FIRESTORE_EMULATOR_HOST" not in os.environ,
+    reason="requires the Firestore emulator",
+)
 def test_firestore_account_export_request_is_atomic_idempotent_and_scoped() -> None:
     async def scenario() -> None:
         project_id = f"gemini-foodlog-export-contract-{uuid4().hex}"
@@ -118,18 +178,20 @@ def test_firestore_account_export_request_is_atomic_idempotent_and_scoped() -> N
             idempotency_key=next(
                 request_key
                 for request_key in request_keys
-                if account_export.id
-                == account_export_id(account.id, request_key)
+                if account_export.id == account_export_id(account.id, request_key)
             ),
             requested_at=requested_at + timedelta(minutes=1),
             cooldown=timedelta(hours=1),
         )
         assert retry_created is False
         assert retry == account_export
-        assert await repository.account_export_for_owner(
-            owner_user_id=account.owner_user_id,
-            export_id=account_export.id,
-        ) == account_export
+        assert (
+            await repository.account_export_for_owner(
+                owner_user_id=account.owner_user_id,
+                export_id=account_export.id,
+            )
+            == account_export
+        )
         with pytest.raises(AccountExportNotFound):
             await repository.account_export_for_owner(
                 owner_user_id="firestore-export-other",
@@ -137,18 +199,12 @@ def test_firestore_account_export_request_is_atomic_idempotent_and_scoped() -> N
             )
 
         account_ref = client.collection("accounts").document(account.id)
-        export_snapshot = await account_ref.collection("exports").document(
-            account_export.id
-        ).get()
-        job_snapshot = await account_ref.collection("jobs").document(
-            account_export.job_id
-        ).get()
+        export_snapshot = await account_ref.collection("exports").document(account_export.id).get()
+        job_snapshot = await account_ref.collection("jobs").document(account_export.job_id).get()
         audit_snapshots = [
             snapshot async for snapshot in account_ref.collection("audit_events").stream()
         ]
-        control_snapshot = await account_ref.collection("export_control").document(
-            "current"
-        ).get()
+        control_snapshot = await account_ref.collection("export_control").document("current").get()
         assert export_snapshot.exists
         assert job_snapshot.get("kind") == JobKind.ACCOUNT_EXPORT.value
         assert job_snapshot.get("subject_id") == account_export.id

@@ -370,6 +370,7 @@ class DeviceCredentialStatus(StrEnum):
 
 class InboundMailAddressStatus(StrEnum):
     ACTIVE = "active"
+    REVOKED = "revoked"
 
 
 class PurchaseDocumentKind(StrEnum):
@@ -606,7 +607,15 @@ class InboundMailAddress(BaseModel):
     account_id: str = Field(min_length=1, max_length=128)
     address: str = Field(min_length=20, max_length=254)
     status: InboundMailAddressStatus = InboundMailAddressStatus.ACTIVE
+    generation: int = Field(default=1, ge=1)
     created_at: datetime = Field(default_factory=utc_now)
+    revoked_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def lifecycle_is_consistent(self) -> "InboundMailAddress":
+        if (self.status == InboundMailAddressStatus.REVOKED) != (self.revoked_at is not None):
+            raise ValueError("inbound address status and revocation time are inconsistent")
+        return self
 
 
 class InboundMailRoute(BaseModel):
@@ -614,7 +623,19 @@ class InboundMailRoute(BaseModel):
     account_id: str = Field(min_length=1, max_length=128)
     address_id: Literal["current"] = "current"
     status: InboundMailAddressStatus = InboundMailAddressStatus.ACTIVE
+    generation: int = Field(default=1, ge=1)
     created_at: datetime = Field(default_factory=utc_now)
+    revoked_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def lifecycle_is_consistent(self) -> "InboundMailRoute":
+        if (self.status == InboundMailAddressStatus.REVOKED) != (self.revoked_at is not None):
+            raise ValueError("inbound route status and revocation time are inconsistent")
+        return self
+
+
+class InboundMailAddressMutationRequest(BaseModel):
+    expected_generation: int = Field(ge=1)
 
 
 def normalize_purchase_reference(value: str) -> str:

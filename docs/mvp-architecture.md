@@ -286,19 +286,31 @@ always begin separate lifecycles.
 
 Google App Engine's inbound Mail API receives messages on the deployed application's `appspotmail.com` mail domain. Each account gets a unique, opaque local address on that domain.
 
-The account address must be unguessable and mapped server-side. The user configures forwarding once; no per-order action is required.
+The account address must be unguessable and mapped server-side. The user configures
+forwarding once; no per-order action is required. The owner can disable the address or
+rotate it to a new opaque generation. Either action atomically revokes the old route,
+with no grace overlap, and a revoked address is never reassigned. Rotation therefore
+requires updating the mailbox forwarding rule to the replacement address.
 
 Purchase-email forwarding is optional onboarding. A user can begin using camera-only inference without connecting an inbox and can add the forwarding rule later. The UI explains that purchase history gives the agent stronger context for visually ambiguous ingredients, but lack of email data does not block image ingestion, model processing, or the journal. Missing purchase context is represented as unavailable evidence, never as evidence that an item was not purchased.
 
 The mail gateway is deliberately thin:
 
-1. Receive the MIME message.
-2. Resolve the recipient to exactly one account.
+1. Receive the bounded transport body and resolve the recipient to exactly one active account/address generation.
+2. Atomically charge the account's request/byte rate window before MIME parsing.
 3. Validate the bounded passive MIME surface while treating all content as untrusted.
-4. Create an idempotent ingestion record.
+4. Revalidate the active generation and atomically reserve retained message/byte capacity with the idempotent ingestion record.
 5. Store the original message in private Cloud Storage.
 6. Publish a small processing event to Pub/Sub.
 7. Let the normal backend worker parse and normalize the relevant order or invoice data.
+
+The MVP retains accepted raw mail indefinitely but bounds the exposure per account:
+400 retained messages, 256 MiB retained bytes, 30 requests per hour, and 64 MiB of
+request bodies per hour. Pending writes count against retained capacity. Exact retries
+still consume rate capacity because they require work, but do not consume retained
+capacity twice. Persisted ceilings can only be tightened by deployment configuration;
+raising them requires an explicit data migration. A fixed expiry policy remains a
+post-hackathon task rather than an implicit deletion promise.
 
 Inbound email is untrusted input. Parsing must enforce message-size limits, attachment limits, supported content types, sender/message checks appropriate to forwarded Nemlig mail, and idempotency. Email contents and attachments are never treated as agent instructions.
 The gateway accepts only bounded plain text, HTML, common inline image, and PDF parts.

@@ -60,10 +60,29 @@ const inboundAddress: InboundMailAddress = {
   account_id: "account-1",
   address: "private-address@gemini-foodlog-2026.appspotmail.com",
   status: "active",
+  generation: 1,
   created_at: "2026-08-27T20:00:00Z",
+  revoked_at: null,
 };
 
 describe("purchase evidence view", () => {
+  it("shows a loading state before the forwarding address resolves", () => {
+    const html = renderToStaticMarkup(
+      <ForwardingSetup
+        address={undefined}
+        purchaseCount={0}
+        message="Preparing your private forwarding address…"
+        busy={false}
+        onCopy={() => undefined}
+        onRevoke={() => undefined}
+        onRotate={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Preparing forwarding address");
+    expect(html).not.toContain("Forwarding disabled");
+  });
+
   it("keeps final evidence, normalization, items, charges, and reconciliation visible", () => {
     const html = renderToStaticMarkup(<PurchaseEvidence purchase={purchase} />);
 
@@ -83,13 +102,16 @@ describe("purchase evidence view", () => {
     expect(html).toContain("no reconciliation was invented");
   });
 
-  it("shows optional scoped forwarding instructions and the stable private address", () => {
+  it("shows optional scoped forwarding instructions and the private address", () => {
     const html = renderToStaticMarkup(
       <ForwardingSetup
         address={inboundAddress}
         purchaseCount={0}
-        message="The address is stable for this account."
+        message="This address stays active until you disable or rotate it."
+        busy={false}
         onCopy={() => undefined}
+        onRevoke={() => undefined}
+        onRotate={() => undefined}
       />,
     );
 
@@ -98,6 +120,8 @@ describe("purchase evidence view", () => {
     expect(html).toContain("Match Nemlig purchase messages—not all of your mail");
     expect(html).toContain("Camera capture and the food journal keep working if you skip it");
     expect(html).toContain("Awaiting first purchase email");
+    expect(html).toContain("Rotate address");
+    expect(html).toContain("Disable forwarding");
   });
 
   it("uses received evidence as the honest setup signal", () => {
@@ -106,11 +130,37 @@ describe("purchase evidence view", () => {
         address={inboundAddress}
         purchaseCount={2}
         message="Private forwarding address copied."
+        busy={false}
         onCopy={() => undefined}
+        onRevoke={() => undefined}
+        onRotate={() => undefined}
       />,
     );
 
     expect(html).toContain("Purchase evidence received");
     expect(html).not.toContain("Forwarding enabled");
+  });
+
+  it("shows revoked state and requires a replacement before forwarding resumes", () => {
+    const html = renderToStaticMarkup(
+      <ForwardingSetup
+        address={{
+          ...inboundAddress,
+          status: "revoked",
+          revoked_at: "2026-08-28T10:00:00Z",
+        }}
+        purchaseCount={2}
+        message="Forwarding disabled."
+        busy={false}
+        onCopy={() => undefined}
+        onRevoke={() => undefined}
+        onRotate={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Forwarding disabled");
+    expect(html).toContain("Create replacement address");
+    expect(html).toContain("new messages sent to it are discarded");
+    expect(html).not.toContain("Disable forwarding</button>");
   });
 });

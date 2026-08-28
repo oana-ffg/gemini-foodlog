@@ -1724,11 +1724,29 @@
             "title": "Created At",
             "type": "string"
           },
+          "generation": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Generation",
+            "type": "integer"
+          },
           "id": {
             "const": "current",
             "default": "current",
             "title": "Id",
             "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
           },
           "status": {
             "$ref": "#/components/schemas/InboundMailAddressStatus",
@@ -1742,9 +1760,24 @@
         "title": "InboundMailAddress",
         "type": "object"
       },
+      "InboundMailAddressMutationRequest": {
+        "properties": {
+          "expected_generation": {
+            "minimum": 1.0,
+            "title": "Expected Generation",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_generation"
+        ],
+        "title": "InboundMailAddressMutationRequest",
+        "type": "object"
+      },
       "InboundMailAddressStatus": {
         "enum": [
-          "active"
+          "active",
+          "revoked"
         ],
         "title": "InboundMailAddressStatus",
         "type": "string"
@@ -5801,9 +5834,133 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "description": "Address generation exhausted"
           }
         },
         "summary": "Get Or Create Inbound Mail Address"
+      }
+    },
+    "/v1/inbound-mail-address/revoke": {
+      "post": {
+        "operationId": "revoke_inbound_mail_address_v1_inbound_mail_address_revoke_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InboundMailAddressMutationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboundMailAddress"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "Address generation changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Inbound Mail Address"
+      }
+    },
+    "/v1/inbound-mail-address/rotate": {
+      "post": {
+        "operationId": "rotate_inbound_mail_address_v1_inbound_mail_address_rotate_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InboundMailAddressMutationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboundMailAddress"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "Address generation changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Replacement address generation exhausted"
+          }
+        },
+        "summary": "Rotate Inbound Mail Address"
       }
     },
     "/v1/journal": {

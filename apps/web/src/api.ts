@@ -22,8 +22,10 @@ export interface InboundMailAddress {
   id: "current";
   account_id: string;
   address: string;
-  status: "active";
+  status: "active" | "revoked";
+  generation: number;
   created_at: string;
+  revoked_at: string | null;
 }
 
 export interface ConsentPreferences {
@@ -719,6 +721,22 @@ export function provisionAccount(): Promise<Account> {
 export function getOrCreateInboundMailAddress(): Promise<InboundMailAddress> {
   return apiRequest<InboundMailAddress>("/v1/inbound-mail-address", {
     method: "POST",
+  });
+}
+
+export function rotateInboundMailAddress(expectedGeneration: number): Promise<InboundMailAddress> {
+  return apiRequest<InboundMailAddress>("/v1/inbound-mail-address/rotate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ expected_generation: expectedGeneration }),
+  });
+}
+
+export function revokeInboundMailAddress(expectedGeneration: number): Promise<InboundMailAddress> {
+  return apiRequest<InboundMailAddress>("/v1/inbound-mail-address/revoke", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ expected_generation: expectedGeneration }),
   });
 }
 

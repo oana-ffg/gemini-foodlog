@@ -19,7 +19,8 @@ before the account is known:
 - `device_credentials/{credential_hash}` maps a hashed opaque device credential to
   one active camera and account;
 - `inbound_mail_routes/{sha256_recipient}` maps a normalized opaque inbound address
-  to one active account address record.
+  to one account address generation. Revoked route tombstones remain so an address
+  can never be reassigned to another account.
 
 Neither collection is readable by web or capture clients. Device credentials are
 shown once at creation, stored only as hashes, revocable, and never reused between
@@ -32,7 +33,7 @@ cameras.
 | `system/public_capacity` | Atomic 25-public-account admission counter | `active_account_count`, `account_limit`, `waitlist_open`; explicit internal/judge unlimited accounts never consume public slots; one low-write transaction document is acceptable at MVP scale. |
 | `identities/{firebase_uid}` | Login-to-account lookup | `account_id`, `account_class` (`public` or explicitly configured `internal`), `email_normalized`, `email_verified`, `mailing_list_opt_in`, `status`; one document per Firebase UID. |
 | `device_credentials/{sha256_token}` | Camera-token lookup | `account_id`, `camera_id`, `token_version`, `status` (`active` or `revoked`), `issued_at`, nullable `last_used_at`, nullable `expires_at`, nullable `revoked_at`; the raw token is returned only by the issuance response and is never stored. |
-| `inbound_mail_routes/{sha256_recipient}` | Inbound-recipient lookup before the tenant is known | `account_id`, `address_id` (`current`), `status` (`active`), `created_at`; the normalized address itself is not stored globally. |
+| `inbound_mail_routes/{sha256_recipient}` | Inbound-recipient lookup before the tenant is known | `account_id`, `address_id` (`current`), `status` (`active` or `revoked`), monotonic generation, `created_at`, and nullable `revoked_at`; the normalized address itself is not stored globally, and revoked tombstones are retained permanently to prevent reuse. |
 | `waitlist/{sha256_firebase_uid}` | Capacity overflow and product-interest list | While active: verified `email_normalized`, `reason` (`capacity`), `mailing_list_opt_in` (`true`), `policy_version`, and timestamps. Withdrawal immediately sets `status=withdrawn`, clears the email, sets opt-in false, and retains only bounded withdrawal count/time evidence; the raw Firebase UID is never stored in the waitlist record. One document per verified identity is accepted or reactivated only while public capacity is full. |
 
 ## Account root and bounded counters
@@ -70,7 +71,8 @@ belong in private Cloud Storage rather than Firestore.
 | Collection path below `accounts/{account_id}` | Purpose | Required fields and bounds |
 | --- | --- | --- |
 | `cameras/{camera_id}` | Browser or physical source | `name` <= 80 chars, `kind`, `status`, creation time, accepted-capture count, nullable last-capture time, nullable revocation time, and a hashed browser-instance identity for browser sources; no secret or raw device credential. Capture activity advances only after immutable image storage succeeds, and an exact idempotent retry does not increment it twice. |
-| `inbound_mail_addresses/current` | Stable private purchase-forwarding address | normalized `f-` plus 192-bit random token at the App Engine inbound-mail domain, `status` (`active`), and creation time; generated server-side, contains no user/account identifier, and is returned only to the authenticated owner with `no-store`. |
+| `inbound_mail_addresses/current` | Current private purchase-forwarding address | normalized `f-` plus 192-bit random token at the App Engine inbound-mail domain, `status` (`active` or `revoked`), monotonic generation, creation time, and nullable revocation time; generated server-side, contains no user/account identifier, and is returned only to the authenticated owner with `no-store`. Rotation atomically revokes the old global route and replaces this record; revoke leaves no active recipient. |
+| `inbound_mail_usage/current` | Atomic inbound-mail cost and abuse ledger | persisted lower-wins message/byte and hourly request/byte ceilings, retained and pending message/byte counters, current rate-window counters/start, account ID, and timestamps. The gateway revalidates the active route and account in each admission/reservation transaction; exact raw-mail retries do not reserve retained capacity twice. |
 | `capture_idempotency/{sha256_key}` | Exactly-once quota reservation | `capture_id`, `camera_id`, `content_sha256`, `content_type`, `state`; immutable after reconciliation except `state`. |
 | `captures/{capture_id}` | One accepted image/frame | `camera_id`, nullable `segment_id`/`event_id`, `media_id`, `idempotency_hash`, `received_at`, `content_sha256`, `content_type`, server-derived original UTC-offset minutes, bounded versioned client `metadata` containing capture time, client, decoded dimensions, sequence/burst, and motion fields, plus `status` (`accepted`, `stored`, or `processed`). |
 | `media/{media_id}` | Immutable private-object linkage | `capture_id`, server-derived `object_key`, generation, size, content type, SHA-256, `retention_class`; no public or signed URL. |
@@ -138,9 +140,11 @@ belong in private Cloud Storage rather than Firestore.
    reject the tighter bounds above before serialization.
 10. Inbound mail reserves its deterministic account-scoped transport identity before
    object upload, moves through stored/published states, and retries unfinished
-   publication. A reused Message-ID with different bytes falls back to a
+   publication. Admission first charges a bounded request/byte rate window, then a
+   second transaction revalidates the active address generation and reserves retained
+   message/byte capacity. A reused Message-ID with different bytes falls back to a
    content-qualified identity so conflicting evidence is preserved rather than
-   overwritten or dropped.
+   overwritten or dropped. Exact retries do not reserve retained capacity twice.
 11. Inbound MIME bytes are always `untrusted_external`. The gateway validates bounded
    structure and supported passive content before storage, publishes no message body
    or attachment content, and never promotes email text into executable agent

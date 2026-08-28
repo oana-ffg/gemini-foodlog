@@ -40,6 +40,7 @@ from .errors import (
     DeviceCredentialCollision,
     IdempotencyConflict,
     InboundAddressGenerationFailed,
+    InboundAddressStateConflict,
     InvalidDeviceCredential,
     InvalidKnowledgeProvenance,
     InvalidKnowledgeTransition,
@@ -97,6 +98,7 @@ from .models import (
     DeviceSession,
     FeedbackInventoryView,
     InboundMailAddress,
+    InboundMailAddressMutationRequest,
     KnowledgePage,
     KnowledgePageHistory,
     KnowledgeRevisionResult,
@@ -633,7 +635,13 @@ def create_app(
     async def provision_account(user_id: str = Depends(request_user_id)) -> Account:
         return await container.account_service.provision_account(user_id)
 
-    @app.post("/v1/inbound-mail-address", response_model=InboundMailAddress)
+    @app.post(
+        "/v1/inbound-mail-address",
+        response_model=InboundMailAddress,
+        responses={
+            status.HTTP_503_SERVICE_UNAVAILABLE: {"description": "Address generation exhausted"},
+        },
+    )
     async def get_or_create_inbound_mail_address(
         response: Response,
         user_id: str = Depends(request_user_id),
@@ -645,6 +653,62 @@ def create_app(
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="inbound_address_generation_failed",
+            ) from exc
+
+    @app.post(
+        "/v1/inbound-mail-address/rotate",
+        response_model=InboundMailAddress,
+        responses={
+            status.HTTP_409_CONFLICT: {"description": "Address generation changed"},
+            status.HTTP_503_SERVICE_UNAVAILABLE: {
+                "description": "Replacement address generation exhausted"
+            },
+        },
+    )
+    async def rotate_inbound_mail_address(
+        request: InboundMailAddressMutationRequest,
+        response: Response,
+        user_id: str = Depends(request_user_id),
+    ) -> InboundMailAddress:
+        response.headers["Cache-Control"] = "no-store"
+        try:
+            return await container.inbound_mail_address_service.rotate(
+                user_id,
+                expected_generation=request.expected_generation,
+            )
+        except InboundAddressStateConflict as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="inbound_address_state_conflict",
+            ) from exc
+        except InboundAddressGenerationFailed as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="inbound_address_generation_failed",
+            ) from exc
+
+    @app.post(
+        "/v1/inbound-mail-address/revoke",
+        response_model=InboundMailAddress,
+        responses={
+            status.HTTP_409_CONFLICT: {"description": "Address generation changed"},
+        },
+    )
+    async def revoke_inbound_mail_address(
+        request: InboundMailAddressMutationRequest,
+        response: Response,
+        user_id: str = Depends(request_user_id),
+    ) -> InboundMailAddress:
+        response.headers["Cache-Control"] = "no-store"
+        try:
+            return await container.inbound_mail_address_service.revoke(
+                user_id,
+                expected_generation=request.expected_generation,
+            )
+        except InboundAddressStateConflict as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="inbound_address_state_conflict",
             ) from exc
 
     @app.post(
@@ -662,9 +726,7 @@ def create_app(
             owner_user_id=identity.uid,
             idempotency_key=idempotency_key,
             requested_at=utc_now(),
-            cooldown=timedelta(
-                seconds=active_settings.export_request_cooldown_seconds
-            ),
+            cooldown=timedelta(seconds=active_settings.export_request_cooldown_seconds),
         )
         try:
             await container.account_export_event_publisher.publish(
@@ -678,9 +740,7 @@ def create_app(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="account_export_publish_failed",
             ) from error
-        response.status_code = (
-            status.HTTP_202_ACCEPTED if created else status.HTTP_200_OK
-        )
+        response.status_code = status.HTTP_202_ACCEPTED if created else status.HTTP_200_OK
         response.headers["Cache-Control"] = "no-store"
         return account_export_view(account_export)
 

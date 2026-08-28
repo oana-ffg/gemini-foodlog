@@ -11,6 +11,7 @@ from mail_gateway.adapters import (
     GCSRawMailStore,
     PubSubMailEventPublisher,
 )
+from mail_gateway.config import quota_policy_from_environment
 from mail_gateway.service import MailGatewayService
 
 FIXTURE_ROOT = Path(__file__).parents[2] / "backend" / "tests" / "fixtures" / "nemlig"
@@ -96,7 +97,11 @@ def smoke(args: argparse.Namespace) -> None:
 
     gateway = MailGatewayService(
         domain=args.domain,
-        repository=FirestoreMailRepository(project_id=args.project),
+        repository=FirestoreMailRepository(
+            project_id=args.project,
+            domain=args.domain,
+            quota_policy=quota_policy_from_environment(),
+        ),
         object_store=GCSRawMailStore(project_id=args.project, bucket_name=args.bucket),
         event_publisher=PubSubMailEventPublisher(topic=args.topic),
     )

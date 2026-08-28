@@ -34,6 +34,8 @@ import {
   retireKnowledge,
   retireContextNote,
   revokeCamera,
+  revokeInboundMailAddress,
+  rotateInboundMailAddress,
   respondToPatternQuestion,
   submitMealFeedback,
   teachKnowledge,
@@ -141,7 +143,7 @@ describe("authenticated API client", () => {
     ]);
   });
 
-  it("creates or retrieves the stable private inbound address without caller-selected scope", async () => {
+  it("creates or retrieves the private inbound address without caller-selected scope", async () => {
     firebase.auth.currentUser = {
       getIdToken: vi.fn().mockResolvedValue("firebase-id-token"),
     };
@@ -150,7 +152,9 @@ describe("authenticated API client", () => {
       account_id: "account-1",
       address: "private-address@gemini-foodlog-2026.appspotmail.com",
       status: "active",
+      generation: 1,
       created_at: "2026-08-27T20:00:00Z",
+      revoked_at: null,
     }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -159,6 +163,34 @@ describe("authenticated API client", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "http://127.0.0.1:8080/v1/inbound-mail-address",
       expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("rotates and revokes only the current owner address generation", async () => {
+    firebase.auth.currentUser = {
+      getIdToken: vi.fn().mockResolvedValue("firebase-id-token"),
+    };
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse({})));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await rotateInboundMailAddress(3);
+    await revokeInboundMailAddress(4);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "http://127.0.0.1:8080/v1/inbound-mail-address/rotate",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ expected_generation: 3 }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "http://127.0.0.1:8080/v1/inbound-mail-address/revoke",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ expected_generation: 4 }),
+      }),
     );
   });
 

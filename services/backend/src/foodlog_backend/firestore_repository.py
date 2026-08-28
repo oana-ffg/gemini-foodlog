@@ -91,6 +91,7 @@ from .models import (
     DurableJob,
     EntitlementMode,
     InboundMailAddress,
+    InboundMailAddressStatus,
     InboundMailRoute,
     JobKind,
     JobStatus,
@@ -653,9 +654,7 @@ class FirestoreRepository:
 
         @firestore.async_transactional
         async def create(transaction):
-            identity_snapshot = await self._identity(owner_user_id).get(
-                transaction=transaction
-            )
+            identity_snapshot = await self._identity(owner_user_id).get(transaction=transaction)
             if not identity_snapshot.exists or identity_snapshot.get("status") != "active":
                 raise AccountNotProvisioned
             account_id = identity_snapshot.get("account_id")
@@ -678,9 +677,11 @@ class FirestoreRepository:
 
             if export_snapshot.exists:
                 existing = _model(export_snapshot, AccountExport)
-                job_snapshot = await self._collection(account_id, "jobs").document(
-                    existing.job_id
-                ).get(transaction=transaction)
+                job_snapshot = (
+                    await self._collection(account_id, "jobs")
+                    .document(existing.job_id)
+                    .get(transaction=transaction)
+                )
                 if (
                     existing.account_id != account_id
                     or existing.requested_by_user_id != owner_user_id
@@ -1058,7 +1059,12 @@ class FirestoreRepository:
                 if not route_snapshot.exists:
                     raise InboundAddressStateConflict
                 route = _model(route_snapshot, InboundMailRoute)
-                if route.account_id != account_id or route.address_id != existing.id:
+                if (
+                    route.account_id != account_id
+                    or route.address_id != existing.id
+                    or route.status != existing.status
+                    or route.generation != existing.generation
+                ):
                     raise InboundAddressStateConflict
                 return existing
 
@@ -1087,22 +1093,155 @@ class FirestoreRepository:
 
         return await create(transaction)
 
+    async def rotate_inbound_mail_address(
+        self,
+        *,
+        owner_user_id: str,
+        expected_generation: int,
+        address: str,
+        address_hash: str,
+    ) -> InboundMailAddress:
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def rotate(transaction):
+            identity = await self._identity(owner_user_id).get(transaction=transaction)
+            if not identity.exists or identity.get("status") != "active":
+                raise AccountNotProvisioned
+            account_id = identity.get("account_id")
+            if not isinstance(account_id, str) or not account_id:
+                raise AccountNotProvisioned
+            address_ref = self._collection(account_id, "inbound_mail_addresses").document("current")
+            address_snapshot = await address_ref.get(transaction=transaction)
+            if not address_snapshot.exists:
+                raise InboundAddressStateConflict
+            current = _model(address_snapshot, InboundMailAddress)
+            if current.account_id != account_id or current.generation != expected_generation:
+                raise InboundAddressStateConflict
+            current_hash = sha256(current.address.casefold().encode()).hexdigest()
+            current_route_ref = self._client.collection("inbound_mail_routes").document(
+                current_hash
+            )
+            replacement_route_ref = self._client.collection("inbound_mail_routes").document(
+                address_hash
+            )
+            current_route_snapshot = await current_route_ref.get(transaction=transaction)
+            replacement_route_snapshot = await replacement_route_ref.get(transaction=transaction)
+            if not current_route_snapshot.exists:
+                raise InboundAddressStateConflict
+            current_route = _model(current_route_snapshot, InboundMailRoute)
+            if (
+                current_route.account_id != account_id
+                or current_route.address_id != current.id
+                or current_route.status != current.status
+                or current_route.generation != current.generation
+            ):
+                raise InboundAddressStateConflict
+            if replacement_route_snapshot.exists:
+                raise InboundAddressCollision
+
+            now = utc_now()
+            replacement = InboundMailAddress(
+                account_id=account_id,
+                address=address,
+                generation=current.generation + 1,
+                created_at=now,
+            )
+            replacement_route = InboundMailRoute(
+                id=address_hash,
+                account_id=account_id,
+                generation=replacement.generation,
+                created_at=now,
+            )
+            if current.status == InboundMailAddressStatus.ACTIVE:
+                transaction.update(
+                    current_route_ref,
+                    {
+                        "status": InboundMailAddressStatus.REVOKED.value,
+                        "generation": current.generation,
+                        "revoked_at": now,
+                    },
+                )
+            transaction.set(address_ref, _document(replacement))
+            transaction.create(replacement_route_ref, _document(replacement_route))
+            return replacement
+
+        return await rotate(transaction)
+
+    async def revoke_inbound_mail_address(
+        self,
+        *,
+        owner_user_id: str,
+        expected_generation: int,
+    ) -> InboundMailAddress:
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def revoke(transaction):
+            identity = await self._identity(owner_user_id).get(transaction=transaction)
+            if not identity.exists or identity.get("status") != "active":
+                raise AccountNotProvisioned
+            account_id = identity.get("account_id")
+            if not isinstance(account_id, str) or not account_id:
+                raise AccountNotProvisioned
+            address_ref = self._collection(account_id, "inbound_mail_addresses").document("current")
+            address_snapshot = await address_ref.get(transaction=transaction)
+            if not address_snapshot.exists:
+                raise InboundAddressStateConflict
+            current = _model(address_snapshot, InboundMailAddress)
+            if current.account_id != account_id or current.generation != expected_generation:
+                raise InboundAddressStateConflict
+            route_ref = self._client.collection("inbound_mail_routes").document(
+                sha256(current.address.casefold().encode()).hexdigest()
+            )
+            route_snapshot = await route_ref.get(transaction=transaction)
+            if not route_snapshot.exists:
+                raise InboundAddressStateConflict
+            route = _model(route_snapshot, InboundMailRoute)
+            if (
+                route.account_id != account_id
+                or route.address_id != current.id
+                or route.status != current.status
+                or route.generation != current.generation
+            ):
+                raise InboundAddressStateConflict
+            if current.status == InboundMailAddressStatus.REVOKED:
+                return current
+            now = utc_now()
+            revoked = current.model_copy(
+                update={
+                    "status": InboundMailAddressStatus.REVOKED,
+                    "revoked_at": now,
+                }
+            )
+            transaction.set(address_ref, _document(revoked))
+            transaction.update(
+                route_ref,
+                {
+                    "status": InboundMailAddressStatus.REVOKED.value,
+                    "generation": current.generation,
+                    "revoked_at": now,
+                },
+            )
+            return revoked
+
+        return await revoke(transaction)
+
     async def raw_mail_authentication(
         self,
         *,
         account_id: str,
         raw_mail_id: str,
     ) -> RawMailAuthentication | None:
-        snapshot = await self._collection(account_id, "raw_mail_authentication").document(
-            raw_mail_id
-        ).get()
+        snapshot = (
+            await self._collection(account_id, "raw_mail_authentication")
+            .document(raw_mail_id)
+            .get()
+        )
         if not snapshot.exists:
             return None
         authentication = _model(snapshot, RawMailAuthentication)
-        if (
-            authentication.account_id != account_id
-            or authentication.raw_mail_id != raw_mail_id
-        ):
+        if authentication.account_id != account_id or authentication.raw_mail_id != raw_mail_id:
             raise RawMailAuthenticationConflict
         return authentication
 
@@ -1127,8 +1266,7 @@ class FirestoreRepository:
                 not raw_mail_snapshot.exists
                 or raw_mail_data.get("account_id") != authentication.account_id
                 or raw_mail_data.get("status") not in {"stored", "published"}
-                or raw_mail_data.get("content_sha256")
-                != authentication.raw_content_sha256
+                or raw_mail_data.get("content_sha256") != authentication.raw_content_sha256
             ):
                 raise RawMailNotFound
             if existing_snapshot.exists:
@@ -1149,9 +1287,9 @@ class FirestoreRepository:
         account_id: str,
         raw_mail_id: str,
     ) -> RawMailProcessingDisposition | None:
-        snapshot = await self._collection(account_id, "raw_mail_processing").document(
-            raw_mail_id
-        ).get()
+        snapshot = (
+            await self._collection(account_id, "raw_mail_processing").document(raw_mail_id).get()
+        )
         if not snapshot.exists:
             return None
         disposition = _model(snapshot, RawMailProcessingDisposition)
@@ -1169,9 +1307,9 @@ class FirestoreRepository:
         authentication_ref = self._collection(
             disposition.account_id, "raw_mail_authentication"
         ).document(disposition.raw_mail_id)
-        disposition_ref = self._collection(
-            disposition.account_id, "raw_mail_processing"
-        ).document(disposition.raw_mail_id)
+        disposition_ref = self._collection(disposition.account_id, "raw_mail_processing").document(
+            disposition.raw_mail_id
+        )
         transaction = self._client.transaction()
 
         @firestore.async_transactional
@@ -1194,8 +1332,7 @@ class FirestoreRepository:
                 authentication.account_id != disposition.account_id
                 or authentication.raw_mail_id != disposition.raw_mail_id
                 or authentication.raw_content_sha256 != disposition.raw_content_sha256
-                or authentication.outcome
-                != RawMailAuthenticationOutcome.ALIGNED_DKIM_PASS
+                or authentication.outcome != RawMailAuthenticationOutcome.ALIGNED_DKIM_PASS
             ):
                 raise RawMailNotFound
             if existing_snapshot.exists:
@@ -1260,8 +1397,7 @@ class FirestoreRepository:
                 authentication.account_id != candidate.account_id
                 or authentication.raw_mail_id != candidate.raw_mail_id
                 or authentication.raw_content_sha256 != candidate.raw_content_sha256
-                or authentication.outcome
-                != RawMailAuthenticationOutcome.ALIGNED_DKIM_PASS
+                or authentication.outcome != RawMailAuthenticationOutcome.ALIGNED_DKIM_PASS
             ):
                 raise RawMailNotFound
 
@@ -3350,9 +3486,11 @@ class FirestoreRepository:
         event_snapshot = await self._collection(account_id, "events").document(event_id).get()
         if not event_snapshot.exists or event_snapshot.get("account_id") != account_id:
             raise ActivityEventNotFound
-        query = self._collection(account_id, "traces").where(
-            filter=FieldFilter("event_id", "==", event_id)
-        ).limit(limit + 1)
+        query = (
+            self._collection(account_id, "traces")
+            .where(filter=FieldFilter("event_id", "==", event_id))
+            .limit(limit + 1)
+        )
         traces = [_model(snapshot, AiTraceRecord) async for snapshot in query.stream()]
         if any(trace.account_id != account_id or trace.event_id != event_id for trace in traces):
             raise ValueError("AI trace evidence escaped its account or event scope")

@@ -23,6 +23,7 @@ EXPORT_COLLECTIONS = (
     "events",
     "feedback",
     "inbound_mail_addresses",
+    "inbound_mail_usage",
     "knowledge",
     "meals",
     "model_usage",
