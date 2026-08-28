@@ -23,7 +23,7 @@ resource "google_billing_budget" "foodlog" {
   }
 
   budget_filter {
-    projects               = ["projects/${data.google_project.current.number}"]
+    projects               = ["projects/${var.project_number}"]
     calendar_period        = "MONTH"
     credit_types_treatment = "EXCLUDE_ALL_CREDITS"
   }

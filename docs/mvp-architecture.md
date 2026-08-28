@@ -128,6 +128,8 @@ The Terraform configuration must make the selected region, enabled APIs, service
 
 GitHub Actions runs CI and production deployment. Google Cloud authentication uses GitHub's OpenID Connect token with Workload Identity Federation; no long-lived Google service-account key is stored in GitHub.
 
+Ordinary pushes and pull requests run the locked web and backend dependency installs, type checks, tests, builds, linting, Terraform formatting, and offline Terraform validation. These jobs have read-only repository access and no Google identity. Production is a manually dispatched workflow from `main`; an initial unprotected job proves that the same repository cannot exchange a token outside the protected environment.
+
 The trust relationship must be restricted to this repository and the intended protected branch or production environment. Pull-request jobs—including jobs triggered from forks—may lint, type-check, test, validate Terraform, and build artifacts, but they cannot obtain production credentials or apply infrastructure. Workflow permissions default to read-only and grant `id-token: write` only to the jobs that actually authenticate to Google Cloud.
 
 Production changes have a deliberate approval boundary:
@@ -135,8 +137,11 @@ Production changes have a deliberate approval boundary:
 1. CI passes for the exact commit.
 2. A production workflow is started from the protected `main` branch.
 3. The GitHub `production` environment requires approval before its credential-bearing job can run. Repository visibility and GitHub plan support for required reviewers must be confirmed when the repository is configured.
-4. Terraform applies use a narrowly scoped infrastructure identity; application deployments use a separate narrowly scoped deployment identity. Neither identity is available to ordinary pull-request jobs.
-5. The pipeline deploys immutable artifacts identified by commit and digest, then runs authenticated health and smoke checks against the deployed revision. A successful command without a successful post-deployment check is not considered a verified release.
+4. Read-only plans use an identity that can read only the exact Terraform state bucket. Application deployments use a separate identity that can update only the named Cloud Run services and smoke jobs, attach the four named runtime identities, write the backend image repository, and update the exact Terraform state bucket. Neither identity is available to ordinary pull-request jobs.
+5. The deploy pipeline reruns every release quality gate, builds the backend on GitHub's public runner, pushes an immutable candidate, rotates protected active and rollback digest tags, and rejects any Terraform plan containing changes outside in-place Cloud Run updates.
+6. The exact immutable digest is committed to the production variable file before the saved plan is applied. The workflow then checks API health, every service and job digest, the protected active tag, and a final zero-change Terraform plan. A successful command without a successful post-deployment check is not considered a verified release.
+
+Automated production Terraform plans deliberately use `-refresh=false`: the planning identity can compare checked-in configuration with the protected remote state but cannot enumerate production resources. Full live drift checks remain an operator action with the separately authenticated owner account. Firebase Hosting deployment is also intentionally outside this workflow until its exact least-privilege release boundary is defined; the web application is still built and tested on every change.
 
 Terraform plans can contain sensitive values. Full plan artifacts and output are restricted to trusted runs and are not copied wholesale into public pull-request comments. Production deployments use a concurrency guard so two releases cannot mutate the same environment simultaneously.
 

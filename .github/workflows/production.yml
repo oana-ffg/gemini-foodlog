@@ -1,0 +1,229 @@
+name: Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Run a zero-change production plan or deploy this exact main commit
+        required: true
+        default: plan
+        type: choice
+        options:
+          - plan
+          - deploy
+
+permissions:
+  contents: read
+
+concurrency:
+  group: foodlog-production
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: gemini-foodlog-2026
+  GCP_REGION: europe-west1
+  IMAGE_REPOSITORY: europe-west1-docker.pkg.dev/gemini-foodlog-2026/cloud-run-source-deploy/foodlog-api
+  WIF_PROVIDER: projects/163029863855/locations/global/workloadIdentityPools/github-actions/providers/foodlog
+
+jobs:
+  reject-unprotected-token:
+    name: Reject unprotected token
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Attempt authentication outside production
+        id: unprotected_auth
+        continue-on-error: true
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: foodlog-ci-infra@gemini-foodlog-2026.iam.gserviceaccount.com
+          create_credentials_file: false
+          token_format: access_token
+
+      - name: Require provider rejection
+        env:
+          AUTH_OUTCOME: ${{ steps.unprotected_auth.outcome }}
+        run: |
+          if [[ "$AUTH_OUTCOME" != "failure" ]]; then
+            echo "The unprotected job unexpectedly minted Google credentials." >&2
+            exit 1
+          fi
+
+  production:
+    name: ${{ inputs.operation == 'deploy' && 'Deploy' || 'Plan' }} production
+    needs: reject-unprotected-token
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: production
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Check out exact main commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Require exact main ref
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Production may run only from refs/heads/main." >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud without a key
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ inputs.operation == 'deploy' && 'foodlog-ci-deploy@gemini-foodlog-2026.iam.gserviceaccount.com' || 'foodlog-ci-infra@gemini-foodlog-2026.iam.gserviceaccount.com' }}
+          create_credentials_file: true
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - name: Initialize production Terraform
+        working-directory: infra/terraform/production
+        run: terraform init -input=false
+
+      - name: Verify zero-change production plan
+        if: inputs.operation == 'plan'
+        working-directory: infra/terraform/production
+        run: |
+          terraform plan -refresh=false -lock=false -detailed-exitcode -out="$RUNNER_TEMP/foodlog-production-plan.tfplan"
+          terraform show -no-color "$RUNNER_TEMP/foodlog-production-plan.tfplan"
+
+      - name: Set up Node.js
+        if: inputs.operation == 'deploy'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Set up uv
+        if: inputs.operation == 'deploy'
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: 0.5.13
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Run release quality gates
+        if: inputs.operation == 'deploy'
+        run: |
+          npm ci
+          npm run typecheck
+          npm test --workspace @foodlog/web
+          npm run build
+          cd services/backend
+          uv sync --frozen
+          uv run ruff check .
+          uv run pytest
+
+      - name: Build and push the exact backend commit
+        if: inputs.operation == 'deploy'
+        id: image
+        run: |
+          release_tag="candidate-${GITHUB_SHA}"
+          candidate_image="${IMAGE_REPOSITORY}:${release_tag}"
+          gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
+          docker build --tag "$candidate_image" services/backend
+          docker push "$candidate_image"
+          qualified_digest="$(gcloud artifacts docker images describe "$candidate_image" --format='value(image_summary.fully_qualified_digest)')"
+          if [[ "$qualified_digest" != "${IMAGE_REPOSITORY}@sha256:"* ]]; then
+            echo "Artifact Registry returned an unexpected digest: $qualified_digest" >&2
+            exit 1
+          fi
+          echo "qualified_digest=$qualified_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Rotate protected active and rollback tags
+        if: inputs.operation == 'deploy'
+        env:
+          NEW_IMAGE: ${{ steps.image.outputs.qualified_digest }}
+        run: |
+          current_image="$(awk -F'"' '/^api_container_image/ { print $2 }' infra/terraform/production/production.auto.tfvars)"
+          if [[ "$current_image" != "${IMAGE_REPOSITORY}@sha256:"* ]]; then
+            echo "The checked-in production image is not an immutable digest." >&2
+            exit 1
+          fi
+          gcloud artifacts docker tags add "$current_image" "${IMAGE_REPOSITORY}:protected-rollback" --quiet
+          gcloud artifacts docker tags add "$NEW_IMAGE" "${IMAGE_REPOSITORY}:protected-active" --quiet
+
+      - name: Create and validate the exact deployment plan
+        if: inputs.operation == 'deploy'
+        id: deploy_plan
+        env:
+          NEW_IMAGE: ${{ steps.image.outputs.qualified_digest }}
+        working-directory: infra/terraform/production
+        run: |
+          printf 'api_container_image = "%s"\n' "$NEW_IMAGE" > production.auto.tfvars
+          terraform fmt -check
+          terraform validate
+          terraform plan -refresh=false -out="$RUNNER_TEMP/foodlog-deploy.tfplan"
+          terraform show -json "$RUNNER_TEMP/foodlog-deploy.tfplan" > "$RUNNER_TEMP/foodlog-deploy.json"
+
+          changed_count="$(jq '[.resource_changes[]? | select(.change.actions != ["no-op"])] | length' "$RUNNER_TEMP/foodlog-deploy.json")"
+          unexpected_count="$(jq '[.resource_changes[]? | select(.change.actions != ["no-op"]) | select((.address | test("^google_cloud_run_v2_(service|job)\\.")) | not)] | length' "$RUNNER_TEMP/foodlog-deploy.json")"
+          non_update_count="$(jq '[.resource_changes[]? | select(.change.actions != ["no-op"]) | select(.change.actions != ["update"])] | length' "$RUNNER_TEMP/foodlog-deploy.json")"
+          if [[ "$changed_count" -eq 0 || "$unexpected_count" -ne 0 || "$non_update_count" -ne 0 ]]; then
+            echo "Deployment plan is not limited to in-place Cloud Run image updates." >&2
+            terraform show -no-color "$RUNNER_TEMP/foodlog-deploy.tfplan"
+            exit 1
+          fi
+          echo "changed_count=$changed_count" >> "$GITHUB_OUTPUT"
+
+      - name: Persist the immutable release input
+        if: inputs.operation == 'deploy'
+        env:
+          NEW_IMAGE: ${{ steps.image.outputs.qualified_digest }}
+        run: |
+          git diff --exit-code -- . ':(exclude)infra/terraform/production/production.auto.tfvars'
+          git add infra/terraform/production/production.auto.tfvars
+          git diff --cached --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "deploy: promote ${GITHUB_SHA::12}"
+          git push origin HEAD:main
+
+      - name: Apply the reviewed Cloud Run image plan
+        if: inputs.operation == 'deploy'
+        working-directory: infra/terraform/production
+        run: terraform apply -auto-approve "$RUNNER_TEMP/foodlog-deploy.tfplan"
+
+      - name: Verify exact live release
+        if: inputs.operation == 'deploy'
+        env:
+          NEW_IMAGE: ${{ steps.image.outputs.qualified_digest }}
+        run: |
+          curl --fail --silent --show-error https://foodlog-api-sptvo5nsga-ew.a.run.app/health | jq -e '.status == "ok" and .mode == "production"'
+
+          for service in foodlog-api foodlog-image foodlog-inference foodlog-mail-worker foodlog-notification; do
+            service_json="$(gcloud run services describe "$service" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json)"
+            jq --arg image "$NEW_IMAGE" -e '.spec.template.spec.containers[0].image == $image and ([.status.conditions[]? | select(.type == "Ready" and .status == "True")] | length) == 1' <<< "$service_json"
+          done
+
+          for job in foodlog-adk-agent-smoke foodlog-context-tools-smoke foodlog-event-evidence-smoke foodlog-firestore-repository-smoke foodlog-model-spend-smoke foodlog-vertex-access-smoke; do
+            job_image="$(gcloud run jobs describe "$job" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(spec.template.spec.template.spec.containers[0].image)')"
+            if [[ "$job_image" != "$NEW_IMAGE" ]]; then
+              echo "$job does not use the exact release digest." >&2
+              exit 1
+            fi
+          done
+
+          active_digest="$(gcloud artifacts docker images describe "${IMAGE_REPOSITORY}:protected-active" --format='value(image_summary.fully_qualified_digest)')"
+          if [[ "$active_digest" != "$NEW_IMAGE" ]]; then
+            echo "The protected-active tag does not resolve to the deployed digest." >&2
+            exit 1
+          fi
+
+          cd infra/terraform/production
+          terraform plan -refresh=false -detailed-exitcode -out="$RUNNER_TEMP/foodlog-post-deploy.tfplan"

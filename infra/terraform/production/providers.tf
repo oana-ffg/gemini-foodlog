@@ -4,6 +4,17 @@ variable "project_id" {
   default     = "gemini-foodlog-2026"
 }
 
+variable "project_number" {
+  description = "Immutable numeric identifier for the FoodLog Google Cloud project."
+  type        = string
+  default     = "163029863855"
+
+  validation {
+    condition     = can(regex("^[0-9]+$", var.project_number))
+    error_message = "project_number must contain digits only."
+  }
+}
+
 variable "region" {
   description = "Primary Google Cloud region for regional FoodLog services."
   type        = string

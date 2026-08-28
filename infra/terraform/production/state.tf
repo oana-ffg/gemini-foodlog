@@ -31,6 +31,22 @@ data "google_iam_policy" "oana_storage_admin" {
       "user:oanagoge@gmail.com",
     ]
   }
+
+  binding {
+    role = google_project_iam_custom_role.terraform_state_reader.name
+
+    members = [
+      "serviceAccount:${google_service_account.runtime["ci_infra"].email}",
+    ]
+  }
+
+  binding {
+    role = google_project_iam_custom_role.terraform_state_writer.name
+
+    members = [
+      "serviceAccount:${google_service_account.runtime["ci_deploy"].email}",
+    ]
+  }
 }
 
 resource "google_storage_bucket_iam_policy" "terraform_state" {
