@@ -354,8 +354,14 @@
       ["Hackathon release", "Produce the hosted, reproducible, privacy-reviewed submission and optional bonuses."],
     ];
 
+    // Keep active status transitions compact and reviewable even though historical
+    // evidence makes individual task declarations intentionally long.
+    const liveStatusOverrides = new Map([
+      ["REL-003", "Needs Human Testing"],
+    ]);
+
     const T = (id, title, status, phase, deps, acceptance, verification, options = {}) => ({
-      id, title, status, phase, deps, acceptance, verification,
+      id, title, status: liveStatusOverrides.get(id) || status, phase, deps, acceptance, verification,
       owner: options.owner || "Codex",
       kind: options.kind || "MVP Core",
       priority: options.priority || "High",
