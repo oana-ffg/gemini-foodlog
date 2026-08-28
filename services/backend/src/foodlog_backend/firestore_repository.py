@@ -5,7 +5,6 @@ from math import ceil
 from typing import Any
 from uuid import uuid4
 
-from google.api_core.exceptions import AlreadyExists
 from google.cloud import firestore
 from google.cloud.firestore_v1 import DocumentSnapshot
 from google.cloud.firestore_v1.async_client import AsyncClient
@@ -16,6 +15,7 @@ from .audit import build_audit_event
 from .errors import (
     AccountAlreadyProvisioned,
     AccountCapacityReached,
+    AccountCapacityStateConflict,
     AccountExportAlreadyActive,
     AccountExportNotFound,
     AccountExportRateLimited,
@@ -66,6 +66,10 @@ from .grouping import (
 from .inference_schema import ActivityMealInferenceV1
 from .models import (
     Account,
+    AccountCapacityAction,
+    AccountCapacityOperation,
+    AccountCapacityPreview,
+    AccountCapacityReason,
     AccountCreatedOutbox,
     AccountExport,
     AccountExportStatus,
@@ -76,6 +80,7 @@ from .models import (
     AuditAction,
     AuditActorKind,
     AuditEvent,
+    AuditPurpose,
     AuditSource,
     BrowserCamera,
     Camera,
@@ -176,6 +181,7 @@ from .repository import (
     rich_pattern_question_id,
     user_context_note_id,
     user_context_note_request_hash,
+    validate_ai_trace_usage,
     validate_capture_scope,
     validate_enqueueable_job,
     validate_focused_question_prompt,
@@ -193,18 +199,55 @@ KNOWLEDGE_OUTER_RETRY_ATTEMPTS = 5
 TRANSACTION_COMMIT_FAILURE_PREFIX = "Failed to commit transaction in "
 
 
-def _public_capacity_values(
+def public_capacity_values(
     snapshot: DocumentSnapshot,
     *,
     configured_limit: int,
 ) -> tuple[int, int]:
+    problems = public_capacity_state_problems(
+        snapshot,
+        configured_limit=configured_limit,
+    )
+    if problems:
+        raise ValueError(f"Public account capacity state is invalid: {','.join(problems)}")
     count = snapshot.get("active_account_count") if snapshot.exists else 0
     stored_limit = snapshot.get("account_limit") if snapshot.exists else configured_limit
+    return count, stored_limit
+
+
+def public_capacity_state_problems(
+    snapshot: DocumentSnapshot,
+    *,
+    configured_limit: int,
+) -> list[str]:
+    if not snapshot.exists:
+        return []
+    data = snapshot.to_dict() or {}
+    count = data.get("active_account_count")
+    stored_limit = data.get("account_limit")
+    waitlist_open = data.get("waitlist_open")
+    problems: list[str] = []
     if not isinstance(count, int) or isinstance(count, bool) or count < 0:
-        raise ValueError("Public account capacity count is invalid")
+        problems.append("count_invalid")
     if not isinstance(stored_limit, int) or isinstance(stored_limit, bool) or stored_limit < 1:
-        raise ValueError("Public account capacity limit is invalid")
-    return count, min(stored_limit, configured_limit)
+        problems.append("limit_invalid")
+    elif stored_limit != configured_limit:
+        problems.append("limit_mismatch")
+    if not isinstance(waitlist_open, bool):
+        problems.append("waitlist_open_invalid")
+    if (
+        isinstance(count, int)
+        and not isinstance(count, bool)
+        and count >= 0
+        and isinstance(stored_limit, int)
+        and not isinstance(stored_limit, bool)
+        and stored_limit >= 1
+    ):
+        if count > stored_limit:
+            problems.append("count_exceeds_limit")
+        if isinstance(waitlist_open, bool) and waitlist_open != (count >= stored_limit):
+            problems.append("waitlist_open_mismatch")
+    return problems
 
 
 def _transaction_retry_delay(identity: str, attempt: int) -> float:
@@ -311,7 +354,12 @@ class FirestoreRepository:
     def _model_spend_ledger(self):
         return self._client.collection("system").document(self._model_spend_ledger_id)
 
-    async def provision_account(self, owner_user_id: str) -> Account:
+    async def provision_account(
+        self,
+        owner_user_id: str,
+        *,
+        verified_email_normalized: str | None = None,
+    ) -> Account:
         account_id = str(uuid4())
         created_at = utc_now()
         entitlement_mode = (
@@ -327,6 +375,9 @@ class FirestoreRepository:
         async def provision(transaction):
             identity_ref = self._identity(owner_user_id)
             capacity_ref = self._client.collection("system").document("public_capacity")
+            waitlist_ref = self._client.collection("waitlist").document(
+                sha256(owner_user_id.encode()).hexdigest()
+            )
             identity = await identity_ref.get(transaction=transaction)
             if identity.exists:
                 existing_id = identity.get("account_id")
@@ -342,12 +393,14 @@ class FirestoreRepository:
             limit = self._public_account_limit
             if entitlement_mode == EntitlementMode.TRIAL:
                 capacity = await capacity_ref.get(transaction=transaction)
-                count, limit = _public_capacity_values(
+                count, limit = public_capacity_values(
                     capacity,
                     configured_limit=self._public_account_limit,
                 )
                 if count >= limit:
                     raise AccountCapacityReached
+
+            waitlist = await waitlist_ref.get(transaction=transaction)
 
             account = Account(
                 id=account_id,
@@ -398,6 +451,8 @@ class FirestoreRepository:
                         "public" if entitlement_mode == EntitlementMode.TRIAL else "internal"
                     ),
                     "status": "active",
+                    "admission_email_normalized": verified_email_normalized,
+                    "admission_email_verified": verified_email_normalized is not None,
                     "created_at": created_at,
                     "updated_at": created_at,
                 },
@@ -411,6 +466,18 @@ class FirestoreRepository:
                         "active_account_count": count + 1,
                         "account_limit": limit,
                         "waitlist_open": count + 1 >= limit,
+                        "updated_at": created_at,
+                    },
+                )
+            if waitlist.exists and waitlist.get("status") == "active":
+                transaction.update(
+                    waitlist_ref,
+                    {
+                        "status": "fulfilled",
+                        "email_normalized": None,
+                        "mailing_list_opt_in": False,
+                        "fulfilled_at": created_at,
+                        "fulfilled_account_id": account_id,
                         "updated_at": created_at,
                     },
                 )
@@ -431,7 +498,7 @@ class FirestoreRepository:
                     return await self.account_for_owner(owner_user_id)
                 if entitlement_mode == EntitlementMode.TRIAL:
                     capacity = await capacity_ref.get()
-                    count, limit = _public_capacity_values(
+                    count, limit = public_capacity_values(
                         capacity,
                         configured_limit=self._public_account_limit,
                     )
@@ -442,6 +509,189 @@ class FirestoreRepository:
                 await asyncio.sleep(_transaction_retry_delay(owner_user_id, attempt))
 
         raise AssertionError("Public capacity retry loop did not return or raise")
+
+    async def inspect_public_account_capacity(
+        self,
+        *,
+        account_id: str,
+    ) -> AccountCapacityPreview:
+        account = await self._account(account_id).get()
+        entitlement = await self._entitlement(account_id).get()
+        capacity = await self._client.collection("system").document("public_capacity").get()
+        if not account.exists or not entitlement.exists:
+            raise AccountCapacityStateConflict
+        owner_user_id = account.get("owner_user_id")
+        if not isinstance(owner_user_id, str) or not owner_user_id:
+            raise AccountCapacityStateConflict
+        identity = await self._identity(owner_user_id).get()
+        account_status = account.get("status")
+        identity_status = identity.get("status") if identity.exists else None
+        if (
+            not identity.exists
+            or identity.get("account_id") != account_id
+            or identity.get("account_class") != "public"
+            or entitlement.get("entitlement_mode") != EntitlementMode.TRIAL.value
+            or account_status not in {"active", "capacity_reclaimed"}
+            or identity_status != account_status
+        ):
+            raise AccountCapacityStateConflict
+        count, limit = public_capacity_values(
+            capacity,
+            configured_limit=self._public_account_limit,
+        )
+        return AccountCapacityPreview(
+            account_id=account_id,
+            owner_user_id=owner_user_id,
+            account_status=account_status,
+            identity_status=identity_status,
+            active_public_account_count=count,
+            account_limit=limit,
+        )
+
+    async def change_public_account_capacity(
+        self,
+        *,
+        account_id: str,
+        action: AccountCapacityAction,
+        reason: AccountCapacityReason,
+        operation_id: str,
+    ) -> AccountCapacityOperation:
+        operation_key = "\0".join(("foodlog-capacity-v1", account_id, action.value, operation_id))
+        event_id = sha256(operation_key.encode()).hexdigest()
+        account_ref = self._account(account_id)
+        entitlement_ref = self._entitlement(account_id)
+        capacity_ref = self._client.collection("system").document("public_capacity")
+        operation_ref = self._collection(account_id, "capacity_operations").document(event_id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def change(transaction):
+            existing = await operation_ref.get(transaction=transaction)
+            account = await account_ref.get(transaction=transaction)
+            entitlement = await entitlement_ref.get(transaction=transaction)
+            capacity = await capacity_ref.get(transaction=transaction)
+            if existing.exists:
+                operation = _model(existing, AccountCapacityOperation)
+                if operation.action != action or operation.reason != reason:
+                    raise AccountCapacityStateConflict
+                return operation, False
+            if not account.exists or not entitlement.exists:
+                raise AccountCapacityStateConflict
+            owner_user_id = account.get("owner_user_id")
+            if not isinstance(owner_user_id, str) or not owner_user_id:
+                raise AccountCapacityStateConflict
+            identity_ref = self._identity(owner_user_id)
+            identity = await identity_ref.get(transaction=transaction)
+            if (
+                not identity.exists
+                or identity.get("account_id") != account_id
+                or identity.get("account_class") != "public"
+                or entitlement.get("entitlement_mode") != EntitlementMode.TRIAL.value
+            ):
+                raise AccountCapacityStateConflict
+            count, limit = public_capacity_values(
+                capacity,
+                configured_limit=self._public_account_limit,
+            )
+            account_status = account.get("status")
+            identity_status = identity.get("status")
+            if action == AccountCapacityAction.RECLAIM:
+                if (
+                    reason == AccountCapacityReason.OPERATOR_REVERSAL
+                    or account_status != "active"
+                    or identity_status != "active"
+                    or count < 1
+                ):
+                    raise AccountCapacityStateConflict
+                resulting_status = "capacity_reclaimed"
+                resulting_count = count - 1
+                audit_action = AuditAction.ACCOUNT_CAPACITY_RECLAIMED
+            else:
+                if (
+                    reason != AccountCapacityReason.OPERATOR_REVERSAL
+                    or account_status != "capacity_reclaimed"
+                    or identity_status != "capacity_reclaimed"
+                    or count >= limit
+                ):
+                    raise AccountCapacityStateConflict
+                resulting_status = "active"
+                resulting_count = count + 1
+                audit_action = AuditAction.ACCOUNT_CAPACITY_RESTORED
+            now = utc_now()
+            operation = AccountCapacityOperation(
+                id=event_id,
+                operation_id=operation_id,
+                account_id=account_id,
+                owner_user_id=owner_user_id,
+                action=action,
+                reason=reason,
+                previous_status=account_status,
+                resulting_status=resulting_status,
+                active_public_account_count=resulting_count,
+                account_limit=limit,
+                created_at=now,
+            )
+            audit = build_audit_event(
+                account_id=account_id,
+                action=audit_action,
+                actor_kind=AuditActorKind.OPERATOR,
+                source=AuditSource.OPERATOR_CLI,
+                subject_kind="account_capacity",
+                subject_id=account_id,
+                purpose=AuditPurpose.SECURITY_REVIEW,
+                occurrence_id=operation_id,
+            )
+            transaction.update(
+                account_ref,
+                {
+                    "status": resulting_status,
+                    "capacity_status_changed_at": now,
+                    "capacity_status_operation_id": operation_id,
+                    "updated_at": now,
+                },
+            )
+            transaction.update(
+                identity_ref,
+                {
+                    "status": resulting_status,
+                    "capacity_status_changed_at": now,
+                    "capacity_status_operation_id": operation_id,
+                    "updated_at": now,
+                },
+            )
+            transaction.set(
+                capacity_ref,
+                {
+                    "schema_version": 1,
+                    "active_account_count": resulting_count,
+                    "account_limit": limit,
+                    "waitlist_open": resulting_count >= limit,
+                    "updated_at": now,
+                },
+            )
+            transaction.create(operation_ref, _document(operation))
+            transaction.create(
+                self._collection(account_id, "audit_events").document(audit.id),
+                _document(audit),
+            )
+            return operation, True
+
+        operation, applied = await change(transaction)
+        account, identity, capacity, evidence = await asyncio.gather(
+            account_ref.get(),
+            self._identity(operation.owner_user_id).get(),
+            capacity_ref.get(),
+            operation_ref.get(),
+        )
+        if not evidence.exists:
+            raise AccountCapacityStateConflict
+        if applied and (
+            account.get("status") != operation.resulting_status
+            or identity.get("status") != operation.resulting_status
+            or capacity.get("active_account_count") != operation.active_public_account_count
+        ):
+            raise AccountCapacityStateConflict
+        return _model(evidence, AccountCapacityOperation)
 
     async def _claim_account_notification(
         self,
@@ -628,15 +878,27 @@ class FirestoreRepository:
         )
 
     async def account_for_owner(self, owner_user_id: str) -> Account:
-        identity = await self._identity(owner_user_id).get()
-        if not identity.exists or identity.get("status") != "active":
-            raise AccountNotProvisioned
-        account_id = identity.get("account_id")
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def resolve(transaction):
+            identity = await self._identity(owner_user_id).get(transaction=transaction)
+            if not identity.exists or identity.get("status") != "active":
+                raise AccountNotProvisioned
+            account_id = identity.get("account_id")
+            if not isinstance(account_id, str) or not account_id:
+                raise AccountNotProvisioned
+            return await self._account_in_transaction(
+                transaction,
+                account_id,
+                expected_owner_user_id=owner_user_id,
+            )
+
+        return await resolve(transaction)
+
+    async def account_is_active(self, account_id: str) -> bool:
         account = await self._account(account_id).get()
-        entitlement = await self._entitlement(account_id).get()
-        if not account.exists or not entitlement.exists:
-            raise AccountNotProvisioned
-        return self._account_from_snapshots(account, entitlement)
+        return account.exists and account.get("status") == "active"
 
     async def create_account_export(
         self,
@@ -787,11 +1049,15 @@ class FirestoreRepository:
         if lease_expires_at <= now:
             raise ValueError("account export lease must expire in the future")
         export_ref = self._collection(account_id, "exports").document(export_id)
+        account_ref = self._account(account_id)
         transaction = self._client.transaction()
 
         @firestore.async_transactional
         async def claim(transaction):
             export_snapshot = await export_ref.get(transaction=transaction)
+            account_snapshot = await account_ref.get(transaction=transaction)
+            if not account_snapshot.exists or account_snapshot.get("status") != "active":
+                return None
             if not export_snapshot.exists:
                 raise AccountExportNotFound
             account_export = _model(export_snapshot, AccountExport)
@@ -855,11 +1121,15 @@ class FirestoreRepository:
         error_code: str,
     ) -> bool:
         export_ref = self._collection(account_id, "exports").document(export_id)
+        account_ref = self._account(account_id)
         transaction = self._client.transaction()
 
         @firestore.async_transactional
         async def release(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
             export_snapshot = await export_ref.get(transaction=transaction)
+            if not account_snapshot.exists or account_snapshot.get("status") != "active":
+                return False
             if not export_snapshot.exists:
                 raise AccountExportNotFound
             account_export = _model(export_snapshot, AccountExport)
@@ -912,12 +1182,16 @@ class FirestoreRepository:
     ) -> AccountExport | None:
         export_ref = self._collection(account_id, "exports").document(export_id)
         control_ref = self._collection(account_id, "export_control").document("current")
+        account_ref = self._account(account_id)
         transaction = self._client.transaction()
 
         @firestore.async_transactional
         async def complete(transaction):
             export_snapshot = await export_ref.get(transaction=transaction)
             control_snapshot = await control_ref.get(transaction=transaction)
+            account_snapshot = await account_ref.get(transaction=transaction)
+            if not account_snapshot.exists or account_snapshot.get("status") != "active":
+                return None
             if not export_snapshot.exists:
                 raise AccountExportNotFound
             account_export = _model(export_snapshot, AccountExport)
@@ -979,12 +1253,16 @@ class FirestoreRepository:
     ) -> bool:
         export_ref = self._collection(account_id, "exports").document(export_id)
         control_ref = self._collection(account_id, "export_control").document("current")
+        account_ref = self._account(account_id)
         transaction = self._client.transaction()
 
         @firestore.async_transactional
         async def fail(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
             export_snapshot = await export_ref.get(transaction=transaction)
             control_snapshot = await control_ref.get(transaction=transaction)
+            if not account_snapshot.exists or account_snapshot.get("status") != "active":
+                return False
             if not export_snapshot.exists:
                 raise AccountExportNotFound
             account_export = _model(export_snapshot, AccountExport)
@@ -1249,6 +1527,7 @@ class FirestoreRepository:
         self,
         authentication: RawMailAuthentication,
     ) -> RawMailAuthentication:
+        account_ref = self._account(authentication.account_id)
         raw_mail_ref = self._collection(authentication.account_id, "raw_mail").document(
             authentication.raw_mail_id
         )
@@ -1259,8 +1538,11 @@ class FirestoreRepository:
 
         @firestore.async_transactional
         async def record(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
             raw_mail_snapshot = await raw_mail_ref.get(transaction=transaction)
             existing_snapshot = await authentication_ref.get(transaction=transaction)
+            if not account_snapshot.exists or account_snapshot.get("status") != "active":
+                raise AccountNotProvisioned
             raw_mail_data = raw_mail_snapshot.to_dict() or {}
             if (
                 not raw_mail_snapshot.exists
@@ -1301,6 +1583,7 @@ class FirestoreRepository:
         self,
         disposition: RawMailProcessingDisposition,
     ) -> RawMailProcessingDisposition:
+        account_ref = self._account(disposition.account_id)
         raw_mail_ref = self._collection(disposition.account_id, "raw_mail").document(
             disposition.raw_mail_id
         )
@@ -1314,9 +1597,12 @@ class FirestoreRepository:
 
         @firestore.async_transactional
         async def record(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
             raw_mail_snapshot = await raw_mail_ref.get(transaction=transaction)
             authentication_snapshot = await authentication_ref.get(transaction=transaction)
             existing_snapshot = await disposition_ref.get(transaction=transaction)
+            if not account_snapshot.exists or account_snapshot.get("status") != "active":
+                raise AccountNotProvisioned
             raw_mail_data = raw_mail_snapshot.to_dict() or {}
             if (
                 not raw_mail_snapshot.exists
@@ -1553,6 +1839,7 @@ class FirestoreRepository:
             document=document,
             parsed=parsed,
         )
+        account_ref = self._account(document.account_id)
         document_ref = self._collection(document.account_id, "purchase_documents").document(
             document.id
         )
@@ -1616,10 +1903,13 @@ class FirestoreRepository:
 
         @firestore.async_transactional
         async def normalize(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
             document_snapshot = await document_ref.get(transaction=transaction)
             purchase_snapshot = await purchase_ref.get(transaction=transaction)
             normalization_snapshot = await normalization_ref.get(transaction=transaction)
             reconciliation_snapshot = await reconciliation_ref.get(transaction=transaction)
+            if not account_snapshot.exists or account_snapshot.get("status") != "active":
+                raise AccountNotProvisioned
             if not document_snapshot.exists or not purchase_snapshot.exists:
                 raise PurchaseNormalizationConflict
             persisted_document = _model(document_snapshot, PurchaseDocument)
@@ -1921,6 +2211,8 @@ class FirestoreRepository:
                 raise AccountAlreadyProvisioned
             if existing.exists:
                 stored = _model(existing, WaitlistEntry)
+                if stored.status == "fulfilled":
+                    raise AccountAlreadyProvisioned
                 if stored.status == "active":
                     if (
                         stored.email_normalized == email_normalized
@@ -1936,7 +2228,7 @@ class FirestoreRepository:
                     )
                     transaction.set(waitlist_ref, _document(refreshed))
                     return refreshed
-            count, limit = _public_capacity_values(
+            count, limit = public_capacity_values(
                 capacity,
                 configured_limit=self._public_account_limit,
             )
@@ -1970,6 +2262,8 @@ class FirestoreRepository:
             .document(sha256(firebase_uid.encode()).hexdigest())
             .get(),
         )
+        if identity.exists and identity.get("status") != "active":
+            raise AccountNotProvisioned
         launch_opt_in: bool | None = None
         launch_policy_version: str | None = None
         launch_updated_at: datetime | None = None
@@ -2012,6 +2306,8 @@ class FirestoreRepository:
             stored = _model(snapshot, WaitlistEntry)
             if stored.status == "withdrawn":
                 return stored
+            if stored.status == "fulfilled":
+                raise AccountAlreadyProvisioned
             withdrawn_at = utc_now()
             withdrawn = stored.model_copy(
                 update={
@@ -2153,6 +2449,7 @@ class FirestoreRepository:
         expected_kind: str | None,
     ) -> Camera:
         account = await self.account_for_owner(owner_user_id)
+        account_ref = self._account(account.id)
         camera_ref = self._collection(account.id, "cameras").document(camera_id)
         credential_query = self._client.collection("device_credentials").where(
             filter=FieldFilter("camera_id", "==", camera_id)
@@ -2162,13 +2459,17 @@ class FirestoreRepository:
 
         @firestore.async_transactional
         async def revoke(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
             camera_snapshot = await camera_ref.get(transaction=transaction)
             credential_snapshots = [
                 await credential_ref.get(transaction=transaction)
                 for credential_ref in credential_refs
             ]
             if (
-                not camera_snapshot.exists
+                not account_snapshot.exists
+                or account_snapshot.get("status") != "active"
+                or account_snapshot.get("owner_user_id") != owner_user_id
+                or not camera_snapshot.exists
                 or camera_snapshot.get("account_id") != account.id
                 or (expected_kind is not None and camera_snapshot.get("kind") != expected_kind)
             ):
@@ -2217,15 +2518,28 @@ class FirestoreRepository:
         account_id: str,
         camera_id: str,
     ) -> DeviceCamera:
-        snapshot = await self._collection(account_id, "cameras").document(camera_id).get()
-        if (
-            not snapshot.exists
-            or snapshot.get("account_id") != account_id
-            or snapshot.get("kind") != "device"
-            or snapshot.get("status") != CameraStatus.ACTIVE.value
-        ):
-            raise CameraNotFound
-        return _model(snapshot, DeviceCamera)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def load(transaction):
+            account = await self._account(account_id).get(transaction=transaction)
+            snapshot = await (
+                self._collection(account_id, "cameras")
+                .document(camera_id)
+                .get(transaction=transaction)
+            )
+            if (
+                not account.exists
+                or account.get("status") != "active"
+                or not snapshot.exists
+                or snapshot.get("account_id") != account_id
+                or snapshot.get("kind") != "device"
+                or snapshot.get("status") != CameraStatus.ACTIVE.value
+            ):
+                raise CameraNotFound
+            return _model(snapshot, DeviceCamera)
+
+        return await load(transaction)
 
     async def _account_in_transaction(
         self,
@@ -2489,14 +2803,18 @@ class FirestoreRepository:
     ) -> None:
         if capture.account_id != account_id:
             raise CrossAccountAccess
+        account_ref = self._account(account_id)
         capture_ref = self._collection(account_id, "captures").document(capture.id)
         entitlement_ref = self._entitlement(account_id)
         transaction = self._client.transaction()
 
         @firestore.async_transactional
         async def cancel(transaction):
+            account = await account_ref.get(transaction=transaction)
             stored = await capture_ref.get(transaction=transaction)
             entitlement = await entitlement_ref.get(transaction=transaction)
+            if not account.exists or account.get("status") != "active":
+                raise AccountNotProvisioned
             if not stored.exists:
                 return
             if (
@@ -2522,13 +2840,17 @@ class FirestoreRepository:
 
     async def mark_stored(self, *, account_id: str, capture_id: str) -> None:
         capture_ref = self._collection(account_id, "captures").document(capture_id)
+        account_ref = self._account(account_id)
         transaction = self._client.transaction()
 
         @firestore.async_transactional
         async def store(transaction):
             snapshot = await capture_ref.get(transaction=transaction)
+            account = await account_ref.get(transaction=transaction)
             if not snapshot.exists:
                 raise CaptureNotFound
+            if not account.exists or account.get("status") != "active":
+                raise AccountNotProvisioned
             if snapshot.get("status") != CaptureStatus.ACCEPTED.value:
                 return
             camera_ref = self._collection(account_id, "cameras").document(snapshot.get("camera_id"))
@@ -2579,18 +2901,29 @@ class FirestoreRepository:
         await store(transaction)
 
     async def mark_processed(self, *, account_id: str, capture_id: str) -> None:
+        account_ref = self._account(account_id)
         reference = self._collection(account_id, "captures").document(capture_id)
-        snapshot = await reference.get()
-        if not snapshot.exists:
-            raise CaptureNotFound
-        key_hash = snapshot.get("idempotency_hash")
-        batch = self._client.batch()
-        batch.update(reference, {"status": CaptureStatus.PROCESSED, "updated_at": utc_now()})
-        batch.update(
-            self._collection(account_id, "capture_idempotency").document(key_hash),
-            {"state": "processed"},
-        )
-        await batch.commit()
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def mark(transaction):
+            account = await account_ref.get(transaction=transaction)
+            snapshot = await reference.get(transaction=transaction)
+            if not account.exists or account.get("status") != "active":
+                raise AccountNotProvisioned
+            if not snapshot.exists or snapshot.get("account_id") != account_id:
+                raise CaptureNotFound
+            key_hash = snapshot.get("idempotency_hash")
+            transaction.update(
+                reference,
+                {"status": CaptureStatus.PROCESSED.value, "updated_at": utc_now()},
+            )
+            transaction.update(
+                self._collection(account_id, "capture_idempotency").document(key_hash),
+                {"state": "processed"},
+            )
+
+        await mark(transaction)
 
     async def capture_for_account(
         self,
@@ -2608,12 +2941,16 @@ class FirestoreRepository:
 
     async def enqueue_job(self, job: DurableJob) -> DurableJob:
         validate_enqueueable_job(job)
+        account_ref = self._account(job.account_id)
         job_ref = self._collection(job.account_id, "jobs").document(job.id)
         transaction = self._client.transaction()
 
         @firestore.async_transactional
         async def enqueue(transaction):
+            account = await account_ref.get(transaction=transaction)
             snapshot = await job_ref.get(transaction=transaction)
+            if not account.exists or account.get("status") != "active":
+                raise AccountNotProvisioned
             if not snapshot.exists:
                 transaction.create(job_ref, _document(job))
                 return job
@@ -2643,11 +2980,15 @@ class FirestoreRepository:
         lease_expires_at: datetime,
     ) -> DurableJob | None:
         job_ref = self._collection(account_id, "jobs").document(job_id)
+        account_ref = self._account(account_id)
         transaction = self._client.transaction()
 
         @firestore.async_transactional
         async def claim(transaction):
             snapshot = await job_ref.get(transaction=transaction)
+            account = await account_ref.get(transaction=transaction)
+            if not account.exists or account.get("status") != "active":
+                return None
             if not snapshot.exists:
                 return None
             job = _model(snapshot, DurableJob)
@@ -2694,11 +3035,15 @@ class FirestoreRepository:
         updates: dict[str, Any],
     ) -> bool:
         job_ref = self._collection(account_id, "jobs").document(job_id)
+        account_ref = self._account(account_id)
         transaction = self._client.transaction()
 
         @firestore.async_transactional
         async def transition(transaction):
             snapshot = await job_ref.get(transaction=transaction)
+            account = await account_ref.get(transaction=transaction)
+            if not account.exists or account.get("status") != "active":
+                return False
             if not snapshot.exists:
                 return False
             job = _model(snapshot, DurableJob)
@@ -2788,6 +3133,7 @@ class FirestoreRepository:
     ) -> CaptureGroupingResult | None:
         candidate_event_id = str(uuid4())
         capture_ref = self._collection(account_id, "captures").document(capture_id)
+        account_ref = self._account(account_id)
         grouping_job_ref = self._collection(account_id, "jobs").document(
             capture_grouping_job_id(capture_id)
         )
@@ -2797,6 +3143,9 @@ class FirestoreRepository:
         async def group(transaction):
             capture_snapshot = await capture_ref.get(transaction=transaction)
             grouping_job_snapshot = await grouping_job_ref.get(transaction=transaction)
+            account_snapshot = await account_ref.get(transaction=transaction)
+            if not account_snapshot.exists or account_snapshot.get("status") != "active":
+                return None
             if not capture_snapshot.exists or not grouping_job_snapshot.exists:
                 return None
             capture = self._capture_from_snapshot(capture_snapshot, "internal-grouping")
@@ -3056,6 +3405,7 @@ class FirestoreRepository:
         hypothesis: ActivityMealInferenceV1,
     ) -> MealEntry | None:
         event_ref = self._collection(account_id, "events").document(event_id)
+        account_ref = self._account(account_id)
         job_ref = self._collection(account_id, "jobs").document(event_inference_job_id(event_id))
         capture_refs = [
             self._collection(account_id, "captures").document(capture_id)
@@ -3068,6 +3418,9 @@ class FirestoreRepository:
         async def publish(transaction):
             event_snapshot = await event_ref.get(transaction=transaction)
             job_snapshot = await job_ref.get(transaction=transaction)
+            account_snapshot = await account_ref.get(transaction=transaction)
+            if not account_snapshot.exists or account_snapshot.get("status") != "active":
+                return None
             if not event_snapshot.exists or not job_snapshot.exists:
                 return None
             event = _model(event_snapshot, ActivityEvent)
@@ -3317,7 +3670,7 @@ class FirestoreRepository:
             existing_snapshot = await usage_ref.get(transaction=transaction)
             if (
                 not account_snapshot.exists
-                or account_snapshot.get("status") != "active"
+                or account_snapshot.get("status") not in {"active", "capacity_reclaimed"}
                 or account_snapshot.get("id") != usage.account_id
             ):
                 raise AccountNotProvisioned
@@ -3374,6 +3727,9 @@ class FirestoreRepository:
 
     async def record_ai_trace(self, trace: AiTraceRecord) -> AiTraceRecord:
         account_ref = self._account(trace.account_id)
+        usage_ref = self._collection(trace.account_id, "model_usage").document(
+            trace.reservation_id
+        )
         trace_ref = self._collection(trace.account_id, "traces").document(trace.id)
         audit = build_audit_event(
             account_id=trace.account_id,
@@ -3389,14 +3745,19 @@ class FirestoreRepository:
         @firestore.async_transactional
         async def record(transaction):
             account_snapshot = await account_ref.get(transaction=transaction)
+            usage_snapshot = await usage_ref.get(transaction=transaction)
             existing_snapshot = await trace_ref.get(transaction=transaction)
             audit_snapshot = await audit_ref.get(transaction=transaction)
             if (
                 not account_snapshot.exists
-                or account_snapshot.get("status") != "active"
+                or account_snapshot.get("status") not in {"active", "capacity_reclaimed"}
                 or account_snapshot.get("id") != trace.account_id
             ):
                 raise AccountNotProvisioned
+            if account_snapshot.get("status") == "capacity_reclaimed" and not usage_snapshot.exists:
+                raise AiTraceConflict
+            if usage_snapshot.exists:
+                validate_ai_trace_usage(trace, _model(usage_snapshot, ModelUsageRecord))
             if existing_snapshot.exists:
                 existing = _model(existing_snapshot, AiTraceRecord)
                 if existing != trace:
@@ -3501,6 +3862,7 @@ class FirestoreRepository:
     async def save_meal(self, *, account_id: str, meal: MealEntry) -> MealEntry:
         if meal.account_id != account_id:
             raise CrossAccountAccess
+        account_ref = self._account(account_id)
         meal_ref = self._collection(account_id, "meals").document(meal.id)
         capture_ref = self._collection(account_id, "captures").document(meal.capture_id)
         revision = MealRevision(
@@ -3517,7 +3879,10 @@ class FirestoreRepository:
 
         @firestore.async_transactional
         async def save(transaction):
+            account = await account_ref.get(transaction=transaction)
             capture = await capture_ref.get(transaction=transaction)
+            if not account.exists or account.get("status") != "active":
+                raise AccountNotProvisioned
             if not capture.exists or capture.get("account_id") != account_id:
                 raise CaptureNotFound
             existing_id = (capture.to_dict() or {}).get("meal_id")
@@ -3581,17 +3946,24 @@ class FirestoreRepository:
             source_revision_number=revision.number,
         )
         question_ref = self._collection(account_id, "questions").document(question.id)
-        try:
-            await question_ref.create(_document(question))
+        account_ref = self._account(account_id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def create(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
+            existing = await question_ref.get(transaction=transaction)
+            if not account_snapshot.exists or account_snapshot.get("status") != "active":
+                raise AccountNotProvisioned
+            if existing.exists:
+                stored = _model(existing, ClarificationQuestion)
+                if stored.account_id != account_id or stored.meal_id != meal.id:
+                    raise QuestionNotFound
+                return stored
+            transaction.create(question_ref, _document(question))
             return question
-        except AlreadyExists:
-            existing = await question_ref.get()
-            if not existing.exists:
-                raise QuestionNotFound from None
-            stored = _model(existing, ClarificationQuestion)
-            if stored.account_id != account_id or stored.meal_id != meal.id:
-                raise QuestionNotFound from None
-            return stored
+
+        return await create(transaction)
 
     async def open_pattern_question(
         self,
@@ -3843,7 +4215,7 @@ class FirestoreRepository:
             account_snapshot = await account_ref.get(transaction=transaction)
             request_snapshot = await request_ref.get(transaction=transaction)
             page_snapshot = await page_ref.get(transaction=transaction)
-            if not account_snapshot.exists:
+            if not account_snapshot.exists or account_snapshot.get("status") != "active":
                 raise AccountNotProvisioned
 
             if request_snapshot.exists:
@@ -4199,12 +4571,16 @@ class FirestoreRepository:
         feedback_id = sha256(idempotency_key.encode()).hexdigest()
         feedback_ref = self._collection(account_id, "feedback").document(feedback_id)
         meal_ref = self._collection(account_id, "meals").document(meal_id)
+        account_ref = self._account(account_id)
         transaction = self._client.transaction()
 
         @firestore.async_transactional
         async def record(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
             existing = await feedback_ref.get(transaction=transaction)
             meal_snapshot = await meal_ref.get(transaction=transaction)
+            if not account_snapshot.exists or account_snapshot.get("status") != "active":
+                raise AccountNotProvisioned
             if not meal_snapshot.exists:
                 raise MealNotFound
             meal = _model(meal_snapshot, MealEntry)
@@ -4328,23 +4704,37 @@ class FirestoreRepository:
             **request.model_dump(mode="python"),
         )
         note_ref = self._collection(account.id, "user_context_notes").document(note.id)
-        try:
-            await note_ref.create(
+        account_ref = self._account(account.id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def create(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
+            snapshot = await note_ref.get(transaction=transaction)
+            if (
+                not account_snapshot.exists
+                or account_snapshot.get("status") != "active"
+                or account_snapshot.get("owner_user_id") != owner_user_id
+            ):
+                raise AccountNotProvisioned
+            if snapshot.exists:
+                if snapshot.get("request_hash") != request_hash:
+                    raise IdempotencyConflict
+                existing = _user_context_note_from_snapshot(snapshot)
+                if existing.account_id != account.id or existing.author_user_id != owner_user_id:
+                    raise IdempotencyConflict
+                return existing
+            transaction.create(
+                note_ref,
                 {
                     **_document(note),
                     "request_hash": request_hash,
                     "updated_at": note.created_at,
-                }
+                },
             )
             return note
-        except AlreadyExists:
-            snapshot = await note_ref.get()
-            if not snapshot.exists or snapshot.get("request_hash") != request_hash:
-                raise IdempotencyConflict from None
-            existing = _user_context_note_from_snapshot(snapshot)
-            if existing.account_id != account.id or existing.author_user_id != owner_user_id:
-                raise IdempotencyConflict from None
-            return existing
+
+        return await create(transaction)
 
     async def list_user_context_notes(
         self,
@@ -4375,12 +4765,20 @@ class FirestoreRepository:
         note_id: str,
     ) -> UserContextNote:
         account = await self.account_for_owner(owner_user_id)
+        account_ref = self._account(account.id)
         note_ref = self._collection(account.id, "user_context_notes").document(note_id)
         transaction = self._client.transaction()
 
         @firestore.async_transactional
         async def retire(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
             snapshot = await note_ref.get(transaction=transaction)
+            if (
+                not account_snapshot.exists
+                or account_snapshot.get("status") != "active"
+                or account_snapshot.get("owner_user_id") != owner_user_id
+            ):
+                raise AccountNotProvisioned
             if not snapshot.exists:
                 raise UserContextNoteNotFound
             note = _user_context_note_from_snapshot(snapshot)
@@ -4576,14 +4974,22 @@ class FirestoreRepository:
         response_id = sha256(idempotency_key.encode()).hexdigest()
         question_ref = self._collection(account.id, "questions").document(question_id)
         response_ref = self._collection(account.id, "question_responses").document(response_id)
+        account_ref = self._account(account.id)
 
         async def record_once() -> QuestionResponseResult:
             transaction = self._client.transaction()
 
             @firestore.async_transactional
             async def record(transaction):
+                account_snapshot = await account_ref.get(transaction=transaction)
                 question_snapshot = await question_ref.get(transaction=transaction)
                 response_snapshot = await response_ref.get(transaction=transaction)
+                if (
+                    not account_snapshot.exists
+                    or account_snapshot.get("status") != "active"
+                    or account_snapshot.get("owner_user_id") != owner_user_id
+                ):
+                    raise AccountNotProvisioned
                 if not question_snapshot.exists:
                     raise QuestionNotFound
                 question = _model(question_snapshot, ClarificationQuestion)

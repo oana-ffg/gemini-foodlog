@@ -13,6 +13,26 @@ class InvalidAuthenticationToken(Exception):
     """Raised when a presented Firebase identity token cannot be trusted."""
 
 
+def normalize_verified_email(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().casefold()
+    if not normalized or len(normalized) > 320:
+        return None
+    return normalized
+
+
+def firebase_app_for_project(project_id: str) -> App:
+    app_name = f"foodlog-auth-{project_id}"
+    try:
+        return firebase_admin.get_app(app_name)
+    except ValueError:
+        return firebase_admin.initialize_app(
+            options={"projectId": project_id},
+            name=app_name,
+        )
+
+
 @dataclass(frozen=True)
 class VerifiedIdentity:
     uid: str
@@ -39,18 +59,7 @@ class IdentityTokenVerifier(Protocol):
 
 class FirebaseIdentityTokenVerifier:
     def __init__(self, project_id: str, *, firebase_app: App | None = None) -> None:
-        self._app = firebase_app or self._get_or_initialize_app(project_id)
-
-    @staticmethod
-    def _get_or_initialize_app(project_id: str) -> App:
-        app_name = f"foodlog-auth-{project_id}"
-        try:
-            return firebase_admin.get_app(app_name)
-        except ValueError:
-            return firebase_admin.initialize_app(
-                options={"projectId": project_id},
-                name=app_name,
-            )
+        self._app = firebase_app or firebase_app_for_project(project_id)
 
     async def verify(self, token: str) -> VerifiedIdentity:
         try:
@@ -68,7 +77,7 @@ class FirebaseIdentityTokenVerifier:
         return VerifiedIdentity(
             uid=uid,
             email_verified=claims.get("email_verified") is True,
-            email=self._normalized_email(claims.get("email")),
+            email=normalize_verified_email(claims.get("email")),
             authenticated_at=self._authentication_time(claims.get("auth_time")),
         )
 
@@ -80,12 +89,3 @@ class FirebaseIdentityTokenVerifier:
             return datetime.fromtimestamp(value, UTC)
         except (OverflowError, OSError, ValueError):
             return None
-
-    @staticmethod
-    def _normalized_email(value: object) -> str | None:
-        if not isinstance(value, str):
-            return None
-        normalized = value.strip().casefold()
-        if not normalized or len(normalized) > 320:
-            return None
-        return normalized

@@ -107,6 +107,9 @@ def create_inference_worker_app(
         except ValueError as error:
             raise HTTPException(status_code=400, detail="invalid_pubsub_event") from error
 
+        if not await active_repository.account_is_active(event.account_id):
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+
         try:
             capture = await active_repository.capture_for_account(
                 account_id=event.account_id,
@@ -152,7 +155,8 @@ def create_inference_worker_app(
             )
             if claimed is not None:
                 await active_processor.publish(claimed)
-            await pattern_detection.detect_and_propose(account_id=event.account_id)
+            if await active_repository.account_is_active(event.account_id):
+                await pattern_detection.detect_and_propose(account_id=event.account_id)
         except Exception as error:
             emit_operational_event(
                 "ERROR",

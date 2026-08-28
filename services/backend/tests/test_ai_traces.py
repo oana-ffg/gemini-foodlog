@@ -12,9 +12,16 @@ from foodlog_backend.ai_traces import (
     AiTraceService,
     audit_application_visible_trace,
 )
-from foodlog_backend.errors import AiTraceNotFound
+from foodlog_backend.errors import AiTraceConflict, AiTraceNotFound
 from foodlog_backend.model_accounting import ModelInvocationSpec, reservation_id_for_invocation
-from foodlog_backend.models import AuditAction, ModelUsageRecord, utc_now
+from foodlog_backend.models import (
+    AccountCapacityAction,
+    AccountCapacityReason,
+    AuditAction,
+    ModelSpendReservation,
+    ModelUsageRecord,
+    utc_now,
+)
 from foodlog_backend.repository import InMemoryRepository
 from foodlog_backend.storage import InMemoryObjectStore
 
@@ -182,6 +189,53 @@ def test_trace_round_trip_is_hashed_redacted_and_account_scoped() -> None:
 
         with pytest.raises(AiTraceNotFound):
             await service.read(account_id=foreign.id, trace_id=record.id)
+
+    asyncio.run(scenario())
+
+
+def test_reclaimed_account_accepts_only_trace_bound_to_settled_usage() -> None:
+    async def scenario() -> None:
+        repository = InMemoryRepository(public_account_limit=1, trial_image_limit=200)
+        account = await repository.provision_account("reclaimed-trace-owner")
+        store = InMemoryObjectStore()
+        service = AiTraceService(repository=repository, object_store=store)
+        spec = _spec(account_id=account.id, invocation_key="reclaimed-trace-call")
+        usage = _usage(spec)
+        reservation = ModelSpendReservation(
+            id=usage.reservation_id,
+            account_id=spec.account_id,
+            event_id=spec.event_id,
+            reserved_dkk_micros=usage.reserved_dkk_micros,
+            model=spec.model,
+            region=spec.region,
+            purpose=spec.purpose,
+            prompt_version=spec.prompt_version,
+            max_prompt_tokens=spec.max_prompt_tokens,
+            max_output_tokens=spec.max_output_tokens,
+            max_billable_calls=spec.max_billable_calls,
+            retry_attempt=spec.retry_attempt,
+            evaluation=spec.evaluation,
+        )
+        await repository.reserve_model_spend(reservation)
+        await repository.record_model_usage(usage)
+        await repository.change_public_account_capacity(
+            account_id=account.id,
+            action=AccountCapacityAction.RECLAIM,
+            reason=AccountCapacityReason.CONFIRMED_SYBIL_ABUSE,
+            operation_id="77777777-7777-4777-8777-777777777777",
+        )
+
+        capture = AiTraceCapture(spec=spec, request={"event_id": spec.event_id})
+        record = await service.persist(capture=capture, usage=usage, response={"ok": True})
+        assert record.reservation_id == usage.reservation_id
+        assert await repository.ai_trace_for_account(
+            account_id=account.id,
+            trace_id=record.id,
+        ) == record
+        with pytest.raises(AiTraceConflict):
+            await repository.record_ai_trace(
+                record.model_copy(update={"event_id": "different-event"})
+            )
 
     asyncio.run(scenario())
 

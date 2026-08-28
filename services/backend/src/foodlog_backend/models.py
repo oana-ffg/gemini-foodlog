@@ -338,6 +338,8 @@ class AuditSource(StrEnum):
 
 class AuditAction(StrEnum):
     ACCOUNT_PROVISIONED = "account.provisioned"
+    ACCOUNT_CAPACITY_RECLAIMED = "account.capacity_reclaimed"
+    ACCOUNT_CAPACITY_RESTORED = "account.capacity_restored"
     ACCOUNT_EXPORT_REQUESTED = "account_export.requested"
     ACCOUNT_EXPORT_DOWNLOADED = "account_export.downloaded"
     CAPTURE_STORED = "capture.stored"
@@ -499,6 +501,53 @@ class Account(BaseModel):
         ):
             raise ValueError("Unlimited accounts cannot have a trial image limit")
         return self
+
+
+class AccountCapacityAction(StrEnum):
+    RECLAIM = "reclaim"
+    RESTORE = "restore"
+
+
+class AccountCapacityReason(StrEnum):
+    CONFIRMED_SYBIL_ABUSE = "confirmed_sybil_abuse"
+    MISSING_FIREBASE_IDENTITY = "missing_firebase_identity"
+    OPERATOR_REVERSAL = "operator_reversal"
+
+
+class AccountCapacityOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    operation_id: str = Field(pattern=r"^[0-9a-f-]{36}$")
+    account_id: str = Field(min_length=1, max_length=128)
+    owner_user_id: str = Field(min_length=1, max_length=128)
+    action: AccountCapacityAction
+    reason: AccountCapacityReason
+    previous_status: Literal["active", "capacity_reclaimed"]
+    resulting_status: Literal["active", "capacity_reclaimed"]
+    active_public_account_count: int = Field(ge=0)
+    account_limit: int = Field(ge=1)
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("created_at")
+    @classmethod
+    def operation_timestamp_has_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("account capacity timestamps must include a UTC offset")
+        return value
+
+
+class AccountCapacityPreview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    account_id: str = Field(min_length=1, max_length=128)
+    owner_user_id: str = Field(min_length=1, max_length=128)
+    account_status: Literal["active", "capacity_reclaimed"]
+    identity_status: Literal["active", "capacity_reclaimed"]
+    active_public_account_count: int = Field(ge=0)
+    account_limit: int = Field(ge=1)
 
 
 class AccountExport(BaseModel):
@@ -904,7 +953,9 @@ class ConsentPreferences(BaseModel):
     launch_mail_opt_in: bool | None = None
     launch_mail_policy_version: str | None = None
     launch_mail_updated_at: datetime | None = None
-    waitlist_status: Literal["not_joined", "active", "withdrawn"] = "not_joined"
+    waitlist_status: Literal["not_joined", "active", "withdrawn", "fulfilled"] = (
+        "not_joined"
+    )
     waitlist_policy_version: str | None = None
     waitlist_updated_at: datetime | None = None
 
@@ -919,19 +970,31 @@ class WaitlistEntry(BaseModel):
     policy_version: str
     reason: Literal["capacity"] = "capacity"
     mailing_list_opt_in: bool = True
-    status: Literal["active", "withdrawn"] = "active"
+    status: Literal["active", "withdrawn", "fulfilled"] = "active"
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
     last_withdrawn_at: datetime | None = None
     withdrawal_count: int = Field(default=0, ge=0)
+    fulfilled_at: datetime | None = None
+    fulfilled_account_id: str | None = Field(default=None, min_length=1, max_length=128)
 
     @model_validator(mode="after")
     def state_fields_are_consistent(self) -> "WaitlistEntry":
         if self.status == "active":
             if not self.email_normalized or not self.mailing_list_opt_in:
                 raise ValueError("Active waitlist entries require an opted-in email")
+            if self.fulfilled_at is not None or self.fulfilled_account_id is not None:
+                raise ValueError("Active waitlist entries cannot have admission evidence")
         elif self.email_normalized is not None or self.mailing_list_opt_in:
-            raise ValueError("Withdrawn waitlist entries cannot retain mailing details")
+            raise ValueError("Inactive waitlist entries cannot retain mailing details")
+        if self.status == "fulfilled" and (
+            self.fulfilled_at is None or self.fulfilled_account_id is None
+        ):
+            raise ValueError("Fulfilled waitlist entries require admission evidence")
+        if self.status != "fulfilled" and (
+            self.fulfilled_at is not None or self.fulfilled_account_id is not None
+        ):
+            raise ValueError("Only fulfilled waitlist entries retain admission evidence")
         if (self.last_withdrawn_at is None) != (self.withdrawal_count == 0):
             raise ValueError("Waitlist withdrawal audit fields are inconsistent")
         return self

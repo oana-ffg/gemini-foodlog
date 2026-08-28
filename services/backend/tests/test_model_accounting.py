@@ -9,6 +9,7 @@ import pytest
 from google.cloud.firestore_v1.async_client import AsyncClient
 
 from foodlog_backend.errors import (
+    AccountNotProvisioned,
     ModelInvocationAlreadyReconciled,
     ModelSpendLimitExceeded,
 )
@@ -22,6 +23,7 @@ from foodlog_backend.model_accounting import (
     model_cost_usd_nanos,
     reservation_id_for_invocation,
 )
+from foodlog_backend.models import AccountCapacityAction, AccountCapacityReason
 from foodlog_backend.repository import InMemoryRepository
 
 
@@ -191,6 +193,53 @@ def test_limit_rejection_and_failed_call_never_hide_or_repeat_spend_state() -> N
     asyncio.run(scenario())
 
 
+def test_in_flight_call_settles_cost_after_account_reclaim() -> None:
+    async def scenario() -> None:
+        repository = InMemoryRepository(
+            public_account_limit=1,
+            trial_image_limit=200,
+            model_spend_limit_dkk_micros=20_000,
+        )
+        account = await repository.provision_account("reclaimed-model-owner")
+        spec = replace(invocation_spec("reclaimed-in-flight-call"), account_id=account.id)
+
+        async def invoke() -> CompletedModelInvocation[str]:
+            await repository.change_public_account_capacity(
+                account_id=account.id,
+                action=AccountCapacityAction.RECLAIM,
+                reason=AccountCapacityReason.CONFIRMED_SYBIL_ABUSE,
+                operation_id="66666666-6666-4666-8666-666666666666",
+            )
+            return CompletedModelInvocation(
+                result="must-not-publish-as-food-data",
+                invocation_id="reclaimed-provider-invocation",
+                model_version="gemini-3.6-flash-001",
+                prompt_tokens=100,
+                response_tokens=10,
+                thinking_tokens=5,
+                total_tokens=115,
+            )
+
+        accounted = await execute_accounted_model_invocation(
+            repository=repository,
+            spec=spec,
+            invoke=invoke,
+        )
+        assert accounted.usage.outcome == "succeeded"
+        assert accounted.usage.actual_dkk_micros == 1_155
+        assert repository._model_spend_actual_dkk_micros == 1_155
+        assert repository._account_status_by_id[account.id] == "capacity_reclaimed"
+
+        with pytest.raises(AccountNotProvisioned):
+            await execute_accounted_model_invocation(
+                repository=repository,
+                spec=replace(spec, invocation_key="new-call-after-reclaim"),
+                invoke=invoke,
+            )
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.skipif(
     "FIRESTORE_EMULATOR_HOST" not in os.environ,
     reason="requires the Firestore emulator",
@@ -272,6 +321,69 @@ def test_firestore_reservation_and_usage_reconcile_atomically() -> None:
         assert usage.get("evaluation") is True
         assert usage.get("retry_attempt") == 0
         assert usage.get("prompt_tokens") == 100
+        client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.skipif(
+    "FIRESTORE_EMULATOR_HOST" not in os.environ,
+    reason="requires the Firestore emulator",
+)
+def test_firestore_in_flight_usage_settles_after_reclaim() -> None:
+    async def scenario() -> None:
+        project_id = "gemini-foodlog-model-reclaim-settlement-test"
+        client = AsyncClient(project=project_id)
+        account_id = "model-reclaim-settlement-account"
+        account_ref = client.collection("accounts").document(account_id)
+        await account_ref.set(
+            {
+                "schema_version": 1,
+                "id": account_id,
+                "owner_user_id": "model-reclaim-settlement-owner",
+                "status": "active",
+            }
+        )
+        repository = FirestoreRepository(
+            project_id=project_id,
+            public_account_limit=25,
+            trial_image_limit=200,
+            model_spend_limit_dkk_micros=20_000,
+            model_spend_ledger_id="model_reclaim_settlement_test",
+            client=client,
+        )
+        spec = replace(
+            invocation_spec("firestore-reclaimed-in-flight"),
+            account_id=account_id,
+        )
+
+        async def invoke() -> CompletedModelInvocation[str]:
+            await account_ref.update({"status": "capacity_reclaimed"})
+            return CompletedModelInvocation(
+                result="accounting-only",
+                invocation_id="firestore-reclaimed-provider-call",
+                model_version="gemini-3.6-flash-001",
+                prompt_tokens=100,
+                response_tokens=10,
+                thinking_tokens=5,
+                total_tokens=115,
+            )
+
+        accounted = await execute_accounted_model_invocation(
+            repository=repository,
+            spec=spec,
+            invoke=invoke,
+        )
+        stored = await repository.model_usage_for_reservation(
+            account_id=account_id,
+            reservation_id=accounted.reservation.id,
+        )
+        ledger = await client.collection("system").document(
+            "model_reclaim_settlement_test"
+        ).get()
+        assert stored == accounted.usage
+        assert ledger.get("actual_dkk_micros") == accounted.usage.actual_dkk_micros
+        assert ledger.get("reconciled_reservation_count") == 1
         client.close()
 
     asyncio.run(scenario())

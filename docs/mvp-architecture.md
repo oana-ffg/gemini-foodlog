@@ -608,6 +608,22 @@ Firebase App Check with reCAPTCHA Enterprise is deliberately deferred for the MV
 
 Self-service account capacity is claimed in a Firestore transaction so concurrent signups cannot exceed the ceiling. Operator-created internal and judge accounts are explicitly marked and do not consume public trial slots. Once the 25 slots are filled, additional authenticated users receive a stable `signup_capacity_exhausted` response and cannot obtain an application account, camera credential, trial quota, or access to another account. Avoiding extra unused Firebase Authentication identities is desirable, but the security boundary is application-account provisioning rather than Firebase user creation.
 
+A verified email is admission evidence, not a proof that one human owns only one
+identity. The MVP therefore makes verified-identity slot exhaustion recoverable
+rather than claiming it is impossible: the verified normalized email is persisted
+in the admission transaction, and a narrow dry-run-first operator command can
+atomically reclaim a confirmed abusive or orphaned public account without deleting
+its data. Reclamation disables the account and identity, decrements capacity, fences
+capture finalization and worker leases, and writes immutable lifecycle/audit
+evidence. A separate capacity-checked operation can restore a mistaken decision.
+This closes permanent exhaustion after review; temporary exhaustion remains possible
+until an operator investigates. Already-authorized model work is the narrow
+exception: if a Gemini call crosses the reclamation boundary, its exact reservation
+may still settle immutable cost usage and the trace index bound to that usage, while
+lifecycle checks prevent the inferred food result or retryable export state from
+being published. Stronger proof-of-personhood, invite admission, or provider-level
+signup controls belong to a broader public launch.
+
 Signup also presents an unchecked, optional checkbox with the specific purpose “Notify me when Gemini FoodLog becomes a full product.” Declining it cannot prevent or degrade an available trial account. The consent record stores the verified Firebase identity and email, the exact consent-text version, purpose, source, grant time, and any withdrawal time. It does not authorize unrelated newsletters or general marketing.
 
 When all 25 public trial slots are allocated, the capacity response and signup UI offer the same verified user a full-product waitlist path instead of an application account. Joining requires the user to affirm the product-availability notification purpose; it does not create image quota, camera credentials, household collections, application access, or priority for any later hackathon trial slots. The committed join timestamp is consent evidence rather than a queue position, and normalized verified-email identity is used for deduplication.

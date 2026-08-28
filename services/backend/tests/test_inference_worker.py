@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import cast
 
 from fastapi.testclient import TestClient
@@ -10,7 +11,13 @@ from foodlog_backend.inference_worker_app import (
     InferenceWorkerSettings,
     create_inference_worker_app,
 )
-from foodlog_backend.models import JobStatus, event_inference_job_id, utc_now
+from foodlog_backend.models import (
+    AccountCapacityAction,
+    AccountCapacityReason,
+    JobStatus,
+    event_inference_job_id,
+    utc_now,
+)
 from tests.test_image_worker import push_envelope, stored_capture, worker_settings
 
 
@@ -194,3 +201,40 @@ def test_inference_worker_rejects_bad_events_and_retries_processor_failures(
     assert account_id in output
     assert capture.event_id in output
     assert "simulated model outage" not in output
+
+
+def test_reclaimed_account_messages_are_acknowledged_without_worker_mutation() -> None:
+    repository, publisher, account_id, _ = stored_capture()
+    envelope = push_envelope(publisher.events[0].model_dump(mode="json"))
+    processor = RecordingInferenceProcessor(repository)
+    pattern_detector = RecordingPatternDetector()
+    asyncio.run(
+        repository.change_public_account_capacity(
+            account_id=account_id,
+            action=AccountCapacityAction.RECLAIM,
+            reason=AccountCapacityReason.CONFIRMED_SYBIL_ABUSE,
+            operation_id="44444444-4444-4444-8444-444444444444",
+        )
+    )
+
+    with TestClient(
+        create_image_worker_app(worker_settings(), repository=repository)
+    ) as image_client:
+        image_response = image_client.post("/internal/pubsub/capture-stored", json=envelope)
+    with TestClient(
+        create_inference_worker_app(
+            inference_settings(),
+            repository=repository,
+            processor=processor,
+            pattern_detector=pattern_detector,
+        )
+    ) as inference_client:
+        inference_response = inference_client.post(
+            "/internal/pubsub/capture-stored",
+            json=envelope,
+        )
+
+    assert image_response.status_code == 204
+    assert inference_response.status_code == 204
+    assert processor.calls == []
+    assert pattern_detector.calls == []

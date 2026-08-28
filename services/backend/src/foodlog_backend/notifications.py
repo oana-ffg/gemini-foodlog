@@ -81,8 +81,16 @@ class AccountProvisioningService:
         self._publisher = publisher
         self._public_account_limit = public_account_limit
 
-    async def provision_account(self, owner_user_id: str) -> Account:
-        account = await self._repository.provision_account(owner_user_id)
+    async def provision_account(
+        self,
+        owner_user_id: str,
+        *,
+        verified_email_normalized: str | None = None,
+    ) -> Account:
+        account = await self._repository.provision_account(
+            owner_user_id,
+            verified_email_normalized=verified_email_normalized,
+        )
         await record_audit_event(
             self._repository,
             account_id=account.id,

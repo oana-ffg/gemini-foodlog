@@ -12,10 +12,13 @@ from google.cloud.firestore_v1.async_client import AsyncClient
 from foodlog_backend.errors import (
     AccountAlreadyProvisioned,
     AccountCapacityReached,
+    AccountCapacityStateConflict,
     AccountExportAlreadyActive,
     AccountExportNotFound,
+    AccountNotProvisioned,
     AiTraceConflict,
     AiTraceNotFound,
+    CameraNotFound,
     IdempotencyConflict,
     InboundAddressStateConflict,
     InvalidMealFeedbackTransition,
@@ -37,6 +40,8 @@ from foodlog_backend.firestore_repository_smoke import (
 from foodlog_backend.inbound_mail import InboundMailAddressService, inbound_recipient_hash
 from foodlog_backend.inference_schema import ActivityMealInferenceV1
 from foodlog_backend.models import (
+    AccountCapacityAction,
+    AccountCapacityReason,
     ActivityEvent,
     ActivityEventStatus,
     AiTraceRecord,
@@ -235,7 +240,13 @@ def test_firestore_public_capacity_is_atomic_and_waitlist_is_stable() -> None:
 
         owner_ids = [f"capacity-contract-owner-{index}" for index in range(8)]
         outcomes = await asyncio.gather(
-            *(repository.provision_account(owner_id) for owner_id in owner_ids),
+            *(
+                repository.provision_account(
+                    owner_id,
+                    verified_email_normalized=f"{owner_id}@example.test",
+                )
+                for owner_id in owner_ids
+            ),
             return_exceptions=True,
         )
         admitted = [outcome for outcome in outcomes if not isinstance(outcome, Exception)]
@@ -248,6 +259,13 @@ def test_firestore_public_capacity_is_atomic_and_waitlist_is_stable() -> None:
 
         admitted_owner_id = admitted[0].owner_user_id
         assert await repository.provision_account(admitted_owner_id) == admitted[0]
+        assert (
+            await repository.provision_account(
+                admitted_owner_id,
+                verified_email_normalized="changed-email@example.test",
+            )
+            == admitted[0]
+        )
         initial_preferences = await repository.consent_preferences(
             firebase_uid=admitted_owner_id,
         )
@@ -335,6 +353,118 @@ def test_firestore_public_capacity_is_atomic_and_waitlist_is_stable() -> None:
                 policy_version="capacity-waitlist-v1",
             )
 
+        reclaimed_account = admitted[0]
+        reclaimed_device = await repository.issue_device_camera(
+            owner_user_id=reclaimed_account.owner_user_id,
+            name="Reclaimed device",
+            credential_hash=sha256(b"reclaimed-device-credential").hexdigest(),
+            token_version=1,
+        )
+        reclaimed_browser = await repository.create_browser_camera(
+            reclaimed_account.owner_user_id,
+            "Reclaimed browser",
+            "reclaimed-browser-instance",
+        )
+        reclaimed_capture_id = "firestore-reclaimed-capture"
+        reclaimed_capture, _, _ = await repository.reserve_capture(
+            capture_id=reclaimed_capture_id,
+            account=reclaimed_account,
+            camera=reclaimed_browser,
+            idempotency_key="firestore-reclaimed-capture-key",
+            content_type="image/jpeg",
+            content_sha256="a" * 64,
+            object_key=(
+                f"accounts/{reclaimed_account.id}/captures/{reclaimed_capture_id}.jpg"
+            ),
+        )
+        await repository.mark_stored(
+            account_id=reclaimed_account.id,
+            capture_id=reclaimed_capture.id,
+        )
+
+        reclaimed = await repository.change_public_account_capacity(
+            account_id=admitted[0].id,
+            action=AccountCapacityAction.RECLAIM,
+            reason=AccountCapacityReason.CONFIRMED_SYBIL_ABUSE,
+            operation_id="11111111-1111-4111-8111-111111111111",
+        )
+        assert reclaimed.active_public_account_count == 3
+        with pytest.raises(AccountNotProvisioned):
+            await repository.account_for_owner(reclaimed_account.owner_user_id)
+        with pytest.raises(AccountNotProvisioned):
+            await repository.consent_preferences(
+                firebase_uid=reclaimed_account.owner_user_id,
+            )
+        with pytest.raises(CameraNotFound):
+            await repository.device_camera_for_identity(
+                account_id=reclaimed_account.id,
+                camera_id=reclaimed_device.id,
+            )
+        with pytest.raises(AccountNotProvisioned):
+            await repository.enqueue_job(
+                DurableJob(
+                    id="firestore-job-after-reclaim",
+                    account_id=reclaimed_account.id,
+                    kind=JobKind.CAPTURE_GROUPING,
+                    subject_id="firestore-capture-after-reclaim",
+                    subject_revision=1,
+                )
+            )
+        with pytest.raises(AccountNotProvisioned):
+            await repository.mark_processed(
+                account_id=reclaimed_account.id,
+                capture_id=reclaimed_capture.id,
+            )
+        with pytest.raises(AccountNotProvisioned):
+            await repository.save_meal(
+                account_id=reclaimed_account.id,
+                meal=MealEntry(
+                    id="firestore-meal-after-reclaim",
+                    account_id=reclaimed_account.id,
+                    capture_id=reclaimed_capture.id,
+                    title="Steak",
+                    confidence=Confidence.LIKELY,
+                    components=[],
+                    observations=["Red meat is visible."],
+                    alternatives=["Chicken"],
+                    rationale="The meat appears red.",
+                ),
+            )
+        replacement = await repository.provision_account(
+            rejected_owner_id,
+            verified_email_normalized=f"{rejected_owner_id}@example.test",
+        )
+        assert replacement.owner_user_id == rejected_owner_id
+        assert (
+            await repository.consent_preferences(firebase_uid=rejected_owner_id)
+        ).waitlist_status == "fulfilled"
+        identity = await client.collection("identities").document(rejected_owner_id).get()
+        assert identity.get("admission_email_verified") is True
+        assert (
+            identity.get("admission_email_normalized")
+            == f"{rejected_owner_id}@example.test"
+        )
+        with pytest.raises(AccountCapacityStateConflict):
+            await repository.change_public_account_capacity(
+                account_id=admitted[0].id,
+                action=AccountCapacityAction.RESTORE,
+                reason=AccountCapacityReason.OPERATOR_REVERSAL,
+                operation_id="22222222-2222-4222-8222-222222222222",
+            )
+        await repository.change_public_account_capacity(
+            account_id=admitted[1].id,
+            action=AccountCapacityAction.RECLAIM,
+            reason=AccountCapacityReason.MISSING_FIREBASE_IDENTITY,
+            operation_id="33333333-3333-4333-8333-333333333333",
+        )
+        restored = await repository.change_public_account_capacity(
+            account_id=admitted[0].id,
+            action=AccountCapacityAction.RESTORE,
+            reason=AccountCapacityReason.OPERATOR_REVERSAL,
+            operation_id="22222222-2222-4222-8222-222222222222",
+        )
+        assert restored.active_public_account_count == 4
+
         capacity = await client.collection("system").document("public_capacity").get()
         assert capacity.to_dict() == {
             "schema_version": 1,
@@ -343,6 +473,72 @@ def test_firestore_public_capacity_is_atomic_and_waitlist_is_stable() -> None:
             "waitlist_open": True,
             "updated_at": capacity.get("updated_at"),
         }
+        client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.skipif(
+    "FIRESTORE_EMULATOR_HOST" not in os.environ,
+    reason="requires the Firestore emulator",
+)
+def test_firestore_reclaim_racing_with_admission_preserves_exact_capacity() -> None:
+    async def scenario() -> None:
+        project_id = f"gemini-foodlog-capacity-race-{uuid4().hex}"
+        client = AsyncClient(project=project_id)
+        repository = FirestoreRepository(
+            project_id=project_id,
+            public_account_limit=1,
+            trial_image_limit=200,
+            client=client,
+        )
+        original = await repository.provision_account(
+            "firestore-capacity-race-original",
+            verified_email_normalized="firestore-capacity-race-original@example.test",
+        )
+
+        reclaim, admission = await asyncio.gather(
+            repository.change_public_account_capacity(
+                account_id=original.id,
+                action=AccountCapacityAction.RECLAIM,
+                reason=AccountCapacityReason.CONFIRMED_SYBIL_ABUSE,
+                operation_id="44444444-4444-4444-8444-444444444444",
+            ),
+            repository.provision_account(
+                "firestore-capacity-race-replacement",
+                verified_email_normalized="firestore-capacity-race-replacement@example.test",
+            ),
+            return_exceptions=True,
+        )
+
+        assert not isinstance(reclaim, Exception)
+        if isinstance(admission, Exception):
+            assert isinstance(admission, AccountCapacityReached)
+            admission = await repository.provision_account(
+                "firestore-capacity-race-replacement",
+                verified_email_normalized="firestore-capacity-race-replacement@example.test",
+            )
+        assert admission.owner_user_id == "firestore-capacity-race-replacement"
+        capacity = await client.collection("system").document("public_capacity").get()
+        assert capacity.get("active_account_count") == 1
+        assert capacity.get("account_limit") == 1
+        assert capacity.get("waitlist_open") is True
+
+        malformed = {
+            "schema_version": 1,
+            "active_account_count": 2,
+            "account_limit": 1,
+            "waitlist_open": True,
+        }
+        await capacity.reference.set(malformed)
+        with pytest.raises(ValueError, match="count_exceeds_limit"):
+            await repository.change_public_account_capacity(
+                account_id=admission.id,
+                action=AccountCapacityAction.RECLAIM,
+                reason=AccountCapacityReason.CONFIRMED_SYBIL_ABUSE,
+                operation_id="55555555-5555-4555-8555-555555555555",
+            )
+        assert (await capacity.reference.get()).to_dict() == malformed
         client.close()
 
     asyncio.run(scenario())

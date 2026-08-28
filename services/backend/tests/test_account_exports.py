@@ -196,16 +196,19 @@ def test_export_api_requires_recent_reauthentication_and_hides_internal_scope() 
             "old-token": VerifiedIdentity(
                 uid="firebase-export-owner",
                 email_verified=True,
+                email="firebase-export-owner@example.test",
                 authenticated_at=now - timedelta(hours=1),
             ),
             "fresh-token": VerifiedIdentity(
                 uid="firebase-export-owner",
                 email_verified=True,
+                email="firebase-export-owner@example.test",
                 authenticated_at=now,
             ),
             "other-token": VerifiedIdentity(
                 uid="firebase-export-other",
                 email_verified=True,
+                email="firebase-export-other@example.test",
                 authenticated_at=now,
             ),
         }

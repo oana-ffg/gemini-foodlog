@@ -128,6 +128,7 @@ class FirestoreMailRepository:
 
         @firestore.transactional
         def cancel(transaction):
+            self._require_active_account(transaction, account_id=record.account_id)
             snapshot = reference.get(transaction=transaction)
             usage_snapshot = usage_ref.get(transaction=transaction)
             if not snapshot.exists:
@@ -153,6 +154,7 @@ class FirestoreMailRepository:
 
         @firestore.transactional
         def store(transaction):
+            self._require_active_account(transaction, account_id=record.account_id)
             snapshot = reference.get(transaction=transaction)
             usage_snapshot = usage_ref.get(transaction=transaction)
             if not snapshot.exists:
@@ -181,6 +183,7 @@ class FirestoreMailRepository:
 
         @firestore.transactional
         def publish(transaction):
+            self._require_active_account(transaction, account_id=record.account_id)
             snapshot = reference.get(transaction=transaction)
             if not snapshot.exists:
                 raise RuntimeError("reserved raw mail record disappeared")
@@ -235,6 +238,15 @@ class FirestoreMailRepository:
         if existing:
             raise MailUsageBackfillRequired("existing raw mail requires quota-ledger backfill")
         return RawMailUsage.create(self._quota_policy, now=now)
+
+    def _require_active_account(self, transaction, *, account_id: str) -> None:
+        account = (
+            self._client.collection("accounts")
+            .document(account_id)
+            .get(transaction=transaction)
+        )
+        if not account.exists or account.get("status") != "active":
+            raise UnknownRecipient
 
     def _active_account_for_recipient(
         self,

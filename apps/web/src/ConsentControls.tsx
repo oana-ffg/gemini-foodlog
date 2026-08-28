@@ -71,8 +71,13 @@ export function CapacityWaitlist({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
   const joined = preferences.waitlist_status === "active";
+  const fulfilled = preferences.waitlist_status === "fulfilled";
 
   const update = async () => {
+    if (fulfilled) {
+      await onChanged();
+      return;
+    }
     setBusy(true);
     setMessage(joined ? "Withdrawing…" : "Joining…");
     try {
@@ -99,12 +104,14 @@ export function CapacityWaitlist({
         <p>
           {joined
             ? "You are on the waitlist. We will email you about FoodLog access for this purpose only."
-            : preferences.waitlist_status === "withdrawn"
+            : preferences.waitlist_status === "fulfilled"
+              ? "Your early-access account is active."
+              : preferences.waitlist_status === "withdrawn"
               ? "You left the waitlist. You can join again while early access remains full."
               : "Join the waitlist if you want an email when another FoodLog spot becomes available."}
         </p>
-        <button type="button" className={joined ? "button--quiet" : undefined} onClick={update} disabled={busy}>
-          {busy ? "Saving…" : joined ? "Leave the waitlist" : "Join the waitlist"}
+        <button type="button" className={joined ? "button--quiet" : undefined} onClick={update} disabled={busy || fulfilled}>
+          {busy ? "Saving…" : fulfilled ? "Account active" : joined ? "Leave the waitlist" : "Join the waitlist"}
         </button>
         {message ? <p className="form-message" role="status">{message}</p> : null}
       </section>

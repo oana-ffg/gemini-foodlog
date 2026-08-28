@@ -632,8 +632,17 @@ def create_app(
         return {"status": "ok", "mode": active_settings.environment}
 
     @app.post("/v1/accounts", response_model=Account)
-    async def provision_account(user_id: str = Depends(request_user_id)) -> Account:
-        return await container.account_service.provision_account(user_id)
+    async def provision_account(
+        identity: Annotated[VerifiedIdentity, Depends(request_identity)],
+    ) -> Account:
+        return await container.account_service.provision_account(
+            identity.uid,
+            verified_email_normalized=(
+                verified_email(identity)
+                if active_settings.auth_backend == "firebase"
+                else None
+            ),
+        )
 
     @app.post(
         "/v1/inbound-mail-address",

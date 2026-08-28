@@ -351,6 +351,8 @@
       "AuditAction": {
         "enum": [
           "account.provisioned",
+          "account.capacity_reclaimed",
+          "account.capacity_restored",
           "account_export.requested",
           "account_export.downloaded",
           "capture.stored",
@@ -1288,7 +1290,8 @@
             "enum": [
               "not_joined",
               "active",
-              "withdrawn"
+              "withdrawn",
+              "fulfilled"
             ],
             "title": "Waitlist Status",
             "type": "string"
@@ -4385,6 +4388,31 @@
             ],
             "title": "Email Normalized"
           },
+          "fulfilled_account_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fulfilled Account Id"
+          },
+          "fulfilled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fulfilled At"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -4420,7 +4448,8 @@
             "default": "active",
             "enum": [
               "active",
-              "withdrawn"
+              "withdrawn",
+              "fulfilled"
             ],
             "title": "Status",
             "type": "string"

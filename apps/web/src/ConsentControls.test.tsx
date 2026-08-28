@@ -48,7 +48,7 @@ describe("consent and capacity surfaces", () => {
     expect(html).toContain("Withdraw consent");
   });
 
-  it("renders distinct join, joined, and withdrawn capacity states", () => {
+  it("renders distinct join, joined, withdrawn, and fulfilled capacity states", () => {
     const notJoined = renderToStaticMarkup(
       <CapacityWaitlist preferences={basePreferences} onChanged={onChanged} />,
     );
@@ -64,11 +64,20 @@ describe("consent and capacity surfaces", () => {
         onChanged={onChanged}
       />,
     );
+    const fulfilled = renderToStaticMarkup(
+      <CapacityWaitlist
+        preferences={{ ...basePreferences, waitlist_status: "fulfilled" }}
+        onChanged={onChanged}
+      />,
+    );
 
     expect(notJoined).toContain("Join the waitlist");
     expect(joined).toContain("You are on the waitlist");
     expect(joined).toContain("Leave the waitlist");
     expect(withdrawn).toContain("You left the waitlist");
     expect(withdrawn).toContain("Join the waitlist");
+    expect(fulfilled).toContain("Your early-access account is active");
+    expect(fulfilled).toContain("Account active");
+    expect(fulfilled).toContain("disabled");
   });
 });

@@ -70,6 +70,8 @@ def create_image_worker_app(
             )
         except ValueError as error:
             raise HTTPException(status_code=400, detail="invalid_pubsub_event") from error
+        if not await active_repository.account_is_active(event.account_id):
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
         try:
             await service.process(
                 account_id=event.account_id,

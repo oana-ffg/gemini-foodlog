@@ -74,6 +74,18 @@ def create_mail_worker_app(
         except ValueError as error:
             raise HTTPException(status_code=400, detail="invalid_pubsub_event") from error
         try:
+            if not await active_repository.account_is_active(event.account_id):
+                emit_operational_event(
+                    "INFO",
+                    "purchase_mail_processing_skipped",
+                    account_id=event.account_id,
+                    mail_id=event.mail_id,
+                    message_id=envelope.message.message_id,
+                    service="mail_worker",
+                    delivery_attempt=envelope.delivery_attempt,
+                    outcome="account_inactive",
+                )
+                return Response(status_code=status.HTTP_204_NO_CONTENT)
             key = raw_mail_object_key(account_id=event.account_id, mail_id=event.mail_id)
             raw_message = await active_store.get(event.account_id, key)
             raw_content_sha256 = sha256(raw_message).hexdigest()

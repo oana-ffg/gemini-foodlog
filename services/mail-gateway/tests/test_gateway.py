@@ -116,6 +116,8 @@ class FakeRepository:
         return record, True
 
     def cancel(self, record: RawMailRecord) -> None:
+        if not self.active:
+            raise UnknownRecipient
         existing = self.records.get(record.id)
         if existing is None:
             return
@@ -128,6 +130,8 @@ class FakeRepository:
         del self.records[record.id]
 
     def mark_stored(self, record: RawMailRecord) -> RawMailRecord:
+        if not self.active:
+            raise UnknownRecipient
         if self.mark_stored_failure is not None:
             failure = self.mark_stored_failure
             self.mark_stored_failure = None
@@ -142,6 +146,8 @@ class FakeRepository:
         return stored
 
     def mark_published(self, record: RawMailRecord, *, provider_message_id: str) -> RawMailRecord:
+        if not self.active:
+            raise UnknownRecipient
         published = replace(
             record,
             status="published",
@@ -659,6 +665,85 @@ def test_unverifiable_storage_failure_keeps_capacity_fail_closed() -> None:
         service.receive(recipient=RECIPIENT, raw_message=RAW_MESSAGE)
 
     assert len(repository.records) == 1
+    assert repository.usage is not None
+    assert repository.usage.pending_message_count == 1
+    assert repository.usage.pending_bytes == len(RAW_MESSAGE)
+
+
+def test_reclaim_after_reservation_blocks_storage_finalization() -> None:
+    repository = FakeRepository()
+
+    class ReclaimAfterPutStore(FakeObjectStore):
+        def put_if_absent(self, **arguments) -> None:
+            super().put_if_absent(**arguments)
+            repository.active = False
+
+    object_store = ReclaimAfterPutStore()
+    publisher = FakePublisher()
+    service = MailGatewayService(
+        domain=DOMAIN,
+        repository=repository,
+        object_store=object_store,
+        event_publisher=publisher,
+    )
+
+    with pytest.raises(UnknownRecipient):
+        service.receive(recipient=RECIPIENT, raw_message=RAW_MESSAGE)
+
+    assert next(iter(repository.records.values())).status == "reserved"
+    assert repository.usage is not None
+    assert repository.usage.pending_message_count == 1
+    assert publisher.events == []
+
+
+def test_reclaim_after_publish_blocks_published_state_transition() -> None:
+    repository = FakeRepository()
+
+    class ReclaimAfterPublish(FakePublisher):
+        def publish(self, event) -> str:
+            message_id = super().publish(event)
+            repository.active = False
+            return message_id
+
+    object_store = FakeObjectStore()
+    publisher = ReclaimAfterPublish()
+    service = MailGatewayService(
+        domain=DOMAIN,
+        repository=repository,
+        object_store=object_store,
+        event_publisher=publisher,
+    )
+
+    with pytest.raises(UnknownRecipient):
+        service.receive(recipient=RECIPIENT, raw_message=RAW_MESSAGE)
+
+    assert next(iter(repository.records.values())).status == "stored"
+    assert repository.usage is not None
+    assert repository.usage.pending_message_count == 0
+    assert repository.usage.retained_message_count == 1
+    assert len(publisher.events) == 1
+
+
+def test_reclaim_during_failed_upload_blocks_reservation_cleanup() -> None:
+    repository = FakeRepository()
+
+    class ReclaimingFailureStore(FakeObjectStore):
+        def put_if_absent(self, **arguments) -> None:
+            del arguments
+            repository.active = False
+            raise RuntimeError("synthetic upload failure after reclaim")
+
+    service = MailGatewayService(
+        domain=DOMAIN,
+        repository=repository,
+        object_store=ReclaimingFailureStore(),
+        event_publisher=FakePublisher(),
+    )
+
+    with pytest.raises(ExceptionGroup, match="acceptance and cleanup"):
+        service.receive(recipient=RECIPIENT, raw_message=RAW_MESSAGE)
+
+    assert next(iter(repository.records.values())).status == "reserved"
     assert repository.usage is not None
     assert repository.usage.pending_message_count == 1
     assert repository.usage.pending_bytes == len(RAW_MESSAGE)
@@ -1234,6 +1319,80 @@ def test_firestore_repository_resolves_and_transitions_one_tenant_record() -> No
     assert snapshot.get("content_sha256") == record.content_sha256
     assert snapshot.get("provider_message_id") == "message-1"
     assert len(object_store.objects) == len(publisher.events) == 1
+
+
+@pytest.mark.skipif(
+    "FIRESTORE_EMULATOR_HOST" not in os.environ,
+    reason="requires the Firestore emulator",
+)
+def test_firestore_mail_transitions_stop_after_account_reclaim() -> None:
+    project_id = "gemini-foodlog-mail-reclaim-race-test"
+    database = firestore.Client(project=project_id)
+    account_ref = database.collection("accounts").document(ACCOUNT_ID)
+    recipient_digest = sha256(RECIPIENT.encode()).hexdigest()
+    account_ref.set({"id": ACCOUNT_ID, "status": "active"})
+    database.collection("inbound_mail_routes").document(recipient_digest).set(
+        {
+            "account_id": ACCOUNT_ID,
+            "address_id": "current",
+            "status": "active",
+            "generation": 1,
+        }
+    )
+    account_ref.collection("inbound_mail_addresses").document("current").set(
+        {
+            "account_id": ACCOUNT_ID,
+            "address": RECIPIENT,
+            "status": "active",
+            "generation": 1,
+        }
+    )
+    repository = FirestoreMailRepository(
+        project_id=project_id,
+        domain=DOMAIN,
+        quota_policy=quota_policy_from_environment(),
+    )
+    repository.admit_recipient(
+        recipient=RECIPIENT,
+        recipient_hash=recipient_digest,
+        size_bytes=len(RAW_MESSAGE),
+    )
+    mail_id = "c" * 64
+    record = RawMailRecord(
+        id=mail_id,
+        account_id=ACCOUNT_ID,
+        recipient=RECIPIENT,
+        sender="Nemlig test <orders@example.test>",
+        sender_address="orders@example.test",
+        subject="Test receipt",
+        message_id_hash=sha256(b"<reclaim-race@example.test>").hexdigest(),
+        content_sha256=sha256(RAW_MESSAGE).hexdigest(),
+        size_bytes=len(RAW_MESSAGE),
+        object_key=f"accounts/{ACCOUNT_ID}/raw-mail/{mail_id}.eml",
+        content_types=("text/plain",),
+    )
+    reserved, created = repository.reserve(record)
+    assert created is True
+    mail_ref = account_ref.collection("raw_mail").document(mail_id)
+    usage_ref = account_ref.collection("inbound_mail_usage").document("current")
+
+    account_ref.update({"status": "capacity_reclaimed"})
+    reserved_mail = mail_ref.get().to_dict()
+    reserved_usage = usage_ref.get().to_dict()
+    with pytest.raises(UnknownRecipient):
+        repository.cancel(reserved)
+    with pytest.raises(UnknownRecipient):
+        repository.mark_stored(reserved)
+    assert mail_ref.get().to_dict() == reserved_mail
+    assert usage_ref.get().to_dict() == reserved_usage
+
+    account_ref.update({"status": "active"})
+    stored = repository.mark_stored(reserved)
+    account_ref.update({"status": "capacity_reclaimed"})
+    stored_mail = mail_ref.get().to_dict()
+    with pytest.raises(UnknownRecipient):
+        repository.mark_published(stored, provider_message_id="must-not-persist")
+    assert mail_ref.get().to_dict() == stored_mail
 
 
 @pytest.mark.skipif(

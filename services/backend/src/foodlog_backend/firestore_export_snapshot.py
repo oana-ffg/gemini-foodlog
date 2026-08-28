@@ -1,6 +1,7 @@
 import math
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from hashlib import sha256
 from typing import Any
 
 from google.cloud import firestore
@@ -17,6 +18,7 @@ from .storage import validate_account_object_key
 
 EXPORT_COLLECTIONS = (
     "audit_events",
+    "capacity_operations",
     "cameras",
     "captures",
     "consents",
@@ -214,6 +216,51 @@ class FirestoreAccountExportSnapshotReader:
                 ),
             )
         ]
+        identity_snapshot = await (
+            self._client.collection("identities")
+            .document(account_export.requested_by_user_id)
+            .get(read_time=account_export.snapshot_at)
+        )
+        if (
+            not identity_snapshot.exists
+            or identity_snapshot.get("account_id") != account_export.account_id
+        ):
+            raise CrossAccountAccess
+        waitlist_snapshot = await (
+            self._client.collection("waitlist")
+            .document(sha256(account_export.requested_by_user_id.encode()).hexdigest())
+            .get(read_time=account_export.snapshot_at)
+        )
+        waitlist_data = (
+            export_document(
+                document_id=waitlist_snapshot.id,
+                data=self._checked_data(
+                    account_id=account_export.account_id,
+                    snapshot=waitlist_snapshot,
+                    require_account_id=False,
+                ),
+            )
+            if waitlist_snapshot.exists
+            else None
+        )
+        json_files.append(
+            ExportJsonFile(
+                path="data/admission.json",
+                content=canonical_json(
+                    {
+                        "schema_version": 1,
+                        "identity": export_document(
+                            document_id=identity_snapshot.id,
+                            data=self._checked_data(
+                                account_id=account_export.account_id,
+                                snapshot=identity_snapshot,
+                            ),
+                        ),
+                        "waitlist": waitlist_data,
+                    }
+                ),
+            )
+        )
         source_objects: list[ExportSourceObject] = []
         collection_snapshots: dict[str, list[Any]] = {}
         for collection in EXPORT_COLLECTIONS:

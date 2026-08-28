@@ -12,6 +12,7 @@ from .audit import build_audit_event
 from .errors import (
     AccountAlreadyProvisioned,
     AccountCapacityReached,
+    AccountCapacityStateConflict,
     AccountExportAlreadyActive,
     AccountExportNotFound,
     AccountExportRateLimited,
@@ -66,6 +67,9 @@ from .grouping import (
 from .inference_schema import ActivityMealInferenceV1, InferenceKind
 from .models import (
     Account,
+    AccountCapacityAction,
+    AccountCapacityOperation,
+    AccountCapacityReason,
     AccountCreatedOutbox,
     AccountExport,
     AccountExportStatus,
@@ -76,6 +80,7 @@ from .models import (
     AuditAction,
     AuditActorKind,
     AuditEvent,
+    AuditPurpose,
     AuditSource,
     BrowserCamera,
     Camera,
@@ -167,6 +172,30 @@ from .purchase_normalization import (
 )
 
 PATTERN_RESURFACE_MINIMUM_NEW_SUPPORT = 2
+
+
+def validate_ai_trace_usage(trace: AiTraceRecord, usage: ModelUsageRecord) -> None:
+    if (
+        trace.reservation_id != usage.reservation_id
+        or trace.account_id != usage.account_id
+        or trace.event_id != usage.event_id
+        or trace.status != usage.outcome
+        or trace.model != usage.model
+        or trace.model_version != usage.model_version
+        or trace.provider_invocation_id != usage.invocation_id
+        or trace.region != usage.region
+        or trace.prompt_version != usage.prompt_version
+        or trace.purpose != usage.purpose
+        or trace.retry_attempt != usage.retry_attempt
+        or trace.evaluation != usage.evaluation
+        or trace.prompt_tokens != usage.prompt_tokens
+        or trace.response_tokens != usage.response_tokens
+        or trace.thinking_tokens != usage.thinking_tokens
+        or trace.total_tokens != usage.total_tokens
+        or trace.actual_dkk_micros != usage.actual_dkk_micros
+        or trace.error_code != usage.error_code
+    ):
+        raise AiTraceConflict
 
 
 def event_question_id(meal_id: str, revision_number: int) -> str:
@@ -549,7 +578,23 @@ def materialize_activity_hypothesis(
 
 
 class Repository(Protocol):
-    async def provision_account(self, owner_user_id: str) -> Account: ...
+    async def provision_account(
+        self,
+        owner_user_id: str,
+        *,
+        verified_email_normalized: str | None = None,
+    ) -> Account: ...
+
+    async def change_public_account_capacity(
+        self,
+        *,
+        account_id: str,
+        action: AccountCapacityAction,
+        reason: AccountCapacityReason,
+        operation_id: str,
+    ) -> AccountCapacityOperation: ...
+
+    async def account_is_active(self, account_id: str) -> bool: ...
 
     async def append_audit_event(self, event: AuditEvent) -> AuditEvent: ...
 
@@ -1188,6 +1233,8 @@ class InMemoryRepository:
         self._audit_events: dict[tuple[str, str], AuditEvent] = {}
         self._accounts: dict[str, Account] = {}
         self._account_by_owner: dict[str, str] = {}
+        self._account_status_by_id: dict[str, str] = {}
+        self._capacity_operations: dict[str, AccountCapacityOperation] = {}
         self._account_exports: dict[tuple[str, str], AccountExport] = {}
         self._active_export_by_account: dict[str, str] = {}
         self._last_export_requested_at: dict[str, datetime] = {}
@@ -1241,10 +1288,23 @@ class InMemoryRepository:
         self._user_context_note_request_hashes: dict[str, str] = {}
         self._lock = asyncio.Lock()
 
-    async def provision_account(self, owner_user_id: str) -> Account:
+    def _require_active_account_locked(self, account_id: str) -> Account:
+        account = self._accounts.get(account_id)
+        if account is None or self._account_status_by_id.get(account_id) != "active":
+            raise AccountNotProvisioned
+        return account
+
+    async def provision_account(
+        self,
+        owner_user_id: str,
+        *,
+        verified_email_normalized: str | None = None,
+    ) -> Account:
         async with self._lock:
             existing_id = self._account_by_owner.get(owner_user_id)
             if existing_id:
+                if self._account_status_by_id.get(existing_id) != "active":
+                    raise AccountNotProvisioned
                 return self._accounts[existing_id].model_copy(deep=True)
             entitlement_mode = (
                 EntitlementMode.UNLIMITED
@@ -1253,6 +1313,7 @@ class InMemoryRepository:
             )
             public_account_count = sum(
                 account.entitlement_mode == EntitlementMode.TRIAL
+                and self._account_status_by_id.get(account.id) == "active"
                 for account in self._accounts.values()
             )
             if (
@@ -1268,8 +1329,22 @@ class InMemoryRepository:
                     self._trial_image_limit if entitlement_mode == EntitlementMode.TRIAL else None
                 ),
             )
+            waitlist_id = sha256(owner_user_id.encode()).hexdigest()
+            waitlist = self._waitlist_by_identity_hash.get(waitlist_id)
             self._accounts[account.id] = account
             self._account_by_owner[owner_user_id] = account.id
+            self._account_status_by_id[account.id] = "active"
+            if waitlist is not None and waitlist.status == "active":
+                self._waitlist_by_identity_hash[waitlist_id] = waitlist.model_copy(
+                    update={
+                        "status": "fulfilled",
+                        "email_normalized": None,
+                        "mailing_list_opt_in": False,
+                        "fulfilled_at": account.created_at,
+                        "fulfilled_account_id": account.id,
+                        "updated_at": account.created_at,
+                    }
+                )
             event = AccountCreatedOutbox(
                 id=f"account-created-{account.id}",
                 account_id=account.id,
@@ -1284,6 +1359,75 @@ class InMemoryRepository:
             )
             self._notification_outbox[event.id] = event
             return account.model_copy(deep=True)
+
+    async def change_public_account_capacity(
+        self,
+        *,
+        account_id: str,
+        action: AccountCapacityAction,
+        reason: AccountCapacityReason,
+        operation_id: str,
+    ) -> AccountCapacityOperation:
+        operation_key = "\0".join(("foodlog-capacity-v1", account_id, action.value, operation_id))
+        event_id = sha256(operation_key.encode()).hexdigest()
+        async with self._lock:
+            existing = self._capacity_operations.get(event_id)
+            if existing is not None:
+                if existing.reason != reason:
+                    raise AccountCapacityStateConflict
+                return existing.model_copy(deep=True)
+            account = self._accounts.get(account_id)
+            if account is None or account.entitlement_mode != EntitlementMode.TRIAL:
+                raise AccountCapacityStateConflict
+            status = self._account_status_by_id.get(account_id)
+            active_count = sum(
+                candidate.entitlement_mode == EntitlementMode.TRIAL
+                and self._account_status_by_id.get(candidate.id) == "active"
+                for candidate in self._accounts.values()
+            )
+            if action == AccountCapacityAction.RECLAIM:
+                if reason == AccountCapacityReason.OPERATOR_REVERSAL or status != "active":
+                    raise AccountCapacityStateConflict
+                if active_count < 1:
+                    raise AccountCapacityStateConflict
+                resulting_status = "capacity_reclaimed"
+                resulting_count = active_count - 1
+                audit_action = AuditAction.ACCOUNT_CAPACITY_RECLAIMED
+            else:
+                if reason != AccountCapacityReason.OPERATOR_REVERSAL:
+                    raise AccountCapacityStateConflict
+                if status != "capacity_reclaimed" or active_count >= self._public_account_limit:
+                    raise AccountCapacityStateConflict
+                resulting_status = "active"
+                resulting_count = active_count + 1
+                audit_action = AuditAction.ACCOUNT_CAPACITY_RESTORED
+            operation = AccountCapacityOperation(
+                id=event_id,
+                operation_id=operation_id,
+                account_id=account.id,
+                owner_user_id=account.owner_user_id,
+                action=action,
+                reason=reason,
+                previous_status=status,
+                resulting_status=resulting_status,
+                active_public_account_count=resulting_count,
+                account_limit=self._public_account_limit,
+            )
+            self._account_status_by_id[account.id] = resulting_status
+            self._capacity_operations[event_id] = operation
+            self._append_audit_event_locked(
+                build_audit_event(
+                    account_id=account.id,
+                    action=audit_action,
+                    actor_kind=AuditActorKind.OPERATOR,
+                    source=AuditSource.OPERATOR_CLI,
+                    subject_kind="account_capacity",
+                    subject_id=account.id,
+                    purpose=AuditPurpose.SECURITY_REVIEW,
+                    occurrence_id=operation_id,
+                )
+            )
+            return operation.model_copy(deep=True)
 
     def _append_audit_event_locked(self, event: AuditEvent) -> AuditEvent:
         if event.account_id not in self._accounts:
@@ -1482,7 +1626,11 @@ class InMemoryRepository:
             account_id = self._account_by_owner.get(owner_user_id)
             if not account_id:
                 raise AccountNotProvisioned
-            return self._accounts[account_id].model_copy(deep=True)
+            return self._require_active_account_locked(account_id).model_copy(deep=True)
+
+    async def account_is_active(self, account_id: str) -> bool:
+        async with self._lock:
+            return self._account_status_by_id.get(account_id) == "active"
 
     async def create_account_export(
         self,
@@ -1500,6 +1648,7 @@ class InMemoryRepository:
             account_id = self._account_by_owner.get(owner_user_id)
             if not account_id:
                 raise AccountNotProvisioned
+            self._require_active_account_locked(account_id)
             export_id = account_export_id(account_id, idempotency_key)
             key = (account_id, export_id)
             existing = self._account_exports.get(key)
@@ -1584,6 +1733,8 @@ class InMemoryRepository:
         if lease_expires_at <= now:
             raise ValueError("account export lease must expire in the future")
         async with self._lock:
+            if self._account_status_by_id.get(account_id) != "active":
+                return None
             account_export = self._account_exports.get((account_id, export_id))
             if account_export is None:
                 raise AccountExportNotFound
@@ -1634,6 +1785,8 @@ class InMemoryRepository:
         error_code: str,
     ) -> bool:
         async with self._lock:
+            if self._account_status_by_id.get(account_id) != "active":
+                return False
             account_export = self._account_exports.get((account_id, export_id))
             if account_export is None:
                 raise AccountExportNotFound
@@ -1678,6 +1831,8 @@ class InMemoryRepository:
         expires_at: datetime,
     ) -> AccountExport | None:
         async with self._lock:
+            if self._account_status_by_id.get(account_id) != "active":
+                return None
             account_export = self._account_exports.get((account_id, export_id))
             if account_export is None:
                 raise AccountExportNotFound
@@ -1730,6 +1885,8 @@ class InMemoryRepository:
         failed_at: datetime,
     ) -> bool:
         async with self._lock:
+            if self._account_status_by_id.get(account_id) != "active":
+                return False
             account_export = self._account_exports.get((account_id, export_id))
             if account_export is None:
                 raise AccountExportNotFound
@@ -1774,6 +1931,7 @@ class InMemoryRepository:
             account_id = self._account_by_owner.get(owner_user_id)
             if not account_id:
                 raise AccountNotProvisioned
+            self._require_active_account_locked(account_id)
             existing = self._inbound_mail_addresses.get(account_id)
             if existing is not None:
                 route = self._inbound_mail_routes.get(
@@ -1818,6 +1976,7 @@ class InMemoryRepository:
             account_id = self._account_by_owner.get(owner_user_id)
             if not account_id:
                 raise AccountNotProvisioned
+            self._require_active_account_locked(account_id)
             current = self._inbound_mail_addresses.get(account_id)
             if current is None or current.generation != expected_generation:
                 raise InboundAddressStateConflict
@@ -1868,6 +2027,7 @@ class InMemoryRepository:
             account_id = self._account_by_owner.get(owner_user_id)
             if not account_id:
                 raise AccountNotProvisioned
+            self._require_active_account_locked(account_id)
             current = self._inbound_mail_addresses.get(account_id)
             if current is None or current.generation != expected_generation:
                 raise InboundAddressStateConflict
@@ -1908,8 +2068,7 @@ class InMemoryRepository:
         """Seed transport evidence in the in-memory adapter used by local workers/tests."""
 
         async with self._lock:
-            if account_id not in self._accounts:
-                raise AccountNotProvisioned
+            self._require_active_account_locked(account_id)
             self._published_raw_mail[(account_id, raw_mail_id)] = content_sha256
 
     async def raw_mail_authentication(
@@ -1927,6 +2086,8 @@ class InMemoryRepository:
         authentication: RawMailAuthentication,
     ) -> RawMailAuthentication:
         async with self._lock:
+            if self._account_status_by_id.get(authentication.account_id) != "active":
+                raise AccountNotProvisioned
             raw_content_sha256 = self._published_raw_mail.get(
                 (authentication.account_id, authentication.raw_mail_id)
             )
@@ -1958,6 +2119,8 @@ class InMemoryRepository:
         disposition: RawMailProcessingDisposition,
     ) -> RawMailProcessingDisposition:
         async with self._lock:
+            if self._account_status_by_id.get(disposition.account_id) != "active":
+                raise AccountNotProvisioned
             key = (disposition.account_id, disposition.raw_mail_id)
             if self._published_raw_mail.get(key) != disposition.raw_content_sha256:
                 raise RawMailNotFound
@@ -1984,7 +2147,7 @@ class InMemoryRepository:
         candidate: PurchaseDocumentCandidate,
     ) -> PurchaseIdentityResult:
         async with self._lock:
-            if candidate.account_id not in self._accounts:
+            if self._account_status_by_id.get(candidate.account_id) != "active":
                 raise AccountNotProvisioned
             raw_content_sha256 = self._published_raw_mail.get(
                 (candidate.account_id, candidate.raw_mail_id)
@@ -2132,6 +2295,8 @@ class InMemoryRepository:
             parsed=parsed,
         )
         async with self._lock:
+            if self._account_status_by_id.get(document.account_id) != "active":
+                raise AccountNotProvisioned
             source = self._purchase_documents.get((document.account_id, document.id))
             purchase = self._purchases.get((document.account_id, document.purchase_id))
             if source != document or purchase is None:
@@ -2321,6 +2486,7 @@ class InMemoryRepository:
             f"{owner_user_id}\0{email_normalized}\0launch_mail\0{policy_version}\0{granted}".encode()
         ).hexdigest()
         async with self._lock:
+            self._require_active_account_locked(account.id)
             existing = self._launch_consents.get(consent_id)
             if existing:
                 self._launch_consent_state_by_owner[owner_user_id] = existing
@@ -2349,10 +2515,13 @@ class InMemoryRepository:
             if firebase_uid in self._account_by_owner:
                 raise AccountAlreadyProvisioned
             existing = self._waitlist_by_identity_hash.get(waitlist_id)
+            if existing and existing.status == "fulfilled":
+                raise AccountAlreadyProvisioned
             if existing and existing.status == "active":
                 return existing.model_copy(deep=True)
             public_account_count = sum(
                 account.entitlement_mode == EntitlementMode.TRIAL
+                and self._account_status_by_id.get(account.id) == "active"
                 for account in self._accounts.values()
             )
             if public_account_count < self._public_account_limit:
@@ -2386,6 +2555,9 @@ class InMemoryRepository:
         firebase_uid: str,
     ) -> ConsentPreferences:
         async with self._lock:
+            account_id = self._account_by_owner.get(firebase_uid)
+            if account_id is not None:
+                self._require_active_account_locked(account_id)
             launch = self._launch_consent_state_by_owner.get(firebase_uid)
             waitlist = self._waitlist_by_identity_hash.get(
                 sha256(firebase_uid.encode()).hexdigest()
@@ -2411,6 +2583,8 @@ class InMemoryRepository:
                 raise WaitlistEntryNotFound
             if existing.status == "withdrawn":
                 return existing.model_copy(deep=True)
+            if existing.status == "fulfilled":
+                raise AccountAlreadyProvisioned
             withdrawn_at = utc_now()
             withdrawn = existing.model_copy(
                 update={
@@ -2435,6 +2609,7 @@ class InMemoryRepository:
     ) -> DeviceCamera:
         account = await self.account_for_owner(owner_user_id)
         async with self._lock:
+            self._require_active_account_locked(account.id)
             if credential_hash in self._device_credentials:
                 raise DeviceCredentialCollision
             camera = DeviceCamera(
@@ -2466,12 +2641,14 @@ class InMemoryRepository:
             ):
                 raise InvalidDeviceCredential
             camera = self._device_cameras.get(credential.camera_id)
-            account = self._accounts.get(credential.account_id)
+            try:
+                account = self._require_active_account_locked(credential.account_id)
+            except AccountNotProvisioned:
+                raise InvalidDeviceCredential from None
             if (
                 camera is None
                 or camera.account_id != credential.account_id
                 or camera.status != CameraStatus.ACTIVE
-                or account is None
             ):
                 raise InvalidDeviceCredential
             self._device_credentials[credential_hash] = credential.model_copy(
@@ -2519,6 +2696,7 @@ class InMemoryRepository:
         account = await self.account_for_owner(owner_user_id)
         now = utc_now()
         async with self._lock:
+            self._require_active_account_locked(account.id)
             camera: Camera | None = self._cameras.get(camera_id) or self._device_cameras.get(
                 camera_id
             )
@@ -2558,6 +2736,10 @@ class InMemoryRepository:
         camera_id: str,
     ) -> DeviceCamera:
         async with self._lock:
+            try:
+                self._require_active_account_locked(account_id)
+            except AccountNotProvisioned:
+                raise CameraNotFound from None
             camera = self._device_cameras.get(camera_id)
             if (
                 camera is None
@@ -2576,6 +2758,7 @@ class InMemoryRepository:
         account = await self.account_for_owner(owner_user_id)
         instance_hash = sha256(client_instance_id.encode()).hexdigest()
         async with self._lock:
+            self._require_active_account_locked(account.id)
             instance_key = (account.id, instance_hash)
             existing_id = self._browser_camera_by_instance.get(instance_key)
             if existing_id:
@@ -2638,7 +2821,11 @@ class InMemoryRepository:
         )
         async with self._lock:
             stored_account = self._accounts.get(account.id)
-            if stored_account is None or stored_account.owner_user_id != account.owner_user_id:
+            if (
+                stored_account is None
+                or stored_account.owner_user_id != account.owner_user_id
+                or self._account_status_by_id.get(account.id) != "active"
+            ):
                 raise AccountNotProvisioned
             stored_camera: BrowserCamera | DeviceCamera | None
             if isinstance(camera, DeviceCamera):
@@ -2699,6 +2886,8 @@ class InMemoryRepository:
         if capture.account_id != account_id:
             raise CrossAccountAccess
         async with self._lock:
+            if self._account_status_by_id.get(account_id) != "active":
+                raise AccountNotProvisioned
             stored = self._captures.get(capture.id)
             if not stored:
                 return
@@ -2729,6 +2918,8 @@ class InMemoryRepository:
 
     async def mark_stored(self, *, account_id: str, capture_id: str) -> None:
         async with self._lock:
+            if self._account_status_by_id.get(account_id) != "active":
+                raise AccountNotProvisioned
             capture = self._captures.get(capture_id)
             if not capture or capture.account_id != account_id:
                 raise CaptureNotFound
@@ -2755,6 +2946,7 @@ class InMemoryRepository:
 
     async def mark_processed(self, *, account_id: str, capture_id: str) -> None:
         async with self._lock:
+            self._require_active_account_locked(account_id)
             capture = self._captures.get(capture_id)
             if not capture or capture.account_id != account_id:
                 raise CaptureNotFound
@@ -2792,7 +2984,9 @@ class InMemoryRepository:
         return replacement.model_copy(deep=True)
 
     async def enqueue_job(self, job: DurableJob) -> DurableJob:
+        validate_enqueueable_job(job)
         async with self._lock:
+            self._require_active_account_locked(job.account_id)
             return self._enqueue_job_locked(job)
 
     async def job_for_account(self, account_id: str, job_id: str) -> DurableJob | None:
@@ -2811,6 +3005,8 @@ class InMemoryRepository:
         lease_expires_at: datetime,
     ) -> DurableJob | None:
         async with self._lock:
+            if self._account_status_by_id.get(account_id) != "active":
+                return None
             now = utc_now()
             if lease_expires_at <= now:
                 raise ValueError("Job leases must expire in the future")
@@ -2851,6 +3047,10 @@ class InMemoryRepository:
         lease_owner: str,
     ) -> bool:
         async with self._lock:
+            try:
+                self._require_active_account_locked(account_id)
+            except AccountNotProvisioned:
+                return False
             key = (account_id, job_id)
             job = self._jobs.get(key)
             now = utc_now()
@@ -2888,6 +3088,10 @@ class InMemoryRepository:
         error_message: str,
     ) -> bool:
         async with self._lock:
+            try:
+                self._require_active_account_locked(account_id)
+            except AccountNotProvisioned:
+                return False
             key = (account_id, job_id)
             job = self._jobs.get(key)
             now = utc_now()
@@ -2941,6 +3145,8 @@ class InMemoryRepository:
         policy: GroupingPolicy,
     ) -> CaptureGroupingResult | None:
         async with self._lock:
+            if self._account_status_by_id.get(account_id) != "active":
+                return None
             now = utc_now()
             grouping_job_key = (account_id, capture_grouping_job_id(capture_id))
             grouping_job = self._jobs.get(grouping_job_key)
@@ -3118,6 +3324,8 @@ class InMemoryRepository:
         hypothesis: ActivityMealInferenceV1,
     ) -> MealEntry | None:
         async with self._lock:
+            if self._account_status_by_id.get(account_id) != "active":
+                return None
             now = utc_now()
             job_key = (account_id, event_inference_job_id(event_id))
             job = self._jobs.get(job_key)
@@ -3231,7 +3439,7 @@ class InMemoryRepository:
         reservation: ModelSpendReservation,
     ) -> ModelSpendReservation:
         async with self._lock:
-            if reservation.account_id not in self._accounts:
+            if self._account_status_by_id.get(reservation.account_id) != "active":
                 raise AccountNotProvisioned
             existing = self._model_spend_reservations.get(reservation.id)
             if existing is not None:
@@ -3293,8 +3501,17 @@ class InMemoryRepository:
 
     async def record_ai_trace(self, trace: AiTraceRecord) -> AiTraceRecord:
         async with self._lock:
-            if trace.account_id not in self._accounts:
+            account_status = self._account_status_by_id.get(trace.account_id)
+            if account_status not in {
+                "active",
+                "capacity_reclaimed",
+            }:
                 raise AccountNotProvisioned
+            usage = self._model_usage.get(trace.reservation_id)
+            if account_status == "capacity_reclaimed" and usage is None:
+                raise AiTraceConflict
+            if usage is not None:
+                validate_ai_trace_usage(trace, usage)
             key = (trace.account_id, trace.id)
             existing = self._ai_traces.get(key)
             if existing is not None:
@@ -3356,6 +3573,7 @@ class InMemoryRepository:
         if meal.account_id != account_id:
             raise CrossAccountAccess
         async with self._lock:
+            self._require_active_account_locked(account_id)
             capture = self._captures.get(meal.capture_id)
             if capture is None or capture.account_id != account_id:
                 raise CaptureNotFound
@@ -3393,6 +3611,8 @@ class InMemoryRepository:
             raise CrossAccountAccess
         validate_focused_question_prompt(prompt)
         async with self._lock:
+            if self._account_status_by_id.get(account_id) != "active":
+                raise AccountNotProvisioned
             stored_meal = self._meals.get(meal.id)
             if stored_meal is None or stored_meal.account_id != account_id:
                 raise MealNotFound
@@ -3445,7 +3665,10 @@ class InMemoryRepository:
         uncertainty: str | None = None,
     ) -> ClarificationQuestion:
         async with self._lock:
-            if account_id not in self._accounts:
+            if (
+                account_id not in self._accounts
+                or self._account_status_by_id.get(account_id) != "active"
+            ):
                 raise AccountNotProvisioned
             rich_values = (
                 pattern_claim,
@@ -3613,7 +3836,10 @@ class InMemoryRepository:
             draft=draft,
         )
         async with self._lock:
-            if account_id not in self._accounts:
+            if (
+                account_id not in self._accounts
+                or self._account_status_by_id.get(account_id) != "active"
+            ):
                 raise AccountNotProvisioned
             duplicate = self._knowledge_revision_requests.get((account_id, idempotency_key))
             if duplicate is not None:
@@ -3800,6 +4026,8 @@ class InMemoryRepository:
     ) -> MealFeedbackResult:
         account = await self.account_for_owner(owner_user_id)
         async with self._lock:
+            if self._account_status_by_id.get(account.id) != "active":
+                raise AccountNotProvisioned
             meal = self._owned_meal(account.id, meal_id)
             return self._record_feedback_locked(
                 account_id=account.id,
@@ -3839,6 +4067,8 @@ class InMemoryRepository:
         note_id = user_context_note_id(account.id, idempotency_key)
         request_hash = user_context_note_request_hash(request)
         async with self._lock:
+            if self._account_status_by_id.get(account.id) != "active":
+                raise AccountNotProvisioned
             existing = self._user_context_notes.get(note_id)
             if existing is not None:
                 if self._user_context_note_request_hashes[note_id] != request_hash:
@@ -3887,6 +4117,8 @@ class InMemoryRepository:
     ) -> UserContextNote:
         account = await self.account_for_owner(owner_user_id)
         async with self._lock:
+            if self._account_status_by_id.get(account.id) != "active":
+                raise AccountNotProvisioned
             note = self._user_context_notes.get(note_id)
             if note is None:
                 raise UserContextNoteNotFound
@@ -4076,6 +4308,8 @@ class InMemoryRepository:
     ) -> QuestionResponseResult:
         account = await self.account_for_owner(owner_user_id)
         async with self._lock:
+            if self._account_status_by_id.get(account.id) != "active":
+                raise AccountNotProvisioned
             question = self._questions.get(question_id)
             if not question or question.account_id != account.id:
                 raise QuestionNotFound

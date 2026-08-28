@@ -9,13 +9,17 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from foodlog_backend.errors import AccountNotProvisioned
 from foodlog_backend.mail_events import RawMailStoredEventV1
 from foodlog_backend.mail_worker_app import MailWorkerSettings, create_mail_worker_app
 from foodlog_backend.models import (
+    AccountCapacityAction,
+    AccountCapacityReason,
     PurchaseDocumentKind,
     PurchaseReconciliationDisposition,
     RawMailAuthentication,
     RawMailAuthenticationOutcome,
+    RawMailProcessingDisposition,
     RawMailProcessingOutcome,
 )
 from foodlog_backend.purchase_mail import (
@@ -23,7 +27,12 @@ from foodlog_backend.purchase_mail import (
     classify_nemlig_purchase_email,
     raw_mail_object_key,
 )
-from foodlog_backend.purchase_pdf_limits import PARSER_VERSION, PurchasePdfIsolationFailure
+from foodlog_backend.purchase_normalization import parse_purchase_document
+from foodlog_backend.purchase_pdf_limits import (
+    PARSER_VERSION,
+    PDF_PROCESSOR_VERSION,
+    PurchasePdfIsolationFailure,
+)
 from foodlog_backend.repository import InMemoryRepository
 from foodlog_backend.storage import InMemoryObjectStore
 
@@ -441,5 +450,95 @@ def test_mail_worker_rejects_bad_event_and_retries_missing_object() -> None:
 
     assert malformed.status_code == 400
     assert malformed.json() == {"detail": "invalid_pubsub_event"}
-    assert failed.status_code == 503
-    assert failed.json() == {"detail": "mail_classification_failed"}
+    assert failed.status_code == 204
+
+
+def test_reclaimed_account_mail_delivery_is_acknowledged_without_mutation() -> None:
+    repository, store, account_id, event = asyncio.run(
+        prepare_worker_message("reclaimed-mail-owner", fixture("order-confirmation.eml"))
+    )
+    asyncio.run(
+        repository.change_public_account_capacity(
+            account_id=account_id,
+            action=AccountCapacityAction.RECLAIM,
+            reason=AccountCapacityReason.CONFIRMED_SYBIL_ABUSE,
+            operation_id="44444444-4444-4444-8444-444444444444",
+        )
+    )
+    app = create_mail_worker_app(
+        worker_settings(),
+        repository=repository,
+        object_store=store,
+        mail_authenticator=FixtureMailAuthenticator(),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/internal/pubsub/raw-mail-stored",
+            json=push_envelope(event, message_id="reclaimed-mail-message"),
+        )
+
+    assert response.status_code == 204
+    assert repository._raw_mail_authentication == {}
+    assert repository._raw_mail_processing == {}
+    assert repository._purchase_documents == {}
+
+
+def test_mail_transactions_recheck_account_status_after_reclaim() -> None:
+    async def scenario() -> None:
+        content = fixture("order-confirmation.eml")
+        repository, _, account_id, event = await prepare_worker_message(
+            "mail-transaction-race-owner",
+            content,
+        )
+        authentication = trusted_authentication(
+            content,
+            account_id=account_id,
+            mail_id=event.mail_id,
+        )
+        await repository.record_raw_mail_authentication(authentication)
+        classification = classify_nemlig_purchase_email(
+            content,
+            account_id=account_id,
+            mail_id=event.mail_id,
+            authentication=authentication,
+        )
+        assert classification.candidate is not None
+        identity = await repository.attach_purchase_document(classification.candidate)
+        parsed = parse_purchase_document(
+            content,
+            kind=classification.candidate.kind,
+            invoice_reference=classification.candidate.invoice_reference,
+        )
+        await repository.change_public_account_capacity(
+            account_id=account_id,
+            action=AccountCapacityAction.RECLAIM,
+            reason=AccountCapacityReason.CONFIRMED_SYBIL_ABUSE,
+            operation_id="55555555-5555-4555-8555-555555555555",
+        )
+
+        with pytest.raises(AccountNotProvisioned):
+            await repository.record_raw_mail_authentication(authentication)
+        with pytest.raises(AccountNotProvisioned):
+            await repository.record_raw_mail_processing_disposition(
+                RawMailProcessingDisposition(
+                    id=event.mail_id,
+                    account_id=account_id,
+                    raw_mail_id=event.mail_id,
+                    raw_content_sha256=sha256(content).hexdigest(),
+                    outcome=RawMailProcessingOutcome.TERMINAL_REJECTED,
+                    purchase_document_kind=PurchaseDocumentKind.FINAL_RECEIPT,
+                    failure_code="pdf_structure_rejected",
+                    processor_version=PDF_PROCESSOR_VERSION,
+                )
+            )
+        with pytest.raises(AccountNotProvisioned):
+            await repository.normalize_purchase_document(
+                document=identity.document,
+                parsed=parsed,
+            )
+        assert repository._purchase_normalizations == {}
+        assert repository._purchase_items == {}
+        assert repository._purchase_charges == {}
+
+    asyncio.run(scenario())

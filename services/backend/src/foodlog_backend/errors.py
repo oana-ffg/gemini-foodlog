@@ -6,6 +6,10 @@ class AccountCapacityReached(FoodLogError):
     pass
 
 
+class AccountCapacityStateConflict(FoodLogError):
+    pass
+
+
 class AccountNotProvisioned(FoodLogError):
     pass
 

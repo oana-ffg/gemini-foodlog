@@ -32,7 +32,7 @@ export interface ConsentPreferences {
   launch_mail_opt_in: boolean | null;
   launch_mail_policy_version: string | null;
   launch_mail_updated_at: string | null;
-  waitlist_status: "not_joined" | "active" | "withdrawn";
+  waitlist_status: "not_joined" | "active" | "withdrawn" | "fulfilled";
   waitlist_policy_version: string | null;
   waitlist_updated_at: string | null;
 }
