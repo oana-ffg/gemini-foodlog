@@ -64,6 +64,39 @@ resource "google_artifact_registry_repository" "backend" {
 
   deletion_policy = "PREVENT"
 
+  # INF-011 first applied and verified this exact policy in dry-run mode. No
+  # version becomes eligible until it is at least 14 days old.
+  cleanup_policy_dry_run = false
+
+  cleanup_policies {
+    id     = "delete-old-versions"
+    action = "DELETE"
+
+    condition {
+      tag_state  = "ANY"
+      older_than = "1209600s" # 14 days
+    }
+  }
+
+  cleanup_policies {
+    id     = "keep-protected-releases"
+    action = "KEEP"
+
+    condition {
+      tag_state    = "TAGGED"
+      tag_prefixes = ["protected-"]
+    }
+  }
+
+  cleanup_policies {
+    id     = "keep-recent-rollback-window"
+    action = "KEEP"
+
+    most_recent_versions {
+      keep_count = 10
+    }
+  }
+
   lifecycle {
     prevent_destroy = true
   }

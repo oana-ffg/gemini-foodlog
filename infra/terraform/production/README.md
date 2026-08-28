@@ -64,9 +64,23 @@ image and source-build provenance and remains scale-to-zero at revision
 
 Terraform deliberately owns only the preview secret metadata and access policy; its
 payload versions remain in Secret Manager and never enter configuration or state.
-Deletion prevention protects the historical resources. Artifact cleanup policy is
-managed separately so image retention can be reviewed against live Cloud Run digest
-references before any artifact becomes eligible for deletion.
+Deletion prevention protects the historical resources.
+
+### Artifact retention and rollback protection
+
+The source-deploy repository has an active Terraform-owned cleanup policy. Versions
+must be at least 14 days old before deletion, the newest 10 versions of every package
+are always retained, and any tag beginning with `protected-` wins over deletion.
+Before activation, the exact policy was applied and read back in dry-run mode; the
+full live inventory had zero deletion candidates.
+
+The current production digest, the last known-good OPS-005 rollback digest, and the
+historical preview digest have immutable-digest protection tags. Every deployment
+must promote its predecessor to a `protected-rollback-*` tag and tag the new verified
+digest `protected-active-*` before it can become older than the retention window.
+CI owns automating that rotation; until CI exists, this is a required manual release
+step. Never infer protected digests from mutable tags: compare the digest against all
+active Cloud Run services and jobs first.
 
 ### Unlimited internal or judge accounts
 
