@@ -1,0 +1,83 @@
+{
+  "schema_version": "event-scenario-ground-truth-v1",
+  "evaluation_policy_version": "event-scenario-scoring-v1",
+  "scenario_id": "synthetic-cat-negative-v1",
+  "title": "Cat hops onto an empty kitchen counter",
+  "review_status": "draft",
+  "human_review": null,
+  "source_kind": "synthetic_still",
+  "observations": [
+    {
+      "observation_id": "cat_frame",
+      "camera_id": "kitchen_corner",
+      "offset_seconds": 0,
+      "file_path": "images/adversarial/synthetic-cat-on-counter.png",
+      "sha256": "cdace422e5141d6813f6f8de311b69cf75a48883c61a0fa021fb3aa621fd1133"
+    }
+  ],
+  "context": [],
+  "expected_events": [
+    {
+      "event_id": "cat_activity",
+      "observation_ids": [
+        "cat_frame"
+      ],
+      "start_offset_seconds": 0,
+      "end_offset_seconds": 0,
+      "boundary_tolerance_seconds": 2,
+      "primary_outcome": {
+        "activity_kind": "likely_non_cooking",
+        "accepted_labels": [
+          "Cat jumping onto or off kitchen counter",
+          "Cat on the kitchen counter",
+          "Pet activity on the kitchen counter"
+        ],
+        "allowed_confidence": [
+          "likely",
+          "confident"
+        ],
+        "components": []
+      },
+      "acceptable_alternatives": [],
+      "required_evidence": [
+        {
+          "evidence_id": "cat_visible",
+          "source_kind": "visual",
+          "source_ids": [
+            "cat_frame"
+          ],
+          "description": "One cat is visibly moving onto or standing on the kitchen counter."
+        },
+        {
+          "evidence_id": "no_cooking_evidence",
+          "source_kind": "visual",
+          "source_ids": [
+            "cat_frame"
+          ],
+          "description": "No person, food, ingredient package, steam, flame, or active cooking is visible."
+        }
+      ],
+      "question_expectation": {
+        "policy": "forbidden",
+        "candidate_concepts": [],
+        "acceptable_impacts": [],
+        "reason": "The frame already supports a non-cooking classification; asking the user to identify a meal would create needless work."
+      }
+    }
+  ],
+  "prohibited_claims": [
+    {
+      "claim": "A meal or ingredient is being prepared.",
+      "reason": "The image contains no food or active cooking evidence.",
+      "severity": "hard_fail"
+    },
+    {
+      "claim": "A person is cooking outside the visible frame.",
+      "reason": "Invisible activity cannot be inferred from the cat-only observation.",
+      "severity": "deduction"
+    }
+  ],
+  "review_notes": [
+    "Oana must visually approve the fixture and this ground truth before the scenario becomes human_approved."
+  ]
+}

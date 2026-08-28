@@ -23,6 +23,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+  "jsonschema>=4.26,<5",
   "pytest>=8.4,<9",
   "ruff>=0.12,<1",
 ]

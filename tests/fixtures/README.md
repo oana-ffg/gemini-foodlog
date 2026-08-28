@@ -44,4 +44,10 @@ The three deterministic prompts requested a candid, photorealistic, wide consume
 - Validate the recorded SHA-256 values before using them as release evidence.
 - Never mix synthetic observations into a real household's learned knowledge.
 - A model may reasonably mention additional visible objects, but it must not contradict the required facts above.
-- These six independent frames do not test temporal event grouping or multi-camera correlation.
+- These seven independent frames do not test temporal event grouping or multi-camera correlation.
+
+The versioned [event scenario schema](../../contracts/event-scenario-ground-truth-v1.schema.json)
+and [scoring policy](../../docs/evaluation-scoring-v1.md) define the richer ground truth
+used for sequence, question-quality, and uncertainty evaluation. Draft scenario records
+live in [`scenarios/`](scenarios/) and do not count as approved evaluation evidence until
+Oana changes their explicit review status after inspecting the fixtures and expectations.

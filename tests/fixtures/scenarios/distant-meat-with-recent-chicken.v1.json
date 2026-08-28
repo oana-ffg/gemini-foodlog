@@ -1,0 +1,175 @@
+{
+  "schema_version": "event-scenario-ground-truth-v1",
+  "evaluation_policy_version": "event-scenario-scoring-v1",
+  "scenario_id": "distant-meat-with-recent-chicken-v1",
+  "title": "Ambiguous meat pack beside an air-fryer basket with recent chicken context",
+  "review_status": "draft",
+  "human_review": null,
+  "source_kind": "synthetic_still",
+  "observations": [
+    {
+      "observation_id": "package_frame",
+      "camera_id": "kitchen_corner",
+      "offset_seconds": 0,
+      "file_path": "images/adversarial/synthetic-distant-ambiguous-meat-pack.png",
+      "sha256": "9bc101311ae39bac06d36bd0df498735087c4c8ddce701c2f9a49dc0320164e6"
+    }
+  ],
+  "context": [
+    {
+      "context_id": "recent_chicken_purchase",
+      "source_kind": "purchase",
+      "statement": "Synthetic purchase evidence records chicken within the scenario's recent-context window.",
+      "available_at_offset_seconds": 0
+    }
+  ],
+  "expected_events": [
+    {
+      "event_id": "meat_preparation",
+      "observation_ids": [
+        "package_frame"
+      ],
+      "start_offset_seconds": 0,
+      "end_offset_seconds": 0,
+      "boundary_tolerance_seconds": 2,
+      "primary_outcome": {
+        "activity_kind": "tentative_meal",
+        "accepted_labels": [
+          "Chicken being prepared for air frying",
+          "Poultry being prepared near the air fryer"
+        ],
+        "allowed_confidence": [
+          "uncertain"
+        ],
+        "components": [
+          {
+            "component_id": "chicken",
+            "accepted_names": [
+              "Chicken",
+              "Poultry"
+            ],
+            "required_ingredients": [
+              {
+                "concept_id": "chicken",
+                "accepted_terms": [
+                  "chicken",
+                  "poultry"
+                ]
+              }
+            ],
+            "accepted_preparation_methods": [
+              "air frying",
+              "preparing near an air fryer"
+            ]
+          }
+        ]
+      },
+      "acceptable_alternatives": [
+        {
+          "activity_kind": "tentative_meal",
+          "accepted_labels": [
+            "Red meat being prepared for air frying",
+            "Unidentified meat being prepared near the air fryer"
+          ],
+          "allowed_confidence": [
+            "uncertain"
+          ],
+          "components": [
+            {
+              "component_id": "red_meat",
+              "accepted_names": [
+                "Red meat",
+                "Unidentified meat"
+              ],
+              "required_ingredients": [
+                {
+                  "concept_id": "red_meat",
+                  "accepted_terms": [
+                    "red meat",
+                    "unidentified meat"
+                  ]
+                }
+              ],
+              "accepted_preparation_methods": [
+                "air frying",
+                "preparing near an air fryer"
+              ]
+            }
+          ]
+        }
+      ],
+      "required_evidence": [
+        {
+          "evidence_id": "package_opened",
+          "source_kind": "visual",
+          "source_ids": [
+            "package_frame"
+          ],
+          "description": "A person is opening a meat package beside the sink."
+        },
+        {
+          "evidence_id": "basket_nearby",
+          "source_kind": "visual",
+          "source_ids": [
+            "package_frame"
+          ],
+          "description": "An air-fryer basket is nearby, supporting but not proving air frying."
+        },
+        {
+          "evidence_id": "protein_ambiguous",
+          "source_kind": "visual",
+          "source_ids": [
+            "package_frame"
+          ],
+          "description": "The narrow pinkish glimpse is insufficient to distinguish poultry from red meat visually."
+        },
+        {
+          "evidence_id": "chicken_context",
+          "source_kind": "context",
+          "source_ids": [
+            "recent_chicken_purchase"
+          ],
+          "description": "Recent chicken purchase evidence makes chicken a relevant hypothesis but does not identify the package by itself."
+        }
+      ],
+      "question_expectation": {
+        "policy": "required",
+        "candidate_concepts": [
+          "chicken",
+          "red_meat"
+        ],
+        "acceptable_impacts": [
+          "changes_meal_identity",
+          "changes_food_trigger_relevance",
+          "changes_reusable_household_distinction"
+        ],
+        "reason": "The recent chicken context makes a chicken-versus-red-meat distinction specific and reusable, while the image cannot settle it."
+      }
+    }
+  ],
+  "prohibited_claims": [
+    {
+      "claim": "The image proves the meat is chicken.",
+      "reason": "The meat colour and shape are deliberately ambiguous at this distance and quality.",
+      "severity": "hard_fail"
+    },
+    {
+      "claim": "The recent purchase proves the photographed package is chicken.",
+      "reason": "Purchase history is contextual evidence, not visual identity evidence.",
+      "severity": "hard_fail"
+    },
+    {
+      "claim": "The exact cut is chicken breast, steak, or another specific cut.",
+      "reason": "The fixture does not expose enough detail to identify a cut.",
+      "severity": "deduction"
+    },
+    {
+      "claim": "Air frying is certain.",
+      "reason": "The basket is nearby but the frame does not show the food placed inside it or the appliance running.",
+      "severity": "deduction"
+    }
+  ],
+  "review_notes": [
+    "Oana must approve whether both best-guess labels and the required chicken-versus-red-meat question match the intended product behaviour."
+  ]
+}
