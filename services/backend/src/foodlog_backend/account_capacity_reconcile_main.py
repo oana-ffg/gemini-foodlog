@@ -24,6 +24,13 @@ class EmailBackfill:
     email_normalized: str
 
 
+@dataclass(frozen=True)
+class LegacyPublicBackfill:
+    firebase_uid: str
+    account_id: str
+    email_normalized: str | None
+
+
 async def _verified_email_for_uid(*, firebase_uid: str, firebase_app: Any) -> str:
     try:
         user = await asyncio.to_thread(firebase_auth.get_user, firebase_uid, firebase_app)
@@ -49,10 +56,19 @@ def build_parser() -> argparse.ArgumentParser:
         )
     )
     parser.add_argument("--project-id", required=True, type=_project_id)
-    parser.add_argument(
+    apply_group = parser.add_mutually_exclusive_group()
+    apply_group.add_argument(
         "--apply-email-backfill",
         action="store_true",
         help="Backfill only exact verified-email evidence after a clean reconciliation.",
+    )
+    apply_group.add_argument(
+        "--apply-legacy-public-backfill",
+        action="store_true",
+        help=(
+            "Upgrade exact pre-account-class public records without deleting data or "
+            "changing the capacity counter."
+        ),
     )
     return parser
 
@@ -62,7 +78,7 @@ async def reconcile(
     client: AsyncClient,
     firebase_app: Any,
     configured_limit: int,
-) -> tuple[dict[str, object], list[EmailBackfill]]:
+) -> tuple[dict[str, object], list[EmailBackfill], list[LegacyPublicBackfill]]:
     identities = [snapshot async for snapshot in client.collection("identities").stream()]
     accounts = [snapshot async for snapshot in client.collection("accounts").stream()]
     capacity = await client.collection("system").document("public_capacity").get()
@@ -92,7 +108,9 @@ async def reconcile(
     active_public_count = 0
     public_identity_count = 0
     backfills: list[EmailBackfill] = []
+    legacy_backfills: list[LegacyPublicBackfill] = []
     missing_firebase_uids: list[str] = []
+    reclaimed_missing_firebase_uids: list[str] = []
     problems = [f"capacity_state:{problem}" for problem in capacity_problems]
     verified_email_owners: dict[str, str] = {}
     public_account_owners: dict[str, str] = {}
@@ -100,22 +118,19 @@ async def reconcile(
         problems.append("capacity_document_missing")
 
     for identity in identities:
-        if identity.get("account_class") != "public":
+        identity_data = identity.to_dict() or {}
+        account_class = identity_data.get("account_class")
+        if account_class not in {None, "public"}:
             continue
-        public_identity_count += 1
         firebase_uid = identity.id
-        account_id = identity.get("account_id")
-        status = identity.get("status")
+        account_id = identity_data.get("account_id")
+        status = identity_data.get("status")
         if (
             not isinstance(account_id, str)
             or not account_id
             or status not in {"active", "capacity_reclaimed"}
         ):
             problems.append(f"identity_state:{firebase_uid}")
-            continue
-        previous_identity = public_account_owners.setdefault(account_id, firebase_uid)
-        if previous_identity != firebase_uid:
-            problems.append(f"duplicate_account_binding:{account_id}")
             continue
         account, entitlement = await asyncio.gather(
             client.collection("accounts").document(account_id).get(),
@@ -125,22 +140,55 @@ async def reconcile(
             .document("current")
             .get(),
         )
-        if not account.exists or account.get("owner_user_id") != firebase_uid:
+        account_data = account.to_dict() or {}
+        entitlement_data = entitlement.to_dict() or {}
+        if not account.exists or account_data.get("owner_user_id") != firebase_uid:
             problems.append(f"account_binding:{firebase_uid}")
             continue
-        if (
-            account.get("status") != status
-            or not entitlement.exists
-            or entitlement.get("entitlement_mode") != "trial"
-        ):
+        if account_data.get("status") != status or not entitlement.exists:
             problems.append(f"account_binding:{firebase_uid}")
+            continue
+        is_legacy_public = account_class is None
+        if is_legacy_public:
+            legacy_shape_is_exact = (
+                status == "active"
+                and "account_class" not in identity_data
+                and "admission_email_normalized" not in identity_data
+                and "admission_email_verified" not in identity_data
+                and "entitlement_mode" not in account_data
+                and "entitlement_mode" not in entitlement_data
+                and isinstance(entitlement_data.get("trial_image_limit"), int)
+                and not isinstance(entitlement_data.get("trial_image_limit"), bool)
+                and entitlement_data.get("trial_image_limit", 0) >= 1
+            )
+            if not legacy_shape_is_exact:
+                problems.append(f"legacy_public_shape:{firebase_uid}")
+                continue
+        elif entitlement_data.get("entitlement_mode") != "trial":
+            problems.append(f"account_binding:{firebase_uid}")
+            continue
+        public_identity_count += 1
+        previous_identity = public_account_owners.setdefault(account_id, firebase_uid)
+        if previous_identity != firebase_uid:
+            problems.append(f"duplicate_account_binding:{account_id}")
             continue
         if status == "active":
             active_public_count += 1
         try:
             user = await asyncio.to_thread(firebase_auth.get_user, firebase_uid, firebase_app)
         except firebase_auth.UserNotFoundError:
-            missing_firebase_uids.append(firebase_uid)
+            if status == "active":
+                missing_firebase_uids.append(firebase_uid)
+            else:
+                reclaimed_missing_firebase_uids.append(firebase_uid)
+            if is_legacy_public:
+                legacy_backfills.append(
+                    LegacyPublicBackfill(
+                        firebase_uid=firebase_uid,
+                        account_id=account_id,
+                        email_normalized=None,
+                    )
+                )
             continue
         email_normalized = normalize_verified_email(user.email)
         if not user.email_verified or email_normalized is None:
@@ -152,8 +200,17 @@ async def reconcile(
                 f"duplicate_verified_email:{sha256(email_normalized.encode()).hexdigest()}"
             )
             continue
-        stored_email = identity.get("admission_email_normalized")
-        stored_verified = identity.get("admission_email_verified")
+        if is_legacy_public:
+            legacy_backfills.append(
+                LegacyPublicBackfill(
+                    firebase_uid=firebase_uid,
+                    account_id=account_id,
+                    email_normalized=email_normalized,
+                )
+            )
+            continue
+        stored_email = identity_data.get("admission_email_normalized")
+        stored_verified = identity_data.get("admission_email_verified")
         if stored_email is None and stored_verified in {None, False}:
             backfills.append(
                 EmailBackfill(
@@ -165,12 +222,11 @@ async def reconcile(
             problems.append(f"admission_email_invalid:{firebase_uid}")
 
     for account in accounts:
-        entitlement = await (
-            account.reference.collection("entitlements").document("current").get()
-        )
+        entitlement = await account.reference.collection("entitlements").document("current").get()
+        entitlement_data = entitlement.to_dict() or {}
         if (
             entitlement.exists
-            and entitlement.get("entitlement_mode") == "trial"
+            and entitlement_data.get("entitlement_mode") == "trial"
             and account.id not in public_account_owners
         ):
             problems.append(f"orphan_public_account:{account.id}")
@@ -200,11 +256,20 @@ async def reconcile(
             }
             for candidate in backfills
         ],
+        "legacy_public_backfill_candidates": [
+            {
+                "firebase_uid": candidate.firebase_uid,
+                "account_id_sha256": sha256(candidate.account_id.encode()).hexdigest(),
+                "verified_email_available": candidate.email_normalized is not None,
+            }
+            for candidate in legacy_backfills
+        ],
         "missing_firebase_uids": sorted(missing_firebase_uids),
+        "reclaimed_missing_firebase_uids": sorted(reclaimed_missing_firebase_uids),
         "firebase_users_without_foodlog_identity": firebase_only_user_ids,
         "problems": sorted(problems),
     }
-    return report, backfills
+    return report, backfills, legacy_backfills
 
 
 async def apply_email_backfill(
@@ -225,14 +290,15 @@ async def apply_email_backfill(
     @firestore.async_transactional
     async def apply(transaction):
         identity = await identity_ref.get(transaction=transaction)
+        identity_data = identity.to_dict() or {}
         if (
             not identity.exists
-            or identity.get("account_class") != "public"
-            or identity.get("status") not in {"active", "capacity_reclaimed"}
+            or identity_data.get("account_class") != "public"
+            or identity_data.get("status") not in {"active", "capacity_reclaimed"}
         ):
             raise ValueError("identity changed after reconciliation")
-        stored_email = identity.get("admission_email_normalized")
-        stored_verified = identity.get("admission_email_verified")
+        stored_email = identity_data.get("admission_email_normalized")
+        stored_verified = identity_data.get("admission_email_verified")
         if stored_email == candidate.email_normalized and stored_verified is True:
             return
         if stored_email is not None or stored_verified not in {None, False}:
@@ -248,18 +314,107 @@ async def apply_email_backfill(
     await apply(transaction)
 
 
+async def apply_legacy_public_backfill(
+    *,
+    client: AsyncClient,
+    firebase_app: Any,
+    candidate: LegacyPublicBackfill,
+) -> None:
+    try:
+        current_user = await asyncio.to_thread(
+            firebase_auth.get_user,
+            candidate.firebase_uid,
+            firebase_app,
+        )
+    except firebase_auth.UserNotFoundError:
+        if candidate.email_normalized is not None:
+            raise ValueError("Firebase identity disappeared after reconciliation") from None
+        admission_email = None
+    else:
+        admission_email = normalize_verified_email(current_user.email)
+        if (
+            not current_user.email_verified
+            or admission_email is None
+            or admission_email != candidate.email_normalized
+        ):
+            raise ValueError("Firebase verified email changed after reconciliation")
+
+    identity_ref = client.collection("identities").document(candidate.firebase_uid)
+    account_ref = client.collection("accounts").document(candidate.account_id)
+    entitlement_ref = account_ref.collection("entitlements").document("current")
+    transaction = client.transaction()
+
+    @firestore.async_transactional
+    async def apply(transaction):
+        identity, account, entitlement = await asyncio.gather(
+            identity_ref.get(transaction=transaction),
+            account_ref.get(transaction=transaction),
+            entitlement_ref.get(transaction=transaction),
+        )
+        identity_data = identity.to_dict() or {}
+        account_data = account.to_dict() or {}
+        entitlement_data = entitlement.to_dict() or {}
+        if (
+            not identity.exists
+            or not account.exists
+            or not entitlement.exists
+            or identity_data.get("account_id") != candidate.account_id
+            or identity_data.get("status") != "active"
+            or account_data.get("owner_user_id") != candidate.firebase_uid
+            or account_data.get("status") != "active"
+            or "account_class" in identity_data
+            or "admission_email_normalized" in identity_data
+            or "admission_email_verified" in identity_data
+            or "entitlement_mode" in account_data
+            or "entitlement_mode" in entitlement_data
+            or not isinstance(entitlement_data.get("trial_image_limit"), int)
+            or isinstance(entitlement_data.get("trial_image_limit"), bool)
+            or entitlement_data.get("trial_image_limit", 0) < 1
+        ):
+            raise ValueError("legacy public account changed after reconciliation")
+        transaction.update(
+            identity_ref,
+            {
+                "account_class": "public",
+                "admission_email_normalized": admission_email,
+                "admission_email_verified": admission_email is not None,
+            },
+        )
+        transaction.update(account_ref, {"entitlement_mode": "trial"})
+        transaction.update(entitlement_ref, {"entitlement_mode": "trial"})
+
+    await apply(transaction)
+
+
 async def run(args: argparse.Namespace) -> None:
     client = AsyncClient(project=args.project_id)
     firebase_app = firebase_app_for_project(args.project_id)
     try:
-        report, backfills = await reconcile(
+        report, backfills, legacy_backfills = await reconcile(
             client=client,
             firebase_app=firebase_app,
             configured_limit=25,
         )
         print(json.dumps(report, indent=2, sort_keys=True))
-        has_blocker = bool(report["problems"] or report["missing_firebase_uids"])
-        if has_blocker:
+        if report["problems"]:
+            raise ValueError("reconciliation has report-and-stop findings")
+        if args.apply_legacy_public_backfill:
+            for candidate in legacy_backfills:
+                await apply_legacy_public_backfill(
+                    client=client,
+                    firebase_app=firebase_app,
+                    candidate=candidate,
+                )
+            final_report, _, remaining_legacy = await reconcile(
+                client=client,
+                firebase_app=firebase_app,
+                configured_limit=25,
+            )
+            if remaining_legacy or final_report["problems"]:
+                raise ValueError("post-legacy-backfill reconciliation did not converge")
+            print(json.dumps(final_report, indent=2, sort_keys=True))
+            return
+        if report["missing_firebase_uids"]:
             raise ValueError("reconciliation has report-and-stop findings")
         if not args.apply_email_backfill:
             print("dry_run=true")
@@ -270,12 +425,17 @@ async def run(args: argparse.Namespace) -> None:
                 firebase_app=firebase_app,
                 candidate=candidate,
             )
-        final_report, remaining = await reconcile(
+        final_report, remaining, remaining_legacy = await reconcile(
             client=client,
             firebase_app=firebase_app,
             configured_limit=25,
         )
-        if remaining or final_report["problems"] or final_report["missing_firebase_uids"]:
+        if (
+            remaining
+            or remaining_legacy
+            or final_report["problems"]
+            or final_report["missing_firebase_uids"]
+        ):
             raise ValueError("post-backfill reconciliation did not converge")
         print(json.dumps(final_report, indent=2, sort_keys=True))
     finally:

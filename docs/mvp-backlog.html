@@ -358,11 +358,21 @@
     // evidence makes individual task declarations intentionally long.
     const liveStatusOverrides = new Map([
       ["REL-003", "Needs Human Testing"],
-      ["SEC-001", "In Progress"],
-      ["SEC-002", "In Progress"],
-      ["SEC-003", "In Progress"],
+      ["SEC-001", "Needs Human Testing"],
+      ["SEC-002", "Needs Long Test"],
+      ["SEC-003", "Done"],
       ["SEC-004", "In Progress"],
-      ["SEC-008", "In Progress"],
+      ["SEC-008", "Done"],
+      ["SEC-011", "In Progress"],
+    ]);
+
+    const liveEvidenceAdditions = new Map([
+      ["SEC-001", "Deployed 28 Aug 2026 on immutable digest sha256:57641ee2c1ee23a53831d29a7dff47393f64d768888a1fe36df75e5cb4020557. Production forged-header confirmation and invoice controls were both classified untrusted, created zero purchase documents, and made zero model calls. The remaining positive aligned-Nemlig control is the human-owned real-forwarding check in MAIL-009."],
+      ["SEC-002", "Deployed 28 Aug 2026 on the exact bounded 1 CPU/512 MiB mail-worker revision. Release quality gates and forged-invoice rejection are green; keep this in Needs Long Test until a real aligned invoice and the broader deployed adversarial PDF corpus prove Linux process limits under production load."],
+      ["SEC-003", "Completed 28 Aug 2026. App Engine version sec003-20260828 is SERVING at 100 percent after the one-permission raw-object verifier role was read back. Exact usage backfill created six ledgers and the second pass verified all six unchanged. Direct production adapters proved exact retry/bytes, executable rejection, and quota charging. A real Atomic Mail message traversed App Engine inbound transport, private GCS storage, Pub/Sub, and the worker as untrusted with zero model calls. Owner API rotation, revocation, permanent old-route tombstones, stale-generation 409, and final active-address restoration all passed."],
+      ["SEC-004", "Deployment reached production on 28 Aug 2026, but the first read-only reconciliation exposed an operator-tool KeyError on legacy missing fields plus one exact pre-account-class public record and two active public records whose Firebase UIDs no longer exist. The KeyError fix, exact legacy-schema migration, and reclaimed-missing reconciliation semantics have focused regression coverage. The legacy record was migrated without deletion or counter change; the counter now truthfully matches four active public records. Data-preserving audited reclaim of the two missing-UID records is awaiting Oana's explicit Pushover approval before the counter can converge to two."],
+      ["SEC-008", "Completed 28 Aug 2026 on digest sha256:57641ee2c1ee23a53831d29a7dff47393f64d768888a1fe36df75e5cb4020557. Production /docs, /docs/oauth2-redirect, /redoc, and /openapi.json each return 404 while /health returns production/ok. The hosted app also returns CSP frame-ancestors none and X-Frame-Options DENY."],
+      ["SEC-011", "Started 28 Aug 2026. The protected release pipeline passed its full quality gate and exact-runtime verification; production Cloud Run error logs are empty. App Engine transport, forged DKIM, route lifecycle, API-doc denial, health, and browser framing controls are green. Continue after SEC-004's explicitly approved capacity repair, then rerun the final deployed tenant/auth/mail/quota/export/trace suite."],
     ]);
 
     const T = (id, title, status, phase, deps, acceptance, verification, options = {}) => ({
@@ -370,7 +380,7 @@
       owner: options.owner || "Codex",
       kind: options.kind || "MVP Core",
       priority: options.priority || "High",
-      evidence: options.evidence || "",
+      evidence: [options.evidence, liveEvidenceAdditions.get(id)].filter(Boolean).join(" "),
       blocker: options.blocker || "",
       gate: Boolean(options.gate),
     });
