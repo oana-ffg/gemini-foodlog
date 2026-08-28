@@ -126,6 +126,31 @@ The canonical production inputs are source-controlled in `infra/terraform/produc
 
 The only sensitive Terraform input is `unlimited_owner_user_ids`. Supply real Firebase UIDs only through ignored local `terraform.tfvars`; never commit identities. Pushover payloads live only in enabled Secret Manager versions for `foodlog-pushover-app-token` and `foodlog-pushover-user-key`. The Terraform configuration creates and authorizes the secret resources but does not contain their values. Camera credentials, user passwords, inbound-mail addresses, test-account identities, and promotion details also stay out of source and workflow inputs.
 
+### Identity Platform password policy
+
+New passwords must contain at least 12 characters. Existing accounts are not forced to
+upgrade at sign-in because the prototype does not yet expose a password-reset or
+password-change flow. The web signup path calls Firebase `validatePassword` so its
+feedback mirrors the live policy before account creation; Identity Platform remains the
+authoritative enforcement boundary.
+
+The pinned Google Terraform providers do not expose Identity Platform's password-policy
+configuration. Do not hide this gap in a `local-exec` resource or claim it appears in a
+Terraform plan. Instead, the source-controlled reconciler uses the official Admin REST
+API and verifies a bounded readback:
+
+```bash
+python3 infra/identity_platform/password_policy.py \
+  --project gemini-foodlog-2026 \
+  --check
+```
+
+Use `--apply` only when the exact source-controlled policy is intended for production.
+The protected production workflow performs that apply and readback before building or
+deploying a release. Custom IAM roles grant the plan identity only `firebaseauth.configs.get`
+and grant the deployment identity that read permission plus
+`firebaseauth.configs.update`; neither identity can read users or password hashes.
+
 ## Read-only production plan
 
 Local operator planning uses Application Default Credentials for Oana's authorized Google identity:

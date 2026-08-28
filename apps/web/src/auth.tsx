@@ -7,6 +7,7 @@ import {
   sendEmailVerification,
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
+  validatePassword,
   type User,
 } from "firebase/auth";
 import {
@@ -19,6 +20,10 @@ import {
   useState,
 } from "react";
 import { auth } from "./firebase";
+import {
+  createAfterPasswordValidation,
+  minimumPasswordLength,
+} from "./passwordPolicy";
 import PrototypeDataNotice from "./PrototypeDataNotice";
 import { saveSignupLaunchMailIntent } from "./signupIntent";
 
@@ -49,7 +54,8 @@ function authErrorMessage(error: unknown): string {
     case "auth/invalid-email":
       return "Enter a valid email address.";
     case "auth/weak-password":
-      return "Use a password with at least six characters.";
+    case "auth/password-does-not-meet-requirements":
+      return "Your password does not meet the current security policy.";
     case "auth/too-many-requests":
       return "Too many attempts. Wait a little and try again.";
     default:
@@ -76,7 +82,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     emailVerified,
     loading,
     signUp: async (email, password, launchMailOptIn) => {
-      const credential = await createUserWithEmailAndPassword(auth, email, password);
+      const credential = await createAfterPasswordValidation(
+        () => validatePassword(auth, password),
+        () => createUserWithEmailAndPassword(auth, email, password),
+      );
       saveSignupLaunchMailIntent(credential.user.uid, launchMailOptIn);
       await sendEmailVerification(credential.user);
     },
@@ -121,8 +130,25 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [password, setPassword] = useState("");
   const [launchMailOptIn, setLaunchMailOptIn] = useState(false);
   const [prototypeDataAcknowledged, setPrototypeDataAcknowledged] = useState(false);
+  const [signupPasswordMinimum, setSignupPasswordMinimum] = useState<number>();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
+
+  useEffect(() => {
+    let cancelled = false;
+    if (mode !== "sign-up") {
+      setSignupPasswordMinimum(undefined);
+      return () => { cancelled = true; };
+    }
+    void validatePassword(auth, "")
+      .then((status) => {
+        if (!cancelled) setSignupPasswordMinimum(minimumPasswordLength(status));
+      })
+      .catch(() => {
+        if (!cancelled) setSignupPasswordMinimum(undefined);
+      });
+    return () => { cancelled = true; };
+  }, [mode]);
 
   if (loading) {
     return <main className="auth-shell"><p role="status">Checking your session…</p></main>;
@@ -179,11 +205,18 @@ export function AuthGate({ children }: { children: ReactNode }) {
               type="password"
               autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
               required
-              minLength={6}
+              minLength={mode === "sign-up" ? signupPasswordMinimum : 6}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
             />
           </label>
+          {mode === "sign-up" ? (
+            <p className="form-hint">
+              {signupPasswordMinimum === undefined
+                ? "Password requirements are checked securely when you create the account."
+                : `Use at least ${signupPasswordMinimum} characters.`}
+            </p>
+          ) : null}
           {mode === "sign-up" ? (
             <>
               <PrototypeDataNotice />

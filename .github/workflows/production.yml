@@ -102,6 +102,10 @@ jobs:
           terraform plan -refresh=false -lock=false -detailed-exitcode -out="$RUNNER_TEMP/foodlog-production-plan.tfplan"
           terraform show -no-color "$RUNNER_TEMP/foodlog-production-plan.tfplan"
 
+      - name: Verify Identity Platform password policy
+        if: inputs.operation == 'plan'
+        run: python3 infra/identity_platform/password_policy.py --project "$GCP_PROJECT_ID" --check
+
       - name: Set up Node.js
         if: inputs.operation == 'deploy'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -124,11 +128,16 @@ jobs:
           npm run typecheck
           npm test --workspace @foodlog/web
           npm run test:hosting-config
+          python3 -m unittest infra.identity_platform.test_password_policy
           npm run build
           cd services/backend
           uv sync --frozen
           uv run ruff check .
           uv run pytest
+
+      - name: Reconcile Identity Platform password policy
+        if: inputs.operation == 'deploy'
+        run: python3 infra/identity_platform/password_policy.py --project "$GCP_PROJECT_ID" --apply
 
       - name: Build and push the exact backend commit
         if: inputs.operation == 'deploy'

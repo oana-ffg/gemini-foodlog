@@ -192,6 +192,18 @@ dedicated authentication and UI tasks. The App Check API remains available, but
 provider configuration and enforcement are deliberately deferred until a hard
 assessment-spend boundary exists.
 
+Identity Platform also enforces a 12-character minimum on new passwords without
+forcing existing accounts to upgrade at sign-in. The pinned Google providers do not
+expose the platform's password-policy configuration, so the repository owns that one
+provider gap through `infra/identity_platform/password_policy.py`. The idempotent tool
+uses the official Admin REST API, requests only `passwordPolicyConfig`, patches with the
+exact `updateMask=passwordPolicyConfig`, and fails unless readback matches the
+source-controlled policy. The protected production workflow checks the policy during
+plans and reconciles it during deployments. Its plan identity receives only
+`firebaseauth.configs.get`; its deployment identity receives that permission plus
+`firebaseauth.configs.update`. UI signup validation reads the live Firebase policy,
+while sign-in and reauthentication continue to accept existing credentials.
+
 ## Production API
 
 `cloud_run.tf` owns the browser-reachable API transport. The application remains

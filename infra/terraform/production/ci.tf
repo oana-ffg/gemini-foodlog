@@ -96,6 +96,32 @@ resource "google_project_iam_custom_role" "ci_cloud_run_operation_reader" {
   }
 }
 
+resource "google_project_iam_custom_role" "ci_identity_policy_reader" {
+  project     = var.project_id
+  role_id     = "foodlogIdentityPolicyReader"
+  title       = "FoodLog Identity policy reader"
+  description = "Read only the Identity Platform configuration needed to verify password policy."
+  permissions = ["firebaseauth.configs.get"]
+  stage       = "GA"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "google_project_iam_custom_role" "ci_identity_policy_writer" {
+  project     = var.project_id
+  role_id     = "foodlogIdentityPolicyWriter"
+  title       = "FoodLog Identity policy writer"
+  description = "Update only the source-controlled Identity Platform password policy."
+  permissions = ["firebaseauth.configs.update"]
+  stage       = "GA"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 resource "google_project_iam_member" "ci_deploy_service_user" {
   project = var.project_id
   role    = google_project_iam_custom_role.ci_service_user.name
@@ -105,6 +131,24 @@ resource "google_project_iam_member" "ci_deploy_service_user" {
 resource "google_project_iam_member" "ci_deploy_cloud_run_operation_reader" {
   project = var.project_id
   role    = google_project_iam_custom_role.ci_cloud_run_operation_reader.name
+  member  = "serviceAccount:${google_service_account.runtime["ci_deploy"].email}"
+}
+
+resource "google_project_iam_member" "ci_infra_identity_policy_reader" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.ci_identity_policy_reader.name
+  member  = "serviceAccount:${google_service_account.runtime["ci_infra"].email}"
+}
+
+resource "google_project_iam_member" "ci_deploy_identity_policy_reader" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.ci_identity_policy_reader.name
+  member  = "serviceAccount:${google_service_account.runtime["ci_deploy"].email}"
+}
+
+resource "google_project_iam_member" "ci_deploy_identity_policy_writer" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.ci_identity_policy_writer.name
   member  = "serviceAccount:${google_service_account.runtime["ci_deploy"].email}"
 }
 

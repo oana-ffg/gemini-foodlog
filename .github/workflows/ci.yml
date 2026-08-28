@@ -40,6 +40,9 @@ jobs:
       - name: Test Firebase Hosting security configuration
         run: npm run test:hosting-config
 
+      - name: Test Identity Platform password-policy reconciliation
+        run: python3 -m unittest infra.identity_platform.test_password_policy
+
       - name: Build
         run: npm run build
 
