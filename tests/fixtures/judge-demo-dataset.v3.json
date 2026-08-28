@@ -38,7 +38,7 @@
     },
     {
       "key": "cat-negative-control",
-      "attempt": 2,
+      "attempt": 3,
       "fixture": "images/adversarial/synthetic-cat-on-counter.png",
       "sha256": "cdace422e5141d6813f6f8de311b69cf75a48883c61a0fa021fb3aa621fd1133",
       "captured_at": "2026-08-28T09:00:00+02:00",

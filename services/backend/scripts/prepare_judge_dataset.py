@@ -36,7 +36,7 @@ from scripts.synthetic_dataset_support import seed_synthetic_meal
 
 DATASET_CLIENT_VERSION = "judge-demo-v1"
 PATTERN_CLIENT_VERSION = "judge-demo-synthetic-pattern-v1"
-MAX_MODEL_TRACES = 21
+MAX_MODEL_TRACES = 25
 
 
 class ContextNoteSpec(BaseModel):
