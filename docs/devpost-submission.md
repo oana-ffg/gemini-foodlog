@@ -151,8 +151,9 @@ reasoning as a product claim.
   it is optional and not a general retailer parser.
 - The judge account credentials and provisioned production records are release
   artifacts and are not stored in this repository. The reviewed fixture bytes,
-  hashes, and declarative seed manifest are source-controlled for auditability;
-  provisioning and verification must finish before submission.
+  hashes, and declarative seed manifest are source-controlled for auditability.
+  Provisioning and automatic four-scenario verification are complete; the final
+  judge-style browser login remains in the consolidated human test pass.
 - The known promotional Google Cloud credit expires on 2026-09-24 while judging
   ends on 2026-10-01. The project has hard usage controls, but availability for
   that final seven-day interval still requires the explicit pre-expiry decision
@@ -215,9 +216,11 @@ the same prepared evidence remains useful to every reviewer:
    prepared read-only workflow above is preferred. Do not start an unattended
    motion test during a short judge session.
 
-REL-003 owns creating this dedicated identity, loading only reviewed synthetic
-evidence, and replaying every step above. Until that ticket passes, these are the
-accurate intended steps, not a claim that the judge dataset already exists.
+REL-003 created the dedicated identity and loaded only reviewed synthetic
+evidence. Its automatic production verification completed all four real-model
+scenarios with no call-cap skips while preserving the prepared read-only state.
+The remaining REL-003 check is a human judge-style browser login through the
+steps above; the account and dataset already exist.
 
 ## Submission rules reconciliation
 
@@ -229,7 +232,7 @@ accurate intended steps, not a claim that the judge dataset already exists.
 | Free working access through 1 Oct 2026 | Hosted Firebase URL, scale-to-zero runtime, account/trial caps, and judge-availability runbook | REL-002 needs the post-credit-expiry operating decision. |
 | English description covering features, technologies, data sources, findings, and learnings | This document | Fresh-reader and final-form review. |
 | Repository URL and spin-up instructions | Repository above; README and deployment guide | REL-008 needs final repository-sharing approval. |
-| Architecture diagram | `docs/architecture-diagram.md`, locally rendered and implementation-audited | Reconfirm its GitHub render after the next safe push. |
+| Architecture diagram | `docs/architecture-diagram.md`, locally rendered, implementation-audited, and publicly available through the repository link above | Reconfirm the final diagram against the release shown in the video. |
 | Public demonstration video, no longer than four minutes, showing Google Cloud execution | REL-009 and REL-010 | Record, privacy-review, publish, and add the final URL. |
 | English application and submission materials | English UI, documentation, test plan, and planned narration | Oana completes the final human language review. |
 | Privacy and IP-safe media | Synthetic judge data and explicit media review tickets | REL-011 remains Oana's frame-by-frame publication gate. |
