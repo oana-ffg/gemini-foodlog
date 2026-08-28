@@ -51,6 +51,7 @@ def test_trace_request_includes_the_application_owned_prompt_tools_and_schema() 
         "load_artifacts",
     ]
     assert "title" not in request["response_schema"]
+    assert "allowed_actions" not in request["response_schema"]["properties"]
     assert request["response_schema"]["properties"]["schema_version"]["const"] == (
         "activity-meal-inference-v1"
     )
@@ -65,7 +66,7 @@ def test_trace_request_includes_the_application_owned_prompt_tools_and_schema() 
 
 
 def test_prompt_explicitly_couples_questions_to_uncertain_confidence() -> None:
-    assert PROMPT_VERSION == "food-event-v11"
+    assert PROMPT_VERSION == "food-event-v12"
     assert "Follow this exact bounded tool-turn plan" in INSTRUCTION
     assert "Never call more than four tools in one turn" in INSTRUCTION
     assert "select at most two relevant pages" in INSTRUCTION

@@ -362,6 +362,29 @@ def _model_facing_schema(value: Any) -> Any:
 class ActivityMealInferenceModelOutputV1(ActivityMealInferenceV1):
     """Strict inference result with a complexity-reduced Vertex response schema."""
 
+    @model_validator(mode="before")
+    @classmethod
+    def derive_allowed_actions_from_state(cls, value: Any) -> Any:
+        """Keep deterministic UI policy out of the probabilistic model contract."""
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        if normalized.get("kind") == InferenceKind.TENTATIVE_MEAL.value:
+            normalized["allowed_actions"] = [
+                UserAction.CONFIRM_GUESS.value,
+                UserAction.CORRECT.value,
+                UserAction.DISCARD_NOT_COOKING.value,
+            ]
+        elif normalized.get("kind") in {
+            InferenceKind.UNKNOWN_ACTIVITY.value,
+            InferenceKind.LIKELY_NON_COOKING.value,
+        }:
+            normalized["allowed_actions"] = [
+                UserAction.CORRECT.value,
+                UserAction.DISCARD_NOT_COOKING.value,
+            ]
+        return normalized
+
     @model_validator(mode="after")
     def enforce_new_output_semantics(self) -> ActivityMealInferenceModelOutputV1:
         self._enforce_new_output_context_identity_guard()
@@ -369,4 +392,11 @@ class ActivityMealInferenceModelOutputV1(ActivityMealInferenceV1):
 
     @classmethod
     def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return _model_facing_schema(super().model_json_schema(*args, **kwargs))
+        schema = super().model_json_schema(*args, **kwargs)
+        properties = schema.get("properties")
+        if isinstance(properties, dict):
+            properties.pop("allowed_actions", None)
+        required = schema.get("required")
+        if isinstance(required, list):
+            schema["required"] = [item for item in required if item != "allowed_actions"]
+        return _model_facing_schema(schema)

@@ -109,11 +109,60 @@ def test_model_facing_schema_reduces_complexity_without_weakening_validation() -
     for keyword in ("maxLength", "maxItems", "minimum", "pattern", "title"):
         assert keyword in strict_schema
         assert keyword not in model_schema
+    assert "allowed_actions" in json.loads(strict_schema)["properties"]
+    assert "allowed_actions" not in json.loads(model_schema)["properties"]
 
     invalid_payload = base_payload()
     invalid_payload["source_capture_ids"] = []
     with pytest.raises(ValidationError):
         ActivityMealInferenceModelOutputV1.model_validate(invalid_payload)
+
+
+@pytest.mark.parametrize(
+    ("kind", "best_guess", "components", "expected_actions"),
+    [
+        (
+            "tentative_meal",
+            "Air-fried steak",
+            None,
+            ["confirm_guess", "correct", "discard_not_cooking"],
+        ),
+        (
+            "unknown_activity",
+            None,
+            [],
+            ["correct", "discard_not_cooking"],
+        ),
+        (
+            "likely_non_cooking",
+            "Cat jumped onto the counter",
+            [],
+            ["correct", "discard_not_cooking"],
+        ),
+    ],
+)
+def test_model_output_derives_ui_actions_from_inference_state(
+    kind: str,
+    best_guess: str | None,
+    components: list[object] | None,
+    expected_actions: list[str],
+) -> None:
+    payload = base_payload()
+    payload.update(kind=kind, best_guess=best_guess)
+    if components is not None:
+        payload.update(
+            confidence="uncertain" if kind == "unknown_activity" else "likely",
+            components=components,
+            contextual_evidence=[],
+            deductions=[],
+            alternatives=[],
+            question=None,
+        )
+    payload.pop("allowed_actions")
+
+    inference = ActivityMealInferenceModelOutputV1.model_validate(payload)
+
+    assert inference.allowed_actions == expected_actions
 
 
 def test_planned_duck_context_can_justify_a_material_chicken_versus_duck_question() -> None:
