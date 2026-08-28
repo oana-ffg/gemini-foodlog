@@ -221,6 +221,12 @@ class PatternDetectionService:
                 if max(local_support_times) - min(local_support_times) < MINIMUM_OBSERVATION_SPAN:
                     continue
                 display_value = " or ".join(display_labels[label] for label in selected_labels)
+                value_label_tokens = _value_label_token_sets(display_value)
+                if not value_label_tokens or any(
+                    any(label_tokens <= _meal_tokens(meal) for label_tokens in value_label_tokens)
+                    for meal, _ in counters
+                ):
+                    continue
                 if len(conditions) == 1:
                     statement = f"you usually eat {display_value} on {conditions[0].title()}s"
                 else:

@@ -30,6 +30,7 @@ async def seed_meal(
     camera_id: str,
     title: str,
     local_at: datetime,
+    alternatives: list[str] | None = None,
 ) -> str:
     assert local_at.utcoffset() is not None
     capture_id = str(uuid4())
@@ -69,7 +70,7 @@ async def seed_meal(
             confidence=Confidence.LIKELY,
             components=[],
             observations=[f"The retained event was labelled {title}."],
-            alternatives=[],
+            alternatives=alternatives or [],
             rationale="Synthetic dated pattern test evidence.",
         ),
     )
@@ -187,6 +188,42 @@ def test_detector_distinguishes_labels_that_share_descriptive_prefixes() -> None
         )
         assert len(thursday.pattern_supporting_examples) == 3
         assert len(thursday.pattern_counterexamples) == 1
+
+    asyncio.run(scenario())
+
+
+def test_detector_skips_a_title_counterexample_that_still_names_the_claim() -> None:
+    async def scenario() -> None:
+        repository, account_id, camera_id = await repository_with_owner()
+        for day in (6, 13, 20):
+            await seed_meal(
+                repository,
+                account_id=account_id,
+                owner_user_id="pattern-owner",
+                camera_id=camera_id,
+                title="Steak",
+                local_at=local_time(day),
+            )
+        await seed_meal(
+            repository,
+            account_id=account_id,
+            owner_user_id="pattern-owner",
+            camera_id=camera_id,
+            title="Ambiguous red meat",
+            alternatives=["Steak", "Pork"],
+            local_at=local_time(27),
+        )
+
+        questions = await PatternDetectionService(repository).detect_and_propose(
+            account_id=account_id,
+            max_proposals=5,
+        )
+
+        assert not any(
+            question.pattern_claim is not None
+            and question.pattern_claim.value == "steak"
+            for question in questions
+        )
 
     asyncio.run(scenario())
 
