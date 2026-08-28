@@ -14,6 +14,7 @@ PROCESSING_STAGES = {
     "analysis_pending",
     "analysis_active",
     "analysis_retrying",
+    "evaluation_complete",
     "complete",
     "attention_required",
 }
@@ -59,6 +60,15 @@ def smoke(args: argparse.Namespace) -> None:
         assert all(item["attempt_count"] >= 0 for item in processing)
         assert all(
             item["stage"] != "complete" or item["retry_at"] is None
+            for item in processing
+        )
+        assert all(
+            item["stage"] != "evaluation_complete"
+            or (
+                item["attempt_count"] == 0
+                and item["retry_at"] is None
+                and item["latest_failure_code"] is None
+            )
             for item in processing
         )
 
