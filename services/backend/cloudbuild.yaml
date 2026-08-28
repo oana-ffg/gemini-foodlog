@@ -24,6 +24,7 @@ steps:
 
         import foodlog_backend
         import foodlog_backend.ai_traces
+        import foodlog_backend.export_worker_main
         import foodlog_backend.firestore_repository_smoke
         import foodlog_backend.image_worker_app
         import foodlog_backend.main

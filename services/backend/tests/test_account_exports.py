@@ -10,7 +10,7 @@ from foodlog_backend.errors import (
     AccountExportNotFound,
     AccountExportRateLimited,
 )
-from foodlog_backend.models import AuditAction, JobKind, JobStatus
+from foodlog_backend.models import AccountExport, AuditAction, JobKind, JobStatus
 from foodlog_backend.repository import InMemoryRepository
 from foodlog_backend.settings import Settings
 
@@ -69,6 +69,22 @@ def test_export_request_atomically_freezes_snapshot_job_and_audit() -> None:
         assert "export-request-0001" not in repr(repo.__dict__)
 
     asyncio.run(scenario())
+
+
+def test_pending_account_export_round_trips_explicit_null_timestamps() -> None:
+    requested_at = datetime.now(UTC)
+    account_export = AccountExport(
+        id="a" * 64,
+        account_id="account-a",
+        requested_by_user_id="owner-a",
+        job_id=f"account-export-{'a' * 64}",
+        snapshot_at=requested_at,
+        requested_at=requested_at,
+    )
+
+    restored = AccountExport.model_validate(account_export.model_dump(mode="python"))
+
+    assert restored == account_export
 
 
 def test_concurrent_export_requests_leave_exactly_one_active_job() -> None:

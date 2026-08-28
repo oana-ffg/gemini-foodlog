@@ -447,7 +447,9 @@ class AccountExport(BaseModel):
         "failed_at",
     )
     @classmethod
-    def timestamps_have_timezone(cls, value: datetime) -> datetime:
+    def timestamps_have_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("account export timestamps must include a UTC offset")
         return value.astimezone(UTC)
