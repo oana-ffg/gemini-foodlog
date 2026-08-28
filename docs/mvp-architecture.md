@@ -323,6 +323,18 @@ invoice subject and matching PDF filename, so the worker records that exact iden
 as the final document's order and invoice aliases. Unrelated or incomplete Nemlig mail
 remains retained raw evidence but is not turned into a purchase.
 
+Final-invoice PDF parsing runs only after authentication and classification, in a fresh
+credential-scrubbed subprocess rather than the sole HTTP worker process. The parent
+caps decoded input at 8 MiB and enforces a five-second wall timeout with process-group
+termination. The child runs with Linux address-space, CPU, core-dump, output-file, and
+file-descriptor limits; parsing also caps PDF objects, decoded-stream bytes and
+expansion ratio, pages, page geometry, layout objects, words, rows, and serialized
+output. A legitimate parse completes before the
+purchase identity is attached. Deterministic format or resource-budget rejection is
+stored as an immutable account/mail/content-bound processing disposition and
+acknowledged; process launch, protocol, storage, and database failures remain retryable
+through Pub/Sub and its dead-letter policy.
+
 ## 7. Agent reasoning workflow
 
 The MVP accesses Gemini 3.6 Flash through the `eu` Vertex AI multi-region using Google ADK in the Python worker. Production uses the Cloud Run service identity; local development uses Application Default Credentials. The backend does not implement an AI Studio API-key path, a multi-model routing pre-pass, or a separate blind-vision pass. The model ID (`FOODLOG_MODEL`) and Vertex location (`GOOGLE_CLOUD_LOCATION`) remain configuration so evaluation can compare eligible regional stable versions without a code change.

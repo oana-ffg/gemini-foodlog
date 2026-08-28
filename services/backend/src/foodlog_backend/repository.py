@@ -49,6 +49,7 @@ from .errors import (
     QuestionSuperseded,
     RawMailAuthenticationConflict,
     RawMailNotFound,
+    RawMailProcessingConflict,
     TrialQuotaExhausted,
     UserContextNoteNotFound,
     WaitlistEntryNotFound,
@@ -146,6 +147,7 @@ from .models import (
     QuestionStatus,
     RawMailAuthentication,
     RawMailAuthenticationOutcome,
+    RawMailProcessingDisposition,
     UserContextNote,
     UserContextNoteCreate,
     UserContextNoteStatus,
@@ -687,6 +689,18 @@ class Repository(Protocol):
         authentication: RawMailAuthentication,
     ) -> RawMailAuthentication: ...
 
+    async def raw_mail_processing_disposition(
+        self,
+        *,
+        account_id: str,
+        raw_mail_id: str,
+    ) -> RawMailProcessingDisposition | None: ...
+
+    async def record_raw_mail_processing_disposition(
+        self,
+        disposition: RawMailProcessingDisposition,
+    ) -> RawMailProcessingDisposition: ...
+
     async def attach_purchase_document(
         self,
         candidate: PurchaseDocumentCandidate,
@@ -1169,6 +1183,9 @@ class InMemoryRepository:
         self._published_raw_mail: dict[tuple[str, str], str] = {}
         self._raw_mail_authentication: dict[
             tuple[str, str], RawMailAuthentication
+        ] = {}
+        self._raw_mail_processing: dict[
+            tuple[str, str], RawMailProcessingDisposition
         ] = {}
         self._purchases: dict[tuple[str, str], Purchase] = {}
         self._purchase_documents: dict[tuple[str, str], PurchaseDocument] = {}
@@ -1811,6 +1828,42 @@ class InMemoryRepository:
                 return existing.model_copy(deep=True)
             self._raw_mail_authentication[key] = authentication.model_copy(deep=True)
             return authentication.model_copy(deep=True)
+
+    async def raw_mail_processing_disposition(
+        self,
+        *,
+        account_id: str,
+        raw_mail_id: str,
+    ) -> RawMailProcessingDisposition | None:
+        async with self._lock:
+            disposition = self._raw_mail_processing.get((account_id, raw_mail_id))
+            return disposition.model_copy(deep=True) if disposition else None
+
+    async def record_raw_mail_processing_disposition(
+        self,
+        disposition: RawMailProcessingDisposition,
+    ) -> RawMailProcessingDisposition:
+        async with self._lock:
+            key = (disposition.account_id, disposition.raw_mail_id)
+            if self._published_raw_mail.get(key) != disposition.raw_content_sha256:
+                raise RawMailNotFound
+            authentication = self._raw_mail_authentication.get(key)
+            if (
+                authentication is None
+                or authentication.raw_content_sha256 != disposition.raw_content_sha256
+                or authentication.outcome
+                != RawMailAuthenticationOutcome.ALIGNED_DKIM_PASS
+            ):
+                raise RawMailNotFound
+            existing = self._raw_mail_processing.get(key)
+            if existing is not None:
+                if existing.model_dump(exclude={"created_at"}) != disposition.model_dump(
+                    exclude={"created_at"}
+                ):
+                    raise RawMailProcessingConflict
+                return existing.model_copy(deep=True)
+            self._raw_mail_processing[key] = disposition.model_copy(deep=True)
+            return disposition.model_copy(deep=True)
 
     async def attach_purchase_document(
         self,

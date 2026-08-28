@@ -139,8 +139,9 @@ def visible_message_text(message: Message) -> str:
     return "\n".join(plain or html)[:MAX_CLASSIFIER_TEXT_CHARS]
 
 
-def _valid_invoice_attachment(message: Message, reference: str) -> bool:
+def validated_invoice_pdf_attachment(message: Message, reference: str) -> bytes | None:
     expected_filename = f"faktura - {reference}.pdf"
+    matches: list[bytes] = []
     for part in message.walk():
         filename = " ".join((part.get_filename() or "").casefold().split())
         if filename != expected_filename:
@@ -154,8 +155,8 @@ def _valid_invoice_attachment(message: Message, reference: str) -> bool:
             continue
         payload = part.get_payload(decode=True)
         if isinstance(payload, bytes) and payload.startswith(b"%PDF-"):
-            return True
-    return False
+            matches.append(payload)
+    return matches[0] if len(matches) == 1 else None
 
 
 def classify_nemlig_purchase_email(
@@ -216,7 +217,7 @@ def classify_nemlig_purchase_email(
         if (
             "din ordre er på vej" in body.casefold()
             and "faktura" in body.casefold()
-            and _valid_invoice_attachment(message, reference)
+            and validated_invoice_pdf_attachment(message, reference) is not None
         ):
             return PurchaseMailClassification(
                 outcome=MailClassificationOutcome.PURCHASE_DOCUMENT,

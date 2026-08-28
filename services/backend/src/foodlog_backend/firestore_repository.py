@@ -49,6 +49,7 @@ from .errors import (
     QuestionSuperseded,
     RawMailAuthenticationConflict,
     RawMailNotFound,
+    RawMailProcessingConflict,
     TrialQuotaExhausted,
     UserContextNoteNotFound,
     WaitlistEntryNotFound,
@@ -139,6 +140,7 @@ from .models import (
     QuestionStatus,
     RawMailAuthentication,
     RawMailAuthenticationOutcome,
+    RawMailProcessingDisposition,
     UserContextNote,
     UserContextNoteCreate,
     UserContextNoteStatus,
@@ -1138,6 +1140,73 @@ class FirestoreRepository:
                 return existing
             transaction.create(authentication_ref, _document(authentication))
             return authentication
+
+        return await record(transaction)
+
+    async def raw_mail_processing_disposition(
+        self,
+        *,
+        account_id: str,
+        raw_mail_id: str,
+    ) -> RawMailProcessingDisposition | None:
+        snapshot = await self._collection(account_id, "raw_mail_processing").document(
+            raw_mail_id
+        ).get()
+        if not snapshot.exists:
+            return None
+        disposition = _model(snapshot, RawMailProcessingDisposition)
+        if disposition.account_id != account_id or disposition.raw_mail_id != raw_mail_id:
+            raise RawMailProcessingConflict
+        return disposition
+
+    async def record_raw_mail_processing_disposition(
+        self,
+        disposition: RawMailProcessingDisposition,
+    ) -> RawMailProcessingDisposition:
+        raw_mail_ref = self._collection(disposition.account_id, "raw_mail").document(
+            disposition.raw_mail_id
+        )
+        authentication_ref = self._collection(
+            disposition.account_id, "raw_mail_authentication"
+        ).document(disposition.raw_mail_id)
+        disposition_ref = self._collection(
+            disposition.account_id, "raw_mail_processing"
+        ).document(disposition.raw_mail_id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def record(transaction):
+            raw_mail_snapshot = await raw_mail_ref.get(transaction=transaction)
+            authentication_snapshot = await authentication_ref.get(transaction=transaction)
+            existing_snapshot = await disposition_ref.get(transaction=transaction)
+            raw_mail_data = raw_mail_snapshot.to_dict() or {}
+            if (
+                not raw_mail_snapshot.exists
+                or raw_mail_data.get("account_id") != disposition.account_id
+                or raw_mail_data.get("status") not in {"stored", "published"}
+                or raw_mail_data.get("content_sha256") != disposition.raw_content_sha256
+            ):
+                raise RawMailNotFound
+            if not authentication_snapshot.exists:
+                raise RawMailNotFound
+            authentication = _model(authentication_snapshot, RawMailAuthentication)
+            if (
+                authentication.account_id != disposition.account_id
+                or authentication.raw_mail_id != disposition.raw_mail_id
+                or authentication.raw_content_sha256 != disposition.raw_content_sha256
+                or authentication.outcome
+                != RawMailAuthenticationOutcome.ALIGNED_DKIM_PASS
+            ):
+                raise RawMailNotFound
+            if existing_snapshot.exists:
+                existing = _model(existing_snapshot, RawMailProcessingDisposition)
+                if existing.model_dump(exclude={"created_at"}) != disposition.model_dump(
+                    exclude={"created_at"}
+                ):
+                    raise RawMailProcessingConflict
+                return existing
+            transaction.create(disposition_ref, _document(disposition))
+            return disposition
 
         return await record(transaction)
 

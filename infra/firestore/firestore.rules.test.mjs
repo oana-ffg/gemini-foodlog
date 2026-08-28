@@ -53,6 +53,7 @@ const DOCUMENT_PATHS = [
   "accounts/account-a/purchase_reconciliations/purchase-a",
   "accounts/account-a/raw_mail/mail-a",
   "accounts/account-a/raw_mail_authentication/mail-a",
+  "accounts/account-a/raw_mail_processing/mail-a",
   "accounts/account-a/traces/trace-a",
   "accounts/account-a/jobs/job-a",
   "accounts/account-a/exports/export-a",
@@ -76,6 +77,7 @@ const COLLECTION_GROUPS = [
   "purchase_charges",
   "purchase_reconciliations",
   "raw_mail_authentication",
+  "raw_mail_processing",
   "jobs",
 ];
 

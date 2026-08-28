@@ -58,6 +58,10 @@ class RawMailAuthenticationConflict(FoodLogError):
     pass
 
 
+class RawMailProcessingConflict(FoodLogError):
+    pass
+
+
 class PurchaseIdentityConflict(FoodLogError):
     pass
 

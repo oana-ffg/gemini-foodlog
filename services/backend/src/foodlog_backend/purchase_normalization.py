@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections import defaultdict
 from collections.abc import Iterable
@@ -12,6 +13,9 @@ from io import BytesIO
 from unicodedata import normalize as unicode_normalize
 
 import pdfplumber
+from pdfminer.pdfpage import PDFPage
+from pdfminer.pdftypes import PDFStream
+from pdfplumber.page import Page
 
 from .models import (
     ParsedPurchaseDocument,
@@ -29,9 +33,23 @@ from .models import (
     PurchaseReconciliationDisposition,
     utc_now,
 )
-from .purchase_mail import visible_message_text
+from .purchase_mail import validated_invoice_pdf_attachment, visible_message_text
+from .purchase_pdf_isolation import parse_invoice_pdf_isolated
+from .purchase_pdf_limits import (
+    MAX_INVOICE_DECODED_STREAM_BYTES,
+    MAX_INVOICE_LAYOUT_OBJECTS_PER_PAGE,
+    MAX_INVOICE_LAYOUT_OBJECTS_TOTAL,
+    MAX_INVOICE_PAGE_DIMENSION_POINTS,
+    MAX_INVOICE_PDF_BYTES,
+    MAX_INVOICE_PDF_OBJECTS,
+    MAX_INVOICE_PDF_PAGES,
+    MAX_INVOICE_ROWS_TOTAL,
+    MAX_INVOICE_STREAM_EXPANSION_RATIO,
+    MAX_INVOICE_WORDS_TOTAL,
+    PARSER_VERSION,
+    PurchasePdfRejected,
+)
 
-PARSER_VERSION = "nemlig-purchase-v1"
 MONEY_PATTERN = re.compile(
     r"^(?:kr\.?\s*)?(-?[0-9.]+,[0-9]{2})(?:\s*kr\.?)?$",
     re.IGNORECASE,
@@ -153,15 +171,13 @@ def parse_order_confirmation(raw_message: bytes) -> ParsedPurchaseDocument:
     )
 
 
-def _invoice_pdf(message: Message) -> bytes:
-    for part in message.walk():
-        filename = " ".join((part.get_filename() or "").casefold().split())
-        if not filename.startswith("faktura - ") or not filename.endswith(".pdf"):
-            continue
-        payload = part.get_payload(decode=True)
-        if isinstance(payload, bytes) and payload.startswith(b"%PDF-"):
-            return payload
-    raise ValueError("final invoice has no validated PDF attachment")
+def _invoice_pdf(message: Message, *, invoice_reference: str) -> bytes:
+    payload = validated_invoice_pdf_attachment(message, invoice_reference)
+    if payload is None:
+        raise ValueError("final invoice has no unique validated PDF attachment")
+    if len(payload) > MAX_INVOICE_PDF_BYTES:
+        raise PurchasePdfRejected("pdf_bytes_exceeded")
+    return payload
 
 
 InvoiceRow = tuple[str, str, str, str, str, str]
@@ -250,11 +266,62 @@ def _words_to_invoice_row(
 def _invoice_rows(pdf: bytes) -> list[InvoiceRow]:
     try:
         with pdfplumber.open(BytesIO(pdf)) as document:
-            if not 1 <= len(document.pages) <= 20:
-                raise ValueError("invoice PDF page count is outside the accepted range")
+            object_ids: set[int] = set()
+            for xref in document.doc.xrefs:
+                for object_id in xref.get_objids():
+                    object_ids.add(object_id)
+                    if len(object_ids) > MAX_INVOICE_PDF_OBJECTS:
+                        raise PurchasePdfRejected("pdf_object_count_exceeded")
+            decoded_stream_bytes = 0
+            for object_id in object_ids:
+                value = document.doc.getobj(object_id)
+                if not isinstance(value, PDFStream):
+                    continue
+                raw_stream_bytes = len(value.rawdata or b"")
+                decoded_bytes = len(value.get_data())
+                decoded_stream_bytes += decoded_bytes
+                if decoded_stream_bytes > MAX_INVOICE_DECODED_STREAM_BYTES:
+                    raise PurchasePdfRejected("pdf_decoded_stream_bytes_exceeded")
+                if decoded_bytes > max(raw_stream_bytes, 1) * MAX_INVOICE_STREAM_EXPANSION_RATIO:
+                    raise PurchasePdfRejected("pdf_stream_expansion_exceeded")
             invoice_rows = []
-            for page in document.pages:
-                rows = _group_words_by_row(page.extract_words())
+            total_layout_objects = 0
+            total_words = 0
+            doctop = 0
+            page_count = 0
+            for page_object in PDFPage.create_pages(document.doc):
+                page_count += 1
+                if page_count > MAX_INVOICE_PDF_PAGES:
+                    raise PurchasePdfRejected("pdf_page_count_exceeded")
+                page = Page(
+                    document,
+                    page_object,
+                    page_number=page_count,
+                    initial_doctop=doctop,
+                )
+                if (
+                    not math.isfinite(float(page.width))
+                    or not math.isfinite(float(page.height))
+                    or page.width <= 0
+                    or page.height <= 0
+                    or page.width > MAX_INVOICE_PAGE_DIMENSION_POINTS
+                    or page.height > MAX_INVOICE_PAGE_DIMENSION_POINTS
+                ):
+                    raise PurchasePdfRejected("pdf_page_geometry_exceeded")
+                doctop += page.height
+                page_layout_objects = sum(len(items) for items in page.objects.values())
+                total_layout_objects += page_layout_objects
+                if page_layout_objects > MAX_INVOICE_LAYOUT_OBJECTS_PER_PAGE:
+                    raise PurchasePdfRejected("pdf_page_layout_objects_exceeded")
+                if total_layout_objects > MAX_INVOICE_LAYOUT_OBJECTS_TOTAL:
+                    raise PurchasePdfRejected("pdf_layout_objects_exceeded")
+                words = page.extract_words()
+                total_words += len(words)
+                if total_words > MAX_INVOICE_WORDS_TOTAL:
+                    raise PurchasePdfRejected("pdf_word_count_exceeded")
+                rows = _group_words_by_row(words)
+                if len(invoice_rows) + len(rows) > MAX_INVOICE_ROWS_TOTAL:
+                    raise PurchasePdfRejected("pdf_row_count_exceeded")
                 header_index = next(
                     (
                         index
@@ -270,6 +337,8 @@ def _invoice_rows(pdf: bytes) -> list[InvoiceRow]:
                 invoice_rows.extend(
                     _words_to_invoice_row(row, edges) for row in rows[header_index + 1 :]
                 )
+            if page_count == 0:
+                raise PurchasePdfRejected("pdf_page_count_invalid")
     except Exception as error:
         if isinstance(error, ValueError):
             raise
@@ -352,19 +421,34 @@ def parse_invoice_rows(rows: Iterable[InvoiceRow]) -> ParsedPurchaseDocument:
     )
 
 
-def parse_final_invoice(raw_message: bytes) -> ParsedPurchaseDocument:
-    return parse_invoice_rows(_invoice_rows(_invoice_pdf(_message(raw_message))))
+def parse_final_invoice(
+    raw_message: bytes,
+    *,
+    invoice_reference: str,
+) -> ParsedPurchaseDocument:
+    return parse_invoice_pdf_isolated(
+        _invoice_pdf(_message(raw_message), invoice_reference=invoice_reference)
+    )
+
+
+def parse_invoice_pdf(pdf: bytes) -> ParsedPurchaseDocument:
+    if not pdf or len(pdf) > MAX_INVOICE_PDF_BYTES:
+        raise PurchasePdfRejected("pdf_bytes_exceeded")
+    return parse_invoice_rows(_invoice_rows(pdf))
 
 
 def parse_purchase_document(
     raw_message: bytes,
     *,
     kind: PurchaseDocumentKind,
+    invoice_reference: str | None = None,
 ) -> ParsedPurchaseDocument:
     if kind == PurchaseDocumentKind.ORDER_CONFIRMATION:
         return parse_order_confirmation(raw_message)
     if kind == PurchaseDocumentKind.FINAL_RECEIPT:
-        return parse_final_invoice(raw_message)
+        if invoice_reference is None:
+            raise ValueError("final invoice reference is required")
+        return parse_final_invoice(raw_message, invoice_reference=invoice_reference)
     raise ValueError("unknown purchase documents cannot be normalized")
 
 

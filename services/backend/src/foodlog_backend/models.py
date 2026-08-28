@@ -383,6 +383,10 @@ class RawMailAuthenticationOutcome(StrEnum):
     UNTRUSTED = "untrusted"
 
 
+class RawMailProcessingOutcome(StrEnum):
+    TERMINAL_REJECTED = "terminal_rejected"
+
+
 class PurchaseItemDisposition(StrEnum):
     ORDERED = "ordered"
     DELIVERED = "delivered"
@@ -428,6 +432,35 @@ class RawMailAuthentication(BaseModel):
                 raise ValueError("trusted raw mail requires signed From and Subject headers")
         elif self.signer_domain is not None or self.signed_headers:
             raise ValueError("untrusted raw mail cannot contain trusted-signature evidence")
+        return self
+
+
+class RawMailProcessingDisposition(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = 1
+    id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    account_id: str = Field(min_length=1, max_length=128)
+    raw_mail_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    raw_content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    outcome: Literal[RawMailProcessingOutcome.TERMINAL_REJECTED]
+    phase: Literal["purchase_pdf"] = "purchase_pdf"
+    purchase_document_kind: Literal[PurchaseDocumentKind.FINAL_RECEIPT]
+    failure_code: str = Field(pattern=r"^pdf_[a-z0-9_]{1,79}$")
+    processor_version: str = Field(min_length=1, max_length=80)
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("created_at")
+    @classmethod
+    def created_at_has_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("raw-mail processing timestamps must include a UTC offset")
+        return value.astimezone(UTC)
+
+    @model_validator(mode="after")
+    def identity_is_consistent(self) -> "RawMailProcessingDisposition":
+        if self.id != self.raw_mail_id:
+            raise ValueError("raw-mail processing ID must match the raw-mail ID")
         return self
 
 

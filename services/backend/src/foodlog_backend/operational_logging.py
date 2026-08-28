@@ -26,6 +26,7 @@ SAFE_FIELDS = frozenset(
         "error_kind",
         "event_id",
         "export_id",
+        "failure_code",
         "http_method",
         "http_route",
         "http_status",

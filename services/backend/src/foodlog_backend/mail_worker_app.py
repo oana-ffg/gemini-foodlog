@@ -8,6 +8,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from .firestore_repository import FirestoreRepository
 from .mail_authentication import DkimMailAuthenticator, MailAuthenticator
 from .mail_events import RawMailStoredEventV1
+from .models import (
+    PurchaseDocumentKind,
+    RawMailProcessingDisposition,
+    RawMailProcessingOutcome,
+)
 from .operational_logging import emit_operational_event, install_request_logging, safe_error_kind
 from .pubsub import PubSubPushEnvelope, decode_event
 from .purchase_mail import (
@@ -16,6 +21,7 @@ from .purchase_mail import (
     raw_mail_object_key,
 )
 from .purchase_normalization import parse_purchase_document
+from .purchase_pdf_limits import PDF_PROCESSOR_VERSION, PurchasePdfRejected
 from .repository import Repository
 from .storage import GCSObjectStore, ObjectStore
 
@@ -86,25 +92,68 @@ def create_mail_worker_app(
                 )
             if authentication.raw_content_sha256 != raw_content_sha256:
                 raise ValueError("raw-mail authentication content hash mismatch")
-            classification = classify_nemlig_purchase_email(
-                raw_message,
+            disposition = await active_repository.raw_mail_processing_disposition(
                 account_id=event.account_id,
-                mail_id=event.mail_id,
-                authentication=authentication,
+                raw_mail_id=event.mail_id,
             )
-            if classification.outcome == MailClassificationOutcome.PURCHASE_DOCUMENT:
-                assert classification.candidate is not None
-                identity = await active_repository.attach_purchase_document(
-                    classification.candidate
-                )
-                parsed = parse_purchase_document(
+            if disposition is not None:
+                if disposition.raw_content_sha256 != raw_content_sha256:
+                    raise ValueError("raw-mail processing content hash mismatch")
+                processing_outcome = disposition.outcome.value
+            else:
+                classification = classify_nemlig_purchase_email(
                     raw_message,
-                    kind=identity.document.kind,
+                    account_id=event.account_id,
+                    mail_id=event.mail_id,
+                    authentication=authentication,
                 )
-                await active_repository.normalize_purchase_document(
-                    document=identity.document,
-                    parsed=parsed,
-                )
+                processing_outcome = classification.outcome.value
+                if classification.outcome == MailClassificationOutcome.PURCHASE_DOCUMENT:
+                    assert classification.candidate is not None
+                    try:
+                        parsed = parse_purchase_document(
+                            raw_message,
+                            kind=classification.candidate.kind,
+                            invoice_reference=classification.candidate.invoice_reference,
+                        )
+                    except PurchasePdfRejected as error:
+                        if classification.candidate.kind != PurchaseDocumentKind.FINAL_RECEIPT:
+                            raise
+                        disposition = (
+                            await active_repository.record_raw_mail_processing_disposition(
+                                RawMailProcessingDisposition(
+                                    id=event.mail_id,
+                                    account_id=event.account_id,
+                                    raw_mail_id=event.mail_id,
+                                    raw_content_sha256=raw_content_sha256,
+                                    outcome=RawMailProcessingOutcome.TERMINAL_REJECTED,
+                                    purchase_document_kind=(
+                                        PurchaseDocumentKind.FINAL_RECEIPT
+                                    ),
+                                    failure_code=error.code,
+                                    processor_version=PDF_PROCESSOR_VERSION,
+                                )
+                            )
+                        )
+                        processing_outcome = disposition.outcome.value
+                        emit_operational_event(
+                            "WARNING",
+                            "purchase_pdf_terminally_rejected",
+                            account_id=event.account_id,
+                            mail_id=event.mail_id,
+                            message_id=envelope.message.message_id,
+                            service="mail_worker",
+                            delivery_attempt=envelope.delivery_attempt,
+                            failure_code=disposition.failure_code,
+                        )
+                    else:
+                        identity = await active_repository.attach_purchase_document(
+                            classification.candidate
+                        )
+                        await active_repository.normalize_purchase_document(
+                            document=identity.document,
+                            parsed=parsed,
+                        )
         except Exception as error:
             emit_operational_event(
                 "ERROR",
@@ -125,7 +174,7 @@ def create_mail_worker_app(
             message_id=envelope.message.message_id,
             service="mail_worker",
             delivery_attempt=envelope.delivery_attempt,
-            outcome=classification.outcome.value,
+            outcome=processing_outcome,
         )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 

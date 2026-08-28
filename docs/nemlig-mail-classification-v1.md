@@ -40,6 +40,11 @@ transaction require that verdict. Sender-authored `Authentication-Results` and
 `ARC-Authentication-Results` headers are ignored. Resolver timeouts are retried; missing,
 invalid, or unaligned signatures are durably untrusted.
 
+An authenticated final-invoice shape is not purchase evidence until its selected PDF
+also parses inside the bounded invoice subprocess. Oversized, malformed, encrypted, or
+resource-exhausting PDFs receive a durable terminal-rejection disposition and create no
+purchase document. Infrastructure or child-protocol failures remain retryable.
+
 The committed `.eml` fixtures contain synthetic identifiers and content while
 preserving the observed MIME declaration, labels, and document relationship. Their
 invented authentication headers are deliberately not trusted; cryptographic verifier

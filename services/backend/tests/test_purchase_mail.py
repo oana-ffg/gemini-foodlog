@@ -1,6 +1,8 @@
 import asyncio
 import json
 from base64 import b64encode
+from email import policy
+from email.parser import BytesParser
 from hashlib import sha256
 from pathlib import Path
 
@@ -14,12 +16,14 @@ from foodlog_backend.models import (
     PurchaseReconciliationDisposition,
     RawMailAuthentication,
     RawMailAuthenticationOutcome,
+    RawMailProcessingOutcome,
 )
 from foodlog_backend.purchase_mail import (
     MailClassificationOutcome,
     classify_nemlig_purchase_email,
     raw_mail_object_key,
 )
+from foodlog_backend.purchase_pdf_limits import PARSER_VERSION, PurchasePdfIsolationFailure
 from foodlog_backend.repository import InMemoryRepository
 from foodlog_backend.storage import InMemoryObjectStore
 
@@ -98,6 +102,24 @@ def worker_settings() -> MailWorkerSettings:
         environment="test",
         gcp_project_id="test-project",
         raw_mail_bucket="test-raw-mail",
+    )
+
+
+async def prepare_worker_message(owner_user_id: str, content: bytes):
+    repository = InMemoryRepository(public_account_limit=25, trial_image_limit=200)
+    store = InMemoryObjectStore()
+    account = await repository.provision_account(owner_user_id)
+    mail_id = sha256(content).hexdigest()
+    key = raw_mail_object_key(account_id=account.id, mail_id=mail_id)
+    await store.put(account.id, key, content, "message/rfc822")
+    await repository.seed_published_raw_mail(
+        account_id=account.id,
+        raw_mail_id=mail_id,
+        content_sha256=sha256(content).hexdigest(),
+    )
+    return repository, store, account.id, RawMailStoredEventV1(
+        account_id=account.id,
+        mail_id=mail_id,
     )
 
 
@@ -302,12 +324,97 @@ def test_mail_worker_preserves_confirmation_then_final_invoice_as_one_purchase()
     ]
     assert [document.revision_number for document in documents] == [1, 2]
     assert len(normalizations) == 2
+    assert {normalization.parser_version for normalization in normalizations} == {
+        PARSER_VERSION
+    }
     assert len(items) == 4
     assert len(charges) == 11
     assert reconciliation.unresolved_item_count == 0
     assert {item.disposition for item in reconciliation.items} == {
         PurchaseReconciliationDisposition.DELIVERED_AS_ORDERED
     }
+
+
+def test_mail_worker_durably_acknowledges_terminal_pdf_rejection() -> None:
+    async def prepare():
+        message = BytesParser(policy=policy.default).parsebytes(fixture("final-invoice.eml"))
+        for part in message.walk():
+            if part.get_filename():
+                part.set_payload(b64encode(b"%PDF-invalid-structure").decode())
+                break
+        content = message.as_bytes()
+        return await prepare_worker_message(
+            "rejected-pdf-owner",
+            content,
+        )
+
+    repository, store, account_id, event = asyncio.run(prepare())
+    app = create_mail_worker_app(
+        worker_settings(),
+        repository=repository,
+        object_store=store,
+        mail_authenticator=FixtureMailAuthenticator(),
+    )
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/internal/pubsub/raw-mail-stored",
+            json=push_envelope(event, message_id="rejected-pdf-message-1"),
+        )
+        retry = client.post(
+            "/internal/pubsub/raw-mail-stored",
+            json=push_envelope(event, message_id="rejected-pdf-message-2"),
+        )
+
+    disposition = asyncio.run(
+        repository.raw_mail_processing_disposition(
+            account_id=account_id,
+            raw_mail_id=event.mail_id,
+        )
+    )
+    assert first.status_code == retry.status_code == 204
+    assert disposition is not None
+    assert disposition.outcome == RawMailProcessingOutcome.TERMINAL_REJECTED
+    assert disposition.failure_code == "pdf_structure_rejected"
+    assert repository._purchase_documents == {}
+    assert repository._purchase_normalizations == {}
+
+
+def test_mail_worker_retries_operational_pdf_isolation_failure(monkeypatch) -> None:
+    repository, store, account_id, event = asyncio.run(
+        prepare_worker_message("pdf-isolation-failure-owner", fixture("final-invoice.eml"))
+    )
+
+    def fail_isolation(*args, **kwargs):
+        del args, kwargs
+        raise PurchasePdfIsolationFailure("pdf_subprocess_unavailable")
+
+    monkeypatch.setattr(
+        "foodlog_backend.mail_worker_app.parse_purchase_document",
+        fail_isolation,
+    )
+    app = create_mail_worker_app(
+        worker_settings(),
+        repository=repository,
+        object_store=store,
+        mail_authenticator=FixtureMailAuthenticator(),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/internal/pubsub/raw-mail-stored",
+            json=push_envelope(event, message_id="pdf-isolation-failure-message"),
+        )
+
+    disposition = asyncio.run(
+        repository.raw_mail_processing_disposition(
+            account_id=account_id,
+            raw_mail_id=event.mail_id,
+        )
+    )
+    assert response.status_code == 503
+    assert disposition is None
+    assert repository._purchase_documents == {}
 
 
 def test_mail_worker_rejects_bad_event_and_retries_missing_object() -> None:

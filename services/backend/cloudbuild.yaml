@@ -33,6 +33,9 @@ steps:
         import foodlog_backend.model_probe
         import foodlog_backend.model_spend_smoke
         import foodlog_backend.notification_app
+        import foodlog_backend.purchase_pdf_isolation
+        import foodlog_backend.purchase_pdf_limits
+        import foodlog_backend.purchase_pdf_worker
         import foodlog_agent.agent
         import foodlog_agent.context_tools
         import foodlog_agent.context_tools_smoke
