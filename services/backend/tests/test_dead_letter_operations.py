@@ -328,6 +328,41 @@ def test_notification_identity_is_derived_from_the_validated_outbox_event() -> N
     assert result.messages[0].subject_kind == "account_notification"
 
 
+def test_export_identity_is_derived_from_the_validated_export_event() -> None:
+    export_id = "a" * 64
+    subscriber = FakeSubscriber(
+        [
+            received_message(
+                message_id="export-message",
+                payload={
+                    "schema_version": 1,
+                    "kind": "account_export_requested",
+                    "account_id": "account-9",
+                    "export_id": export_id,
+                },
+                source_subscription="foodlog-export-consumer",
+            )
+        ]
+    )
+    service = DeadLetterOperationsService(
+        project_id="foodlog-test-2026",
+        repository=FakeRepository(),
+        subscriber=subscriber,
+    )
+
+    result = asyncio.run(
+        service.inspect(
+            stream=DeadLetterStream.EXPORT,
+            purpose=AuditPurpose.SUPPORT,
+            session_id="session-export",
+        )
+    )
+
+    assert result.messages[0].account_id == "account-9"
+    assert result.messages[0].subject_kind == "account_export"
+    assert result.messages[0].subject_id == export_id
+
+
 def test_acknowledge_resolved_image_requires_completed_source_job() -> None:
     subscriber = FakeSubscriber(
         [received_message(message_id="resolved-message", payload=image_payload())]

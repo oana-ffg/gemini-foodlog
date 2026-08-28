@@ -345,6 +345,17 @@ def test_production_cannot_select_partial_or_volatile_storage() -> None:
             media_bucket="gemini-foodlog-2026-media-163029863855",
             notification_topic=("projects/gemini-foodlog-2026/topics/foodlog-notification-events"),
         )
+    with pytest.raises(ValidationError, match="account export topic"):
+        Settings(
+            environment="production",
+            auth_backend="firebase",
+            storage_backend="gcp",
+            gcp_project_id="gemini-foodlog-2026",
+            firebase_project_id="gemini-foodlog-2026",
+            media_bucket="gemini-foodlog-2026-media-163029863855",
+            notification_topic=("projects/gemini-foodlog-2026/topics/foodlog-notification-events"),
+            image_topic="projects/gemini-foodlog-2026/topics/foodlog-image-events",
+        )
 
     settings = Settings(
         environment="production",
@@ -355,6 +366,7 @@ def test_production_cannot_select_partial_or_volatile_storage() -> None:
         media_bucket="gemini-foodlog-2026-media-163029863855",
         notification_topic=("projects/gemini-foodlog-2026/topics/foodlog-notification-events"),
         image_topic="projects/gemini-foodlog-2026/topics/foodlog-image-events",
+        export_topic="projects/gemini-foodlog-2026/topics/foodlog-export-events",
         inbound_mail_domain="gemini-foodlog-2026.appspotmail.com",
     )
     assert settings.storage_backend == "gcp"

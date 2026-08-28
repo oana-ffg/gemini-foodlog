@@ -1,6 +1,7 @@
 locals {
   production_cloud_run_services = [
     "foodlog-api",
+    "foodlog-export-worker",
     "foodlog-image",
     "foodlog-inference",
     "foodlog-mail-worker",
@@ -13,6 +14,7 @@ locals {
   ])
 
   consumer_subscriptions = [
+    "foodlog-export-consumer",
     "foodlog-image-consumer",
     "foodlog-inference-consumer",
     "foodlog-mail-consumer",
@@ -20,6 +22,7 @@ locals {
   ]
 
   dead_letter_subscriptions = [
+    "foodlog-export-dead-letter-inspection",
     "foodlog-image-dead-letter-inspection",
     "foodlog-mail-dead-letter-inspection",
     "foodlog-notification-dead-letter-inspection",

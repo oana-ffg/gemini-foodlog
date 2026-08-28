@@ -13,6 +13,12 @@ from fastapi.responses import JSONResponse, Response
 from PIL import Image
 from pydantic import ValidationError
 
+from .account_export_events import (
+    AccountExportEventPublisher,
+    AccountExportRequestedEventV1,
+    InMemoryAccountExportEventPublisher,
+    PubSubAccountExportEventPublisher,
+)
 from .audit import record_audit_event
 from .auth import (
     FirebaseIdentityTokenVerifier,
@@ -62,6 +68,7 @@ from .image_events import (
 from .inbound_mail import InboundMailAddressService
 from .models import (
     Account,
+    AccountExport,
     AccountExportView,
     AuditAction,
     AuditActorKind,
@@ -145,6 +152,14 @@ def camera_view(camera: Camera) -> CameraView:
     return BrowserCameraView.model_validate(camera.model_dump(exclude={"client_instance_id_hash"}))
 
 
+def account_export_view(account_export: AccountExport) -> AccountExportView:
+    return AccountExportView.model_validate(
+        account_export.model_dump(
+            exclude={"account_id", "requested_by_user_id", "job_id", "archive_object_key"}
+        )
+    )
+
+
 def detected_image_type(content: bytes) -> str | None:
     if content.startswith(b"\x89PNG\r\n\x1a\n"):
         return "image/png"
@@ -195,6 +210,7 @@ class Container:
     account_service: AccountProvisioningService
     notification_publisher: NotificationPublisher
     capture_event_publisher: CaptureEventPublisher
+    account_export_event_publisher: AccountExportEventPublisher
     inbound_mail_address_service: InboundMailAddressService
     feedback_learning_service: FeedbackLearningService
     household_teaching_service: HouseholdTeachingService
@@ -207,6 +223,7 @@ def create_app(
     token_verifier: IdentityTokenVerifier | None = None,
     notification_publisher: NotificationPublisher | None = None,
     capture_event_publisher: CaptureEventPublisher | None = None,
+    account_export_event_publisher: AccountExportEventPublisher | None = None,
 ) -> FastAPI:
     active_settings = settings or Settings()
     if active_settings.auth_backend == "firebase":
@@ -249,9 +266,17 @@ def create_app(
         active_capture_event_publisher = capture_event_publisher or PubSubCaptureEventPublisher(
             topic=active_settings.image_topic
         )
+        assert active_settings.export_topic is not None
+        active_account_export_event_publisher = (
+            account_export_event_publisher
+            or PubSubAccountExportEventPublisher(topic=active_settings.export_topic)
+        )
     else:
         active_notification_publisher = notification_publisher or InMemoryNotificationPublisher()
         active_capture_event_publisher = capture_event_publisher or InMemoryCaptureEventPublisher()
+        active_account_export_event_publisher = (
+            account_export_event_publisher or InMemoryAccountExportEventPublisher()
+        )
     container = Container(
         repository=repository,
         object_store=object_store,
@@ -267,6 +292,7 @@ def create_app(
         ),
         notification_publisher=active_notification_publisher,
         capture_event_publisher=active_capture_event_publisher,
+        account_export_event_publisher=active_account_export_event_publisher,
         inbound_mail_address_service=InboundMailAddressService(
             repository=repository,
             domain=active_settings.inbound_mail_domain,
@@ -601,6 +627,7 @@ def create_app(
     @app.post(
         "/v1/exports",
         response_model=AccountExportView,
+        response_model_exclude_none=True,
         status_code=status.HTTP_202_ACCEPTED,
     )
     async def request_account_export(
@@ -616,17 +643,29 @@ def create_app(
                 seconds=active_settings.export_request_cooldown_seconds
             ),
         )
+        try:
+            await container.account_export_event_publisher.publish(
+                AccountExportRequestedEventV1(
+                    account_id=account_export.account_id,
+                    export_id=account_export.id,
+                )
+            )
+        except Exception as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="account_export_publish_failed",
+            ) from error
         response.status_code = (
             status.HTTP_202_ACCEPTED if created else status.HTTP_200_OK
         )
         response.headers["Cache-Control"] = "no-store"
-        return AccountExportView.model_validate(
-            account_export.model_dump(
-                include={"schema_version", "id", "status", "snapshot_at", "requested_at"}
-            )
-        )
+        return account_export_view(account_export)
 
-    @app.get("/v1/exports/{export_id}", response_model=AccountExportView)
+    @app.get(
+        "/v1/exports/{export_id}",
+        response_model=AccountExportView,
+        response_model_exclude_none=True,
+    )
     async def get_account_export(
         export_id: str,
         response: Response,
@@ -637,11 +676,7 @@ def create_app(
             export_id=export_id,
         )
         response.headers["Cache-Control"] = "no-store"
-        return AccountExportView.model_validate(
-            account_export.model_dump(
-                include={"schema_version", "id", "status", "snapshot_at", "requested_at"}
-            )
-        )
+        return account_export_view(account_export)
 
     @app.post("/v1/consents/launch-mail", response_model=LaunchMailConsent)
     async def record_launch_mail_consent(

@@ -1,5 +1,10 @@
 locals {
   pubsub_streams = {
+    export = {
+      publisher_account = "api"
+      consumer_account  = "worker"
+      purpose           = "account-export-generation"
+    }
     image = {
       publisher_account = "api"
       consumer_account  = "worker"
@@ -24,6 +29,11 @@ locals {
   ]
 
   pubsub_push_targets = {
+    export = {
+      endpoint              = "${google_cloud_run_v2_service.export_worker.uri}/internal/pubsub/account-export-requested"
+      service_account_email = google_service_account.runtime["worker"].email
+      audience              = google_cloud_run_v2_service.export_worker.uri
+    }
     image = {
       endpoint              = "${google_cloud_run_v2_service.image.uri}/internal/pubsub/capture-stored"
       service_account_email = google_service_account.runtime["worker"].email

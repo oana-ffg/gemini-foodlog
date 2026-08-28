@@ -70,7 +70,7 @@ completed acknowledgement are recorded separately.
   bounded pull.
 - There is no bulk acknowledgement, purge, seek, delete, payload dump, tenant
   impersonation, or arbitrary destination mode.
-- Mail and notification messages support schema-checked inspection and explicit
-  replay. Completed-job acknowledgement is deliberately image-only because only
-  image processing currently has a durable job whose completed state can prove
-  the retained message is obsolete.
+- Export, mail, and notification messages support schema-checked inspection and
+  explicit replay. Completed-job acknowledgement remains image-only because an
+  image replay fans out and could wake model inference; replaying a completed
+  export or delivery event is an inexpensive lease-fenced no-op.

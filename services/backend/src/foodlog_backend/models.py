@@ -289,6 +289,14 @@ class JobStatus(StrEnum):
     PENDING = "pending"
     LEASED = "leased"
     COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class AccountExportStatus(StrEnum):
+    PENDING = "pending"
+    BUILDING = "building"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
 class ActivityEventStatus(StrEnum):
@@ -418,11 +426,25 @@ class AccountExport(BaseModel):
     account_id: str = Field(min_length=1, max_length=128)
     requested_by_user_id: str = Field(min_length=1, max_length=128)
     job_id: str = Field(min_length=1, max_length=160)
-    status: Literal["pending"] = "pending"
+    status: AccountExportStatus = AccountExportStatus.PENDING
     snapshot_at: datetime
     requested_at: datetime
+    archive_object_key: str | None = Field(default=None, min_length=1, max_length=512)
+    archive_size: int | None = Field(default=None, ge=1)
+    archive_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    manifest_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    completed_at: datetime | None = None
+    expires_at: datetime | None = None
+    failed_at: datetime | None = None
+    last_error_code: str | None = Field(default=None, min_length=1, max_length=120)
 
-    @field_validator("snapshot_at", "requested_at")
+    @field_validator(
+        "snapshot_at",
+        "requested_at",
+        "completed_at",
+        "expires_at",
+        "failed_at",
+    )
     @classmethod
     def timestamps_have_timezone(cls, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
@@ -430,9 +452,31 @@ class AccountExport(BaseModel):
         return value.astimezone(UTC)
 
     @model_validator(mode="after")
-    def snapshot_is_fixed_at_request(self) -> "AccountExport":
+    def lifecycle_is_consistent(self) -> "AccountExport":
         if self.snapshot_at != self.requested_at:
-            raise ValueError("pending account exports snapshot exactly at request time")
+            raise ValueError("account exports snapshot exactly at request time")
+        archive_fields = (
+            self.archive_object_key,
+            self.archive_size,
+            self.archive_sha256,
+            self.manifest_sha256,
+        )
+        if self.status == AccountExportStatus.COMPLETED:
+            if any(value is None for value in archive_fields):
+                raise ValueError("completed account exports require complete archive metadata")
+            if self.completed_at is None or self.expires_at is None or self.failed_at is not None:
+                raise ValueError("completed account export timestamps are inconsistent")
+            if self.expires_at <= self.completed_at:
+                raise ValueError("account export expiry must follow completion")
+        elif any(value is not None for value in archive_fields):
+            raise ValueError("incomplete account exports cannot expose archive metadata")
+        if self.status == AccountExportStatus.FAILED:
+            if self.failed_at is None or self.last_error_code is None:
+                raise ValueError("failed account exports require failure evidence")
+            if self.completed_at is not None or self.expires_at is not None:
+                raise ValueError("failed account exports cannot have completion metadata")
+        elif self.failed_at is not None:
+            raise ValueError("only failed account exports may have failed_at")
         return self
 
 
@@ -441,9 +485,16 @@ class AccountExportView(BaseModel):
 
     schema_version: Literal[1] = 1
     id: str = Field(pattern=r"^[0-9a-f]{64}$")
-    status: Literal["pending"] = "pending"
+    status: AccountExportStatus
     snapshot_at: datetime
     requested_at: datetime
+    archive_size: int | None = Field(default=None, ge=1)
+    archive_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    manifest_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    completed_at: datetime | None = None
+    expires_at: datetime | None = None
+    failed_at: datetime | None = None
+    last_error_code: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class AuditEvent(BaseModel):
@@ -976,8 +1027,15 @@ class DurableJob(BaseModel):
     last_error_message: str | None = Field(default=None, min_length=1, max_length=2_000)
     created_at: datetime = Field(default_factory=utc_now)
     completed_at: datetime | None = None
+    failed_at: datetime | None = None
 
-    @field_validator("available_at", "lease_expires_at", "created_at", "completed_at")
+    @field_validator(
+        "available_at",
+        "lease_expires_at",
+        "created_at",
+        "completed_at",
+        "failed_at",
+    )
     @classmethod
     def job_timestamps_have_timezone(cls, value: datetime | None) -> datetime | None:
         if value is not None and (value.tzinfo is None or value.utcoffset() is None):
@@ -993,7 +1051,9 @@ class DurableJob(BaseModel):
         elif any(value is not None for value in lease_fields):
             raise ValueError("Only leased jobs may retain lease fields")
         if (self.status == JobStatus.COMPLETED) != (self.completed_at is not None):
-            raise ValueError("Completed jobs require completed_at and other jobs forbid it")
+            raise ValueError("completed jobs require completed_at and other jobs forbid it")
+        if (self.status == JobStatus.FAILED) != (self.failed_at is not None):
+            raise ValueError("failed jobs require failed_at and other jobs forbid it")
         return self
 
 

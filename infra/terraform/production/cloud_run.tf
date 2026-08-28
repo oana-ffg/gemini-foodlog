@@ -40,6 +40,7 @@ locals {
     FOODLOG_EXPORT_REQUEST_COOLDOWN_SECONDS = "3600"
     FOODLOG_FIREBASE_PROJECT_ID             = var.project_id
     FOODLOG_GCP_PROJECT_ID                  = var.project_id
+    FOODLOG_EXPORT_TOPIC                    = google_pubsub_topic.events["export"].id
     FOODLOG_GROUPING_POLICY_VERSION         = "temporal-v1"
     FOODLOG_GROUPING_QUIET_SECONDS          = "30"
     FOODLOG_GROUPING_REOPEN_SECONDS         = "7200"
@@ -93,6 +94,17 @@ locals {
     FOODLOG_MAIL_WORKER_PUBLIC_ACCOUNT_LIMIT = "25"
     FOODLOG_MAIL_WORKER_RAW_MAIL_BUCKET      = google_storage_bucket.retained["raw_mail"].name
     FOODLOG_MAIL_WORKER_TRIAL_IMAGE_LIMIT    = "200"
+  }
+
+  export_worker_runtime_environment = {
+    FOODLOG_EXPORT_WORKER_ENVIRONMENT          = var.environment
+    FOODLOG_EXPORT_WORKER_EXPORT_BUCKET        = google_storage_bucket.exports.name
+    FOODLOG_EXPORT_WORKER_GCP_PROJECT_ID       = var.project_id
+    FOODLOG_EXPORT_WORKER_MEDIA_BUCKET         = google_storage_bucket.retained["media"].name
+    FOODLOG_EXPORT_WORKER_PUBLIC_ACCOUNT_LIMIT = "25"
+    FOODLOG_EXPORT_WORKER_RAW_MAIL_BUCKET      = google_storage_bucket.retained["raw_mail"].name
+    FOODLOG_EXPORT_WORKER_TRACE_BUCKET         = google_storage_bucket.retained["traces"].name
+    FOODLOG_EXPORT_WORKER_TRIAL_IMAGE_LIMIT    = "200"
   }
 }
 
@@ -880,6 +892,116 @@ resource "google_cloud_run_v2_service_iam_member" "mail_worker_invoker" {
   member   = "serviceAccount:${google_service_account.runtime["worker"].email}"
 }
 
+resource "google_cloud_run_v2_service" "export_worker" {
+  project  = var.project_id
+  name     = "foodlog-export-worker"
+  location = var.region
+
+  deletion_protection = true
+  ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+
+  labels = merge(local.common_labels, {
+    component = "export-worker"
+  })
+
+  template {
+    service_account                  = google_service_account.runtime["worker"].email
+    timeout                          = "600s"
+    max_instance_request_concurrency = 1
+
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 1
+    }
+
+    containers {
+      name    = "export-worker"
+      image   = var.api_container_image
+      command = ["uvicorn"]
+      args = [
+        "foodlog_backend.export_worker_main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8080",
+      ]
+
+      ports {
+        name           = "http1"
+        container_port = 8080
+      }
+
+      resources {
+        limits = {
+          cpu    = "1"
+          memory = "1Gi"
+        }
+
+        cpu_idle          = true
+        startup_cpu_boost = false
+      }
+
+      dynamic "env" {
+        for_each = local.export_worker_runtime_environment
+
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+
+      startup_probe {
+        initial_delay_seconds = 0
+        timeout_seconds       = 5
+        period_seconds        = 5
+        failure_threshold     = 12
+
+        http_get {
+          path = "/health"
+          port = 8080
+        }
+      }
+
+      liveness_probe {
+        initial_delay_seconds = 10
+        timeout_seconds       = 5
+        period_seconds        = 30
+        failure_threshold     = 3
+
+        http_get {
+          path = "/health"
+          port = 8080
+        }
+      }
+    }
+  }
+
+  traffic {
+    type    = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
+    percent = 100
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [
+    google_project_service.required["run.googleapis.com"],
+    google_storage_bucket_iam_policy.exports,
+    google_storage_bucket_iam_policy.retained["media"],
+    google_storage_bucket_iam_policy.retained["raw_mail"],
+    google_storage_bucket_iam_policy.retained["traces"],
+  ]
+}
+
+resource "google_cloud_run_v2_service_iam_member" "export_worker_invoker" {
+  project  = var.project_id
+  location = google_cloud_run_v2_service.export_worker.location
+  name     = google_cloud_run_v2_service.export_worker.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.runtime["worker"].email}"
+}
+
 resource "google_cloud_run_v2_service" "notification" {
   project  = var.project_id
   name     = "foodlog-notification"
@@ -1040,4 +1162,9 @@ output "inference_service_url" {
 output "mail_worker_service_url" {
   description = "Private Pub/Sub-authenticated purchase-mail classifier URL."
   value       = google_cloud_run_v2_service.mail_worker.uri
+}
+
+output "export_worker_service_url" {
+  description = "Private Pub/Sub-authenticated account-export generator URL."
+  value       = google_cloud_run_v2_service.export_worker.uri
 }

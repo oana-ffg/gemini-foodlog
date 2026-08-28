@@ -1,6 +1,7 @@
 locals {
   ci_deploy_services = {
     api          = google_cloud_run_v2_service.api.name
+    export       = google_cloud_run_v2_service.export_worker.name
     image        = google_cloud_run_v2_service.image.name
     inference    = google_cloud_run_v2_service.inference.name
     mail         = google_cloud_run_v2_service.mail_worker.name

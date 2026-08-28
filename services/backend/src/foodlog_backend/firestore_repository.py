@@ -66,6 +66,7 @@ from .models import (
     Account,
     AccountCreatedOutbox,
     AccountExport,
+    AccountExportStatus,
     ActivityEvent,
     ActivityEventStatus,
     ActivitySegment,
@@ -281,6 +282,10 @@ class FirestoreRepository:
         self._unlimited_owner_user_ids = frozenset(unlimited_owner_user_ids or set())
         self._model_spend_limit_dkk_micros = model_spend_limit_dkk_micros
         self._model_spend_ledger_id = model_spend_ledger_id
+
+    @property
+    def client(self) -> firestore.AsyncClient:
+        return self._client
 
     def _identity(self, owner_user_id: str):
         return self._client.collection("identities").document(owner_user_id)
@@ -762,6 +767,260 @@ class FirestoreRepository:
         ):
             raise AccountExportNotFound
         return account_export
+
+    async def claim_account_export(
+        self,
+        *,
+        account_id: str,
+        export_id: str,
+        lease_id: str,
+        lease_owner: str,
+        lease_expires_at: datetime,
+    ) -> AccountExport | None:
+        now = utc_now()
+        if lease_expires_at <= now:
+            raise ValueError("account export lease must expire in the future")
+        export_ref = self._collection(account_id, "exports").document(export_id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def claim(transaction):
+            export_snapshot = await export_ref.get(transaction=transaction)
+            if not export_snapshot.exists:
+                raise AccountExportNotFound
+            account_export = _model(export_snapshot, AccountExport)
+            if account_export.account_id != account_id:
+                raise AccountExportNotFound
+            job_ref = self._collection(account_id, "jobs").document(account_export.job_id)
+            job_snapshot = await job_ref.get(transaction=transaction)
+            if not job_snapshot.exists:
+                raise JobIdentityConflict
+            job = _model(job_snapshot, DurableJob)
+            if job.kind != JobKind.ACCOUNT_EXPORT or job.subject_id != export_id:
+                raise JobIdentityConflict
+            if account_export.status in {
+                AccountExportStatus.COMPLETED,
+                AccountExportStatus.FAILED,
+            }:
+                return None
+            if job.status == JobStatus.LEASED and (
+                job.lease_expires_at is None or job.lease_expires_at > now
+            ):
+                return None
+            if job.status not in {JobStatus.PENDING, JobStatus.LEASED}:
+                return None
+            if job.status == JobStatus.PENDING and job.available_at > now:
+                return None
+            transaction.update(
+                job_ref,
+                {
+                    "status": JobStatus.LEASED,
+                    "attempt_count": job.attempt_count + 1,
+                    "lease_id": lease_id,
+                    "lease_owner": lease_owner,
+                    "lease_expires_at": lease_expires_at,
+                    "last_error_code": firestore.DELETE_FIELD,
+                    "last_error_message": firestore.DELETE_FIELD,
+                },
+            )
+            transaction.update(
+                export_ref,
+                {
+                    "status": AccountExportStatus.BUILDING,
+                    "last_error_code": firestore.DELETE_FIELD,
+                },
+            )
+            return account_export.model_copy(
+                update={
+                    "status": AccountExportStatus.BUILDING,
+                    "last_error_code": None,
+                }
+            )
+
+        return await claim(transaction)
+
+    async def release_account_export(
+        self,
+        *,
+        account_id: str,
+        export_id: str,
+        lease_id: str,
+        available_at: datetime,
+        error_code: str,
+    ) -> bool:
+        export_ref = self._collection(account_id, "exports").document(export_id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def release(transaction):
+            export_snapshot = await export_ref.get(transaction=transaction)
+            if not export_snapshot.exists:
+                raise AccountExportNotFound
+            account_export = _model(export_snapshot, AccountExport)
+            job_ref = self._collection(account_id, "jobs").document(account_export.job_id)
+            job_snapshot = await job_ref.get(transaction=transaction)
+            if not job_snapshot.exists:
+                raise JobIdentityConflict
+            job = _model(job_snapshot, DurableJob)
+            if (
+                account_export.status != AccountExportStatus.BUILDING
+                or job.status != JobStatus.LEASED
+                or job.lease_id != lease_id
+            ):
+                return False
+            transaction.update(
+                job_ref,
+                {
+                    "status": JobStatus.PENDING,
+                    "available_at": available_at,
+                    "lease_id": firestore.DELETE_FIELD,
+                    "lease_owner": firestore.DELETE_FIELD,
+                    "lease_expires_at": firestore.DELETE_FIELD,
+                    "last_error_code": error_code,
+                    "last_error_message": firestore.DELETE_FIELD,
+                },
+            )
+            transaction.update(
+                export_ref,
+                {
+                    "status": AccountExportStatus.PENDING,
+                    "last_error_code": error_code,
+                },
+            )
+            return True
+
+        return await release(transaction)
+
+    async def complete_account_export(
+        self,
+        *,
+        account_id: str,
+        export_id: str,
+        lease_id: str,
+        archive_object_key: str,
+        archive_size: int,
+        archive_sha256: str,
+        manifest_sha256: str,
+        completed_at: datetime,
+        expires_at: datetime,
+    ) -> AccountExport | None:
+        export_ref = self._collection(account_id, "exports").document(export_id)
+        control_ref = self._collection(account_id, "export_control").document("current")
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def complete(transaction):
+            export_snapshot = await export_ref.get(transaction=transaction)
+            control_snapshot = await control_ref.get(transaction=transaction)
+            if not export_snapshot.exists:
+                raise AccountExportNotFound
+            account_export = _model(export_snapshot, AccountExport)
+            if account_export.status == AccountExportStatus.COMPLETED:
+                return account_export
+            job_ref = self._collection(account_id, "jobs").document(account_export.job_id)
+            job_snapshot = await job_ref.get(transaction=transaction)
+            if not job_snapshot.exists:
+                raise JobIdentityConflict
+            job = _model(job_snapshot, DurableJob)
+            if (
+                account_export.status != AccountExportStatus.BUILDING
+                or job.status != JobStatus.LEASED
+                or job.lease_id != lease_id
+            ):
+                return None
+            completed_export = account_export.model_copy(
+                update={
+                    "status": AccountExportStatus.COMPLETED,
+                    "archive_object_key": archive_object_key,
+                    "archive_size": archive_size,
+                    "archive_sha256": archive_sha256,
+                    "manifest_sha256": manifest_sha256,
+                    "completed_at": completed_at,
+                    "expires_at": expires_at,
+                    "last_error_code": None,
+                }
+            )
+            transaction.set(export_ref, _document(completed_export))
+            transaction.update(
+                job_ref,
+                {
+                    "status": JobStatus.COMPLETED,
+                    "lease_id": firestore.DELETE_FIELD,
+                    "lease_owner": firestore.DELETE_FIELD,
+                    "lease_expires_at": firestore.DELETE_FIELD,
+                    "completed_at": completed_at,
+                    "last_error_code": firestore.DELETE_FIELD,
+                    "last_error_message": firestore.DELETE_FIELD,
+                },
+            )
+            if control_snapshot.exists and control_snapshot.get("active_export_id") == export_id:
+                transaction.update(
+                    control_ref,
+                    {"active_export_id": firestore.DELETE_FIELD},
+                )
+            return completed_export
+
+        return await complete(transaction)
+
+    async def fail_account_export(
+        self,
+        *,
+        account_id: str,
+        export_id: str,
+        lease_id: str,
+        error_code: str,
+        failed_at: datetime,
+    ) -> bool:
+        export_ref = self._collection(account_id, "exports").document(export_id)
+        control_ref = self._collection(account_id, "export_control").document("current")
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def fail(transaction):
+            export_snapshot = await export_ref.get(transaction=transaction)
+            control_snapshot = await control_ref.get(transaction=transaction)
+            if not export_snapshot.exists:
+                raise AccountExportNotFound
+            account_export = _model(export_snapshot, AccountExport)
+            job_ref = self._collection(account_id, "jobs").document(account_export.job_id)
+            job_snapshot = await job_ref.get(transaction=transaction)
+            if not job_snapshot.exists:
+                raise JobIdentityConflict
+            job = _model(job_snapshot, DurableJob)
+            if (
+                account_export.status != AccountExportStatus.BUILDING
+                or job.status != JobStatus.LEASED
+                or job.lease_id != lease_id
+            ):
+                return False
+            transaction.update(
+                export_ref,
+                {
+                    "status": AccountExportStatus.FAILED,
+                    "failed_at": failed_at,
+                    "last_error_code": error_code,
+                },
+            )
+            transaction.update(
+                job_ref,
+                {
+                    "status": JobStatus.FAILED,
+                    "lease_id": firestore.DELETE_FIELD,
+                    "lease_owner": firestore.DELETE_FIELD,
+                    "lease_expires_at": firestore.DELETE_FIELD,
+                    "failed_at": failed_at,
+                    "last_error_code": error_code,
+                    "last_error_message": firestore.DELETE_FIELD,
+                },
+            )
+            if control_snapshot.exists and control_snapshot.get("active_export_id") == export_id:
+                transaction.update(
+                    control_ref,
+                    {"active_export_id": firestore.DELETE_FIELD},
+                )
+            return True
+
+        return await fail(transaction)
 
     async def create_inbound_mail_address(
         self,

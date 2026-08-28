@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     firebase_project_id: str | None = None
     media_bucket: str | None = None
     image_topic: str | None = None
+    export_topic: str | None = None
     notification_topic: str | None = None
     inbound_mail_domain: str = Field(default="foodlog.invalid", min_length=3, max_length=253)
 
@@ -59,6 +60,8 @@ class Settings(BaseSettings):
             raise ValueError("Production requires the account notification topic")
         if self.environment == "production" and self.image_topic is None:
             raise ValueError("Production requires the capture image topic")
+        if self.environment == "production" and self.export_topic is None:
+            raise ValueError("Production requires the account export topic")
         expected_mail_domain = (
             f"{self.gcp_project_id}.appspotmail.com" if self.gcp_project_id else None
         )

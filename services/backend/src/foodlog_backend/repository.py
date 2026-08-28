@@ -66,6 +66,7 @@ from .models import (
     Account,
     AccountCreatedOutbox,
     AccountExport,
+    AccountExportStatus,
     ActivityEvent,
     ActivityEventStatus,
     ActivitySegment,
@@ -618,6 +619,50 @@ class Repository(Protocol):
         owner_user_id: str,
         export_id: str,
     ) -> AccountExport: ...
+
+    async def claim_account_export(
+        self,
+        *,
+        account_id: str,
+        export_id: str,
+        lease_id: str,
+        lease_owner: str,
+        lease_expires_at: datetime,
+    ) -> AccountExport | None: ...
+
+    async def release_account_export(
+        self,
+        *,
+        account_id: str,
+        export_id: str,
+        lease_id: str,
+        available_at: datetime,
+        error_code: str,
+    ) -> bool: ...
+
+    async def complete_account_export(
+        self,
+        *,
+        account_id: str,
+        export_id: str,
+        lease_id: str,
+        archive_object_key: str,
+        archive_size: int,
+        archive_sha256: str,
+        manifest_sha256: str,
+        completed_at: datetime,
+        expires_at: datetime,
+    ) -> AccountExport | None: ...
+
+    async def fail_account_export(
+        self,
+        *,
+        account_id: str,
+        export_id: str,
+        lease_id: str,
+        error_code: str,
+        failed_at: datetime,
+    ) -> bool: ...
 
     async def create_inbound_mail_address(
         self,
@@ -1473,6 +1518,198 @@ class InMemoryRepository:
             if account_export is None or account_export.requested_by_user_id != owner_user_id:
                 raise AccountExportNotFound
             return account_export.model_copy(deep=True)
+
+    async def claim_account_export(
+        self,
+        *,
+        account_id: str,
+        export_id: str,
+        lease_id: str,
+        lease_owner: str,
+        lease_expires_at: datetime,
+    ) -> AccountExport | None:
+        now = utc_now()
+        if lease_expires_at <= now:
+            raise ValueError("account export lease must expire in the future")
+        async with self._lock:
+            account_export = self._account_exports.get((account_id, export_id))
+            if account_export is None:
+                raise AccountExportNotFound
+            if account_export.status in {
+                AccountExportStatus.COMPLETED,
+                AccountExportStatus.FAILED,
+            }:
+                return None
+            job = self._jobs.get((account_id, account_export.job_id))
+            if job is None or job.kind != JobKind.ACCOUNT_EXPORT or job.subject_id != export_id:
+                raise JobIdentityConflict
+            if job.status == JobStatus.LEASED and (
+                job.lease_expires_at is None or job.lease_expires_at > now
+            ):
+                return None
+            if job.status not in {JobStatus.PENDING, JobStatus.LEASED}:
+                return None
+            if job.status == JobStatus.PENDING and job.available_at > now:
+                return None
+            leased_job = job.model_copy(
+                update={
+                    "status": JobStatus.LEASED,
+                    "attempt_count": job.attempt_count + 1,
+                    "lease_id": lease_id,
+                    "lease_owner": lease_owner,
+                    "lease_expires_at": lease_expires_at,
+                    "last_error_code": None,
+                    "last_error_message": None,
+                }
+            )
+            building = account_export.model_copy(
+                update={
+                    "status": AccountExportStatus.BUILDING,
+                    "last_error_code": None,
+                }
+            )
+            self._jobs[(account_id, job.id)] = leased_job
+            self._account_exports[(account_id, export_id)] = building
+            return building.model_copy(deep=True)
+
+    async def release_account_export(
+        self,
+        *,
+        account_id: str,
+        export_id: str,
+        lease_id: str,
+        available_at: datetime,
+        error_code: str,
+    ) -> bool:
+        async with self._lock:
+            account_export = self._account_exports.get((account_id, export_id))
+            if account_export is None:
+                raise AccountExportNotFound
+            job = self._jobs.get((account_id, account_export.job_id))
+            if (
+                account_export.status != AccountExportStatus.BUILDING
+                or job is None
+                or job.status != JobStatus.LEASED
+                or job.lease_id != lease_id
+            ):
+                return False
+            self._jobs[(account_id, job.id)] = job.model_copy(
+                update={
+                    "status": JobStatus.PENDING,
+                    "available_at": available_at,
+                    "lease_id": None,
+                    "lease_owner": None,
+                    "lease_expires_at": None,
+                    "last_error_code": error_code,
+                    "last_error_message": None,
+                }
+            )
+            self._account_exports[(account_id, export_id)] = account_export.model_copy(
+                update={
+                    "status": AccountExportStatus.PENDING,
+                    "last_error_code": error_code,
+                }
+            )
+            return True
+
+    async def complete_account_export(
+        self,
+        *,
+        account_id: str,
+        export_id: str,
+        lease_id: str,
+        archive_object_key: str,
+        archive_size: int,
+        archive_sha256: str,
+        manifest_sha256: str,
+        completed_at: datetime,
+        expires_at: datetime,
+    ) -> AccountExport | None:
+        async with self._lock:
+            account_export = self._account_exports.get((account_id, export_id))
+            if account_export is None:
+                raise AccountExportNotFound
+            if account_export.status == AccountExportStatus.COMPLETED:
+                return account_export.model_copy(deep=True)
+            job = self._jobs.get((account_id, account_export.job_id))
+            if (
+                account_export.status != AccountExportStatus.BUILDING
+                or job is None
+                or job.status != JobStatus.LEASED
+                or job.lease_id != lease_id
+            ):
+                return None
+            completed = account_export.model_copy(
+                update={
+                    "status": AccountExportStatus.COMPLETED,
+                    "archive_object_key": archive_object_key,
+                    "archive_size": archive_size,
+                    "archive_sha256": archive_sha256,
+                    "manifest_sha256": manifest_sha256,
+                    "completed_at": completed_at,
+                    "expires_at": expires_at,
+                    "last_error_code": None,
+                }
+            )
+            completed_job = job.model_copy(
+                update={
+                    "status": JobStatus.COMPLETED,
+                    "lease_id": None,
+                    "lease_owner": None,
+                    "lease_expires_at": None,
+                    "completed_at": completed_at,
+                    "last_error_code": None,
+                    "last_error_message": None,
+                }
+            )
+            self._account_exports[(account_id, export_id)] = completed
+            self._jobs[(account_id, job.id)] = completed_job
+            if self._active_export_by_account.get(account_id) == export_id:
+                self._active_export_by_account.pop(account_id)
+            return completed.model_copy(deep=True)
+
+    async def fail_account_export(
+        self,
+        *,
+        account_id: str,
+        export_id: str,
+        lease_id: str,
+        error_code: str,
+        failed_at: datetime,
+    ) -> bool:
+        async with self._lock:
+            account_export = self._account_exports.get((account_id, export_id))
+            if account_export is None:
+                raise AccountExportNotFound
+            job = self._jobs.get((account_id, account_export.job_id))
+            if (
+                account_export.status != AccountExportStatus.BUILDING
+                or job is None
+                or job.status != JobStatus.LEASED
+                or job.lease_id != lease_id
+            ):
+                return False
+            self._account_exports[(account_id, export_id)] = account_export.model_copy(
+                update={
+                    "status": AccountExportStatus.FAILED,
+                    "failed_at": failed_at,
+                    "last_error_code": error_code,
+                }
+            )
+            self._jobs[(account_id, job.id)] = job.model_copy(
+                update={
+                    "status": JobStatus.FAILED,
+                    "lease_id": None,
+                    "lease_owner": None,
+                    "lease_expires_at": None,
+                    "failed_at": failed_at,
+                    "last_error_code": error_code,
+                    "last_error_message": None,
+                }
+            )
+            if self._active_export_by_account.get(account_id) == export_id:
+                self._active_export_by_account.pop(account_id)
+            return True
 
     async def create_inbound_mail_address(
         self,

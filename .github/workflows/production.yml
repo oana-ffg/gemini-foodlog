@@ -206,7 +206,7 @@ jobs:
         run: |
           curl --fail --silent --show-error https://foodlog-api-sptvo5nsga-ew.a.run.app/health | jq -e '.status == "ok" and .mode == "production"'
 
-          for service in foodlog-api foodlog-image foodlog-inference foodlog-mail-worker foodlog-notification; do
+          for service in foodlog-api foodlog-export-worker foodlog-image foodlog-inference foodlog-mail-worker foodlog-notification; do
             service_json="$(gcloud run services describe "$service" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json)"
             jq --arg image "$NEW_IMAGE" -e '.spec.template.spec.containers[0].image == $image and ([.status.conditions[]? | select(.type == "Ready" and .status == "True")] | length) == 1' <<< "$service_json"
           done

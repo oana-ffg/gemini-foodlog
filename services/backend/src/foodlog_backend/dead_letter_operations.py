@@ -12,6 +12,7 @@ from google.api_core.exceptions import DeadlineExceeded
 from google.cloud import pubsub_v1
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from .account_export_events import AccountExportRequestedEventV1
 from .audit import build_audit_event
 from .image_events import CaptureStoredEventV1
 from .mail_events import RawMailStoredEventV1
@@ -35,6 +36,7 @@ MAX_DEAD_LETTER_MESSAGES = 10
 
 
 class DeadLetterStream(StrEnum):
+    EXPORT = "export"
     IMAGE = "image"
     MAIL = "mail"
     NOTIFICATION = "notification"
@@ -159,6 +161,9 @@ def expected_source_subscriptions(
 
 
 def _event_identity(stream: DeadLetterStream, event: BaseModel) -> tuple[str, str, str]:
+    if stream == DeadLetterStream.EXPORT:
+        assert isinstance(event, AccountExportRequestedEventV1)
+        return event.account_id, "account_export", event.export_id
     if stream == DeadLetterStream.IMAGE:
         assert isinstance(event, CaptureStoredEventV1)
         return event.account_id, "capture", event.capture_id
@@ -219,7 +224,9 @@ def _decode_message(
     if not isinstance(decoded, dict):
         raise ValueError("dead-letter payload is not a JSON object")
     event_type: type[BaseModel]
-    if stream == DeadLetterStream.IMAGE:
+    if stream == DeadLetterStream.EXPORT:
+        event_type = AccountExportRequestedEventV1
+    elif stream == DeadLetterStream.IMAGE:
         event_type = CaptureStoredEventV1
     elif stream == DeadLetterStream.MAIL:
         event_type = RawMailStoredEventV1

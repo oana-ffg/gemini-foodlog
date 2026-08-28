@@ -144,6 +144,7 @@ data "google_iam_policy" "retained_bucket" {
 
       members = [
         "serviceAccount:${google_service_account.runtime["api"].email}",
+        "serviceAccount:${google_service_account.runtime["worker"].email}",
       ]
     }
   }
@@ -203,7 +204,7 @@ data "google_iam_policy" "exports" {
     role = "roles/storage.objectCreator"
 
     members = [
-      "serviceAccount:${google_service_account.runtime["api"].email}",
+      "serviceAccount:${google_service_account.runtime["worker"].email}",
     ]
   }
 

@@ -46,13 +46,108 @@
         "title": "Account",
         "type": "object"
       },
+      "AccountExportStatus": {
+        "enum": [
+          "pending",
+          "building",
+          "completed",
+          "failed"
+        ],
+        "title": "AccountExportStatus",
+        "type": "string"
+      },
       "AccountExportView": {
         "additionalProperties": false,
         "properties": {
+          "archive_sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Sha256"
+          },
+          "archive_size": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Size"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "failed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed At"
+          },
           "id": {
             "pattern": "^[0-9a-f]{64}$",
             "title": "Id",
             "type": "string"
+          },
+          "last_error_code": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error Code"
+          },
+          "manifest_sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manifest Sha256"
           },
           "requested_at": {
             "format": "date-time",
@@ -71,14 +166,12 @@
             "type": "string"
           },
           "status": {
-            "const": "pending",
-            "default": "pending",
-            "title": "Status",
-            "type": "string"
+            "$ref": "#/components/schemas/AccountExportStatus"
           }
         },
         "required": [
           "id",
+          "status",
           "snapshot_at",
           "requested_at"
         ],

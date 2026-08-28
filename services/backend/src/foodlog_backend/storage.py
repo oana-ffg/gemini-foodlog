@@ -1,7 +1,9 @@
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from hashlib import sha256
+from tempfile import TemporaryFile
+from typing import BinaryIO, Protocol
 
 from google.api_core.exceptions import PreconditionFailed
 from google.cloud import storage
@@ -46,6 +48,32 @@ class ObjectStore(Protocol):
 
     async def metadata(self, account_id: str, key: str) -> ObjectMetadata: ...
 
+    async def put_file(
+        self,
+        account_id: str,
+        key: str,
+        source: BinaryIO,
+        content_type: str,
+        content_sha256: str,
+    ) -> bool: ...
+
+    async def download_to_file(
+        self,
+        account_id: str,
+        key: str,
+        destination: BinaryIO,
+    ) -> None: ...
+
+
+def file_sha256(source: BinaryIO) -> str:
+    position = source.tell()
+    source.seek(0)
+    digest = sha256()
+    while chunk := source.read(1024 * 1024):
+        digest.update(chunk)
+    source.seek(position)
+    return digest.hexdigest()
+
 
 class InMemoryObjectStore:
     """Local-only object storage adapter; production must use private GCS."""
@@ -88,6 +116,32 @@ class InMemoryObjectStore:
                 crc32c=None,
                 updated_at=None,
             )
+
+    async def put_file(
+        self,
+        account_id: str,
+        key: str,
+        source: BinaryIO,
+        content_type: str,
+        content_sha256: str,
+    ) -> bool:
+        if file_sha256(source) != content_sha256:
+            raise ValueError("File hash does not match the declared content SHA-256")
+        position = source.tell()
+        source.seek(0)
+        content = source.read()
+        source.seek(position)
+        return await self.put(account_id, key, content, content_type)
+
+    async def download_to_file(
+        self,
+        account_id: str,
+        key: str,
+        destination: BinaryIO,
+    ) -> None:
+        content = await self.get(account_id, key)
+        destination.write(content)
+        destination.seek(0)
 
 
 class GCSObjectStore:
@@ -143,3 +197,45 @@ class GCSObjectStore:
             crc32c=blob.crc32c,
             updated_at=blob.updated,
         )
+
+    async def put_file(
+        self,
+        account_id: str,
+        key: str,
+        source: BinaryIO,
+        content_type: str,
+        content_sha256: str,
+    ) -> bool:
+        validate_account_object_key(account_id, key)
+        if file_sha256(source) != content_sha256:
+            raise ValueError("File hash does not match the declared content SHA-256")
+        blob = self._bucket.blob(key)
+        source.seek(0)
+        try:
+            await asyncio.to_thread(
+                blob.upload_from_file,
+                source,
+                content_type=content_type,
+                if_generation_match=0,
+                rewind=True,
+            )
+            return True
+        except PreconditionFailed:
+            await asyncio.to_thread(blob.reload)
+            if blob.content_type != content_type:
+                raise ValueError("Object key already contains different content") from None
+            with TemporaryFile("w+b") as existing:
+                await asyncio.to_thread(blob.download_to_file, existing)
+                if file_sha256(existing) != content_sha256:
+                    raise ValueError("Object key already contains different content") from None
+            return False
+
+    async def download_to_file(
+        self,
+        account_id: str,
+        key: str,
+        destination: BinaryIO,
+    ) -> None:
+        validate_account_object_key(account_id, key)
+        await asyncio.to_thread(self._bucket.blob(key).download_to_file, destination)
+        destination.seek(0)
