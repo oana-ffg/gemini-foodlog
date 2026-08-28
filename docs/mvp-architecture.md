@@ -89,7 +89,7 @@ The three areas do not imply exactly three packages or deployable processes. The
 
 - **Backend and agent orchestration:** Python.
 - **Web application:** TypeScript with React and Vite.
-- **Physical firmware:** the language required by the selected microcontroller toolchain, expected to be C or C++.
+- **Physical firmware:** C++ on ESP-IDF, targeting the M5Stack Unit CamS3-5MP U174-B.
 - **Webcam simulator:** Python.
 - **Cross-language contracts:** generated OpenAPI and JSON Schema artifacts rather than manually duplicated types.
 
@@ -194,6 +194,15 @@ Clients keep a bounded persistent queue of captures that have not received a bac
 The web application can request webcam permission, run local motion/change detection, and upload accepted frames using the same event and quota semantics as the other clients. A browser-camera record distinguishes these captures from physical devices and lets the user name or revoke the source without creating a reusable device token in browser storage.
 
 Browser capture is a zero-install evaluation path, not equivalent to an unattended appliance. The UI states clearly that its tab must remain open and the computer awake, and it surfaces when capture has paused because permission, visibility, connectivity, or the media stream changed. A bounded IndexedDB queue preserves unacknowledged captures across temporary connection failures without promising reliable capture after the browser or operating system terminates the tab.
+
+### 4.3a Physical camera target
+
+The MVP physical client targets the M5Stack Unit CamS3-5MP U174-B. It replaces the
+factory firmware, captures no audio, provisions only through deliberate physical
+USB access, stores Wi-Fi and the revocable FoodLog device credential in encrypted
+NVS, and encrypts queued images on microSD. The exact hardware rationale,
+provisioning protocol, security staging, and bench gate are defined in
+[the physical camera design](physical-camera-design.md).
 
 ### 4.4 Capture state machine
 
@@ -976,8 +985,6 @@ The design must handle ordinary retries and partial failures without corrupting 
 
 The following details remain intentionally unresolved:
 
-- exact physical microcontroller board and camera module;
-- secure local provisioning and storage mechanism for the selected microcontroller;
 - local motion/change-detection algorithm;
 - calibrated inactivity threshold, reopen window, and segment-affinity rules;
 - exact persistent queue capacity supported by the selected device;
