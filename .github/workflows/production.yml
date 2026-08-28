@@ -123,6 +123,7 @@ jobs:
           npm ci
           npm run typecheck
           npm test --workspace @foodlog/web
+          npm run test:hosting-config
           npm run build
           cd services/backend
           uv sync --frozen

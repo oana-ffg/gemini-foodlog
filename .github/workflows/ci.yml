@@ -37,6 +37,9 @@ jobs:
       - name: Test
         run: npm test --workspace @foodlog/web
 
+      - name: Test Firebase Hosting security configuration
+        run: npm run test:hosting-config
+
       - name: Build
         run: npm run build
 
