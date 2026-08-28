@@ -365,7 +365,7 @@
       ["SEC-007", "Done"],
       ["SEC-008", "Done"],
       ["SEC-009", "In Progress"],
-      ["SEC-010", "In Progress"],
+      ["SEC-010", "Done"],
       ["SEC-011", "Blocked"],
       ["REL-009", "Needs Long Test"],
     ]);
@@ -377,6 +377,7 @@
       ["SEC-004", "Completed 28 Aug 2026 after Oana explicitly approved the data-preserving cleanup. Both synthetic smoke owners were reclaimed with immutable audit evidence, their retained records and images were preserved, the public counter converged to two active accounts, a restore-and-reclaim production smoke passed, and final reconciliation reported zero problems."],
       ["SEC-007", "Completed 29 Aug 2026 by explicit Oana acceptance of the already-public history after the exact exposure was explained. Preserve the auditable contest-period history; do not rewrite it. Fresh logged-out checks returned HTTP 200 for the repository and a current commit, and the complete Git history still contains the two already-disclosed commit identities plus historical test-account and privilege mappings. No visibility, author, mapping, or history mutation was performed."],
       ["SEC-008", "Completed 28 Aug 2026 on digest sha256:57641ee2c1ee23a53831d29a7dff47393f64d768888a1fe36df75e5cb4020557. Production /docs, /docs/oauth2-redirect, /redoc, and /openapi.json each return 404 while /health returns production/ok. The hosted app also returns CSP frame-ancestors none and X-Frame-Options DENY."],
+      ["SEC-010", "Completed 29 Aug 2026 after Oana explicitly approved the recommended false-positive disposition. Fresh GCP readback proved the sole FoodLog web key remains HTTP-referrer restricted to localhost and the two Firebase Hosting domains and API-restricted to Firebase App Check, Installations, Identity Toolkit, and Secure Token. GitHub alert 1 points only to the intentional public Firebase client config and now reads state resolved, resolution false_positive, with the restriction evidence recorded in its resolution comment."],
       ["SEC-011", "The protected release pipeline and completed deployed controls are green. The final consolidated regression gate is blocked only on Oana's explicit SEC-007 public-history decision, SEC-009 project-license choice, and SEC-010 GitHub alert disposition; resume immediately after those release decisions."],
     ]);
 
