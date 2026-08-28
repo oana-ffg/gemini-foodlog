@@ -487,6 +487,7 @@ export type ProcessingStage =
   | "analysis_pending"
   | "analysis_active"
   | "analysis_retrying"
+  | "evaluation_complete"
   | "complete"
   | "attention_required";
 

@@ -19,6 +19,7 @@ const stageText: Record<CaptureProcessing["stage"], string> = {
   analysis_pending: "Kitchen event is waiting for Gemini analysis.",
   analysis_active: "Gemini analysis is running.",
   analysis_retrying: "Gemini analysis failed and is scheduled to retry.",
+  evaluation_complete: "An internal model evaluation finished without publishing a journal result.",
   complete: "Analysis completed.",
   attention_required: "Processing did not reach a valid next stage and needs attention.",
 };

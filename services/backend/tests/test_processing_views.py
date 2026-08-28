@@ -125,3 +125,30 @@ def test_grouped_stored_capture_reports_the_inference_job_not_grouping_complete(
     assert view.stage == "analysis_retrying"
     assert view.attempt_count == 2
     assert view.latest_failure_code == "provider_timeout"
+
+
+def test_successful_evaluation_is_not_presented_as_a_failed_product_retry() -> None:
+    evaluated = capture(status=CaptureStatus.STORED, event_id="event-001")
+    evaluation_job = job(
+        kind=JobKind.EVENT_INFERENCE,
+        subject_id="event-001",
+        attempt_count=2,
+    ).model_copy(
+        update={
+            "last_error_code": "EvaluationComplete",
+            "last_error_message": (
+                "Evaluation inference completed without publishing a product result."
+            ),
+        }
+    )
+
+    view = capture_processing_view(
+        evaluated,
+        grouping_job=None,
+        inference_job=evaluation_job,
+    )
+
+    assert view.stage == "evaluation_complete"
+    assert view.attempt_count == 0
+    assert view.retry_at is None
+    assert view.latest_failure_code is None

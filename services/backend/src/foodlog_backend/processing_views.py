@@ -13,6 +13,7 @@ ProcessingStage = Literal[
     "analysis_pending",
     "analysis_active",
     "analysis_retrying",
+    "evaluation_complete",
     "complete",
     "attention_required",
 ]
@@ -43,6 +44,17 @@ def capture_processing_view(
     if capture.event_id is not None:
         if inference_job is None:
             return _view(capture, "attention_required")
+        if (
+            inference_job.status == JobStatus.PENDING
+            and inference_job.last_error_code == "EvaluationComplete"
+        ):
+            return CaptureProcessingView(
+                capture_id=capture.id,
+                camera_id=capture.camera_id,
+                captured_at=capture.created_at,
+                stage="evaluation_complete",
+                attempt_count=0,
+            )
         if inference_job.status == JobStatus.COMPLETED:
             return _view(
                 capture,

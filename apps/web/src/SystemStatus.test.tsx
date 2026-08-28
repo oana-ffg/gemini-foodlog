@@ -84,6 +84,7 @@ describe("degraded system-state matrix", () => {
     "analysis_pending",
     "analysis_active",
     "analysis_retrying",
+    "evaluation_complete",
     "attention_required",
 ] as const)("renders %s as unresolved", (stage) => {
     const html = renderStatus({ processing: [processing(stage)] });
@@ -96,5 +97,13 @@ describe("degraded system-state matrix", () => {
     const html = renderStatus({ processing: [processing("complete")] });
 
     expect(html).toContain("All recent images finished processing");
+  });
+
+  it("distinguishes an evaluation-only result from a failed retry", () => {
+    const html = renderStatus({ processing: [processing("evaluation_complete")] });
+
+    expect(html).toContain("internal model evaluation finished");
+    expect(html).not.toContain("failed attempt");
+    expect(html).not.toContain("scheduled to retry");
   });
 });
