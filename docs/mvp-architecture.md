@@ -102,7 +102,7 @@ apps/
   web/                    user-facing application and browser trial capture
 clients/
   python/                 reproducible fixture and webcam capture client
-  camera-firmware/        planned physical microcontroller client
+  camera-firmware/        portable C++ core; ESP-IDF hardware adapters pending
 services/
   backend/                API, workers, domain core, GCP adapters, and ADK agent
   mail-gateway/           deployed App Engine inbound-email transport
