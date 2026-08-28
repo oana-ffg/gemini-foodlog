@@ -13,13 +13,15 @@ from scripts.prepare_judge_dataset import (
     RealScenarioSpec,
     checked_fixture,
     load_dataset,
+    scenario_client_version,
+    scenario_idempotency_key,
     validate_activity,
 )
 from scripts.synthetic_dataset_support import seed_synthetic_meal
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_ROOT = REPOSITORY_ROOT / "tests" / "fixtures"
-MANIFEST = FIXTURE_ROOT / "judge-demo-dataset.v2.json"
+MANIFEST = FIXTURE_ROOT / "judge-demo-dataset.v3.json"
 
 
 def test_judge_dataset_manifest_is_complete_and_hash_locked() -> None:
@@ -29,14 +31,37 @@ def test_judge_dataset_manifest_is_complete_and_hash_locked() -> None:
     assert [item.key for item in dataset.real_inference_scenarios] == [
         "red-before-learning",
         "red-after-learning",
-        "ambiguous-with-context-v2",
+        "ambiguous-with-context-v3",
         "cat-negative-control",
     ]
+    retry = dataset.real_inference_scenarios[2]
+    assert retry.attempt == 2
+    assert scenario_client_version(retry) == "judge-demo-v1-retry-2"
+    assert scenario_idempotency_key(dataset.dataset_id, retry) == (
+        "judge-demo-v1-ambiguous-with-context-v3-retry-2"
+    )
     assert len(dataset.synthetic_pattern_history.events) == 6
     assert dataset.synthetic_pattern_history.expected_claim_value == "Steak"
     assert all(
         event.captured_at.weekday() == 3
         for event in dataset.synthetic_pattern_history.events
+    )
+
+
+def test_default_scenario_preserves_original_upload_identity() -> None:
+    scenario = RealScenarioSpec.model_validate(
+        {
+            "key": "red-before-learning",
+            "fixture": "images/adversarial/synthetic-distant-red-meat-pack.png",
+            "sha256": "0" * 64,
+            "captured_at": "2026-08-25T18:00:00+02:00",
+            "expected_kind": "tentative_meal",
+        }
+    )
+
+    assert scenario_client_version(scenario) == "judge-demo-v1"
+    assert scenario_idempotency_key("judge-demo-v1", scenario) == (
+        "judge-demo-v1-red-before-learning-v1"
     )
 
 

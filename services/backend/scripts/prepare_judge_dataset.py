@@ -67,6 +67,7 @@ class RealScenarioSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     key: str = Field(pattern=r"^[a-z0-9-]+$")
+    attempt: int = Field(default=1, ge=1, le=3)
     fixture: Path
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     captured_at: datetime
@@ -208,6 +209,19 @@ def sign_in(
     return payload["localId"], payload["idToken"]
 
 
+def scenario_client_version(scenario: RealScenarioSpec) -> str:
+    if scenario.attempt == 1:
+        return DATASET_CLIENT_VERSION
+    return f"{DATASET_CLIENT_VERSION}-retry-{scenario.attempt}"
+
+
+def scenario_idempotency_key(dataset_id: str, scenario: RealScenarioSpec) -> str:
+    base = f"{dataset_id}-{scenario.key}"
+    if scenario.attempt == 1:
+        return f"{base}-v1"
+    return f"{base}-retry-{scenario.attempt}"
+
+
 def upload_browser_fixture(
     client: httpx.Client,
     *,
@@ -216,6 +230,7 @@ def upload_browser_fixture(
     captured_at: datetime,
     sequence_id: str,
     sequence_number: int,
+    client_version: str,
     idempotency_key: str,
 ) -> tuple[str, bool]:
     from PIL import Image
@@ -228,7 +243,7 @@ def upload_browser_fixture(
         "camera_id": camera_id,
         "captured_at": captured_at.isoformat(),
         "client_kind": "browser",
-        "client_version": DATASET_CLIENT_VERSION,
+        "client_version": client_version,
         "sequence_id": sequence_id,
         "sequence_number": sequence_number,
         "width": width,
@@ -407,7 +422,8 @@ async def prepare(args: argparse.Namespace) -> None:
             ):
                 fixture = checked_fixture(args.fixture_root, scenario.fixture, scenario.sha256)
                 current_traces = trace_ids(client)
-                scenario_key = f"{spec.dataset_id}-{scenario.key}-v1"
+                client_version = scenario_client_version(scenario)
+                scenario_key = scenario_idempotency_key(spec.dataset_id, scenario)
                 captures = request_json(
                     client,
                     "GET",
@@ -420,7 +436,7 @@ async def prepare(args: argparse.Namespace) -> None:
                     capture.get("content_sha256") == scenario.sha256
                     and isinstance(capture.get("metadata"), dict)
                     and capture["metadata"].get("client_version")
-                    == DATASET_CLIENT_VERSION
+                    == client_version
                     and capture["metadata"].get("sequence_id") == spec.dataset_id
                     and capture["metadata"].get("sequence_number") == sequence_number
                     for capture in captures
@@ -438,6 +454,7 @@ async def prepare(args: argparse.Namespace) -> None:
                     captured_at=scenario.captured_at,
                     sequence_id=spec.dataset_id,
                     sequence_number=sequence_number,
+                    client_version=client_version,
                     idempotency_key=scenario_key,
                 )
                 if duplicate != already_uploaded:
