@@ -241,9 +241,7 @@ class FirestoreMailRepository:
 
     def _require_active_account(self, transaction, *, account_id: str) -> None:
         account = (
-            self._client.collection("accounts")
-            .document(account_id)
-            .get(transaction=transaction)
+            self._client.collection("accounts").document(account_id).get(transaction=transaction)
         )
         if not account.exists or account.get("status") != "active":
             raise UnknownRecipient

@@ -379,9 +379,9 @@ def _walk_parts(message: Message, *, depth: int = 0) -> list[Message]:
     return parts
 
 
-def _validate_part_headers(part: Message) -> None:
+def _validate_part_headers(part: Message, *, max_header_count: int) -> None:
     headers = list(part.raw_items())
-    if len(headers) > MAX_PART_HEADER_COUNT:
+    if len(headers) > max_header_count:
         raise UnsafeMail("too_many_part_headers")
     for name in ("content-disposition", "content-transfer-encoding", "content-type"):
         if len(part.get_all(name, [])) > 1:
@@ -407,10 +407,16 @@ def inspect_untrusted_mime(raw_message: bytes) -> MimeInspection:
     parts = _walk_parts(message)
     attachments = 0
     content_types: set[str] = set()
-    for part in parts:
+    for index, part in enumerate(parts):
         if part.defects:
             raise UnsafeMail("malformed_mime")
-        _validate_part_headers(part)
+        # The root is an RFC message envelope and legitimately accumulates bounded
+        # transport/authentication trace headers while being forwarded. Child MIME
+        # parts have no such role and retain the tighter per-part ceiling.
+        _validate_part_headers(
+            part,
+            max_header_count=(MAX_HEADER_COUNT if index == 0 else MAX_PART_HEADER_COUNT),
+        )
         content_type = part.get_content_type().casefold()
         content_types.add(content_type)
         if part.is_multipart():

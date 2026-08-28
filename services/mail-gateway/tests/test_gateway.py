@@ -822,6 +822,33 @@ def test_real_nemlig_octet_stream_pdf_shape_is_narrowly_accepted(gateway) -> Non
     )
 
 
+def test_forwarded_message_allows_bounded_root_transport_trace_headers(gateway) -> None:
+    message = mime_message()
+    for index in range(43):
+        message[f"X-Transit-Trace-{index}"] = "bounded"
+
+    record = gateway[0].receive(
+        recipient=RECIPIENT,
+        raw_message=as_smtp_bytes(message),
+    )
+
+    assert record.status == "published"
+
+
+def test_child_mime_part_retains_tight_header_ceiling(gateway) -> None:
+    message = mime_message()
+    message.add_alternative("<p>Bounded HTML</p>", subtype="html")
+    html_part = list(message.walk())[-1]
+    for index in range(domain.MAX_PART_HEADER_COUNT):
+        html_part[f"X-Part-Metadata-{index}"] = "bounded"
+
+    assert_rejected_without_side_effects(
+        gateway,
+        as_smtp_bytes(message),
+        "too_many_part_headers",
+    )
+
+
 def test_octet_stream_pdf_name_without_pdf_magic_is_rejected(gateway) -> None:
     message = mime_message()
     message.add_attachment(
