@@ -159,8 +159,26 @@ flow. None can change bucket policy or delete retained objects.
 and CI deployment service accounts. Runtime data-plane accounts receive Firestore
 user access, while bucket roles are assigned per data flow in `storage.tf`. Terraform
 does not create service-account keys. The CI identities remain unusable from GitHub
-until repository-scoped Workload Identity Federation and deployment resources are
-defined by their dependent backlog tasks.
+for deployment until INF-016 grants the exact resource operations required by its
+workflows.
+
+### Keyless GitHub Actions trust
+
+`workload_identity.tf` owns an API-deletion-protected Workload Identity pool and OIDC
+provider for GitHub Actions. The provider requires all of these claims together:
+
+- immutable repository ID `1343967496` and owner ID `212630009`;
+- immutable subject prefix for `oana-ffg/gemini-foodlog`;
+- exact `refs/heads/main` ref;
+- exact `production` job environment.
+
+Only that repository-ID principal set may impersonate the dedicated CI infrastructure
+and deployment accounts, and neither binding creates a service-account key. GitHub's
+repository-level immutable subject option is enabled. Its `production` environment
+allows only `main`, requires Oana's approval, permits Oana to approve her own release,
+and forbids administrator bypass. Pull-request checks must not reference this
+environment or request an OIDC token. The first real accepted/rejected token exchange
+is exercised by INF-016's workflow smoke; static readback alone does not claim it.
 
 ## Firebase foundation
 

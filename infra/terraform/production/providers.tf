@@ -64,6 +64,7 @@ locals {
     "securetoken.googleapis.com",
     "serviceusage.googleapis.com",
     "storage.googleapis.com",
+    "sts.googleapis.com",
   ])
 }
 
