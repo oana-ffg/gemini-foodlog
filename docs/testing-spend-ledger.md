@@ -38,9 +38,12 @@ Operational rules:
 | 2026-08-28 22:06 CEST | Judge cat-control terminal-resume check | 0.000000 | 0.041811 | The existing exhausted cat event remained safely terminal at `attention_required`; no activity was published and the post-attempt production query found no new `model_usage_recorded` event. This verifies retry containment but does not constitute a fresh cat classification. |
 | 2026-08-28 22:08 CEST | Fresh judge cat negative control | 0.283721 | 0.325532 | Two immutable production usage rows for event `524d2dc0-ebe8-4757-81b8-8eb9b1fd7e7e`: primary Gemini 3.6 Flash attempt failed after 34,523 tokens at DKK 0.244484; its single repair attempt failed after 4,261 tokens at DKK 0.039237. The event failed closed at `attention_required`; no activity or discard revision was published. |
 | 2026-08-28 22:21 CEST | Post-v12 judge cat negative control | 0.546098 | 0.871630 | Two immutable production usage rows for revised event `524d2dc0-ebe8-4757-81b8-8eb9b1fd7e7e`: primary Gemini 3.6 Flash attempt failed after 37,232 tokens at DKK 0.269518; its bounded repair succeeded after 37,878 tokens at DKK 0.276580. The seeder then verified `likely_non_cooking`, wrote immutable not-cooking feedback, and reported one discarded entry. |
+| 2026-08-28 23:45 CEST | Judge ambiguity v3 quota-project preflight | 0.000000 | 0.871630 | Firebase Admin rejected the ambient `ffutils` quota project before upload or inference. The operator seeder now supplies an explicit target-project quota credential, covered by a focused regression. No model-usage row was created. |
+| 2026-08-28 23:47 CEST | Judge ambiguity v3 idempotent resume | 0.000000 | 0.871630 | The fixed seeder resumed the immutable attempt-three activity and correctly rejected its missing context-note citation. A post-attempt usage reconciliation found zero new rows, proving no paid provider call ran. |
+| 2026-08-28 23:50 CEST | Judge ambiguity v4 semantic-guard control | 0.248385 | 1.120015 | One immutable successful `model_usage` row for event `1a9662d4-bc22-428b-8aae-6b120dea219d`: Gemini 3.6 Flash, prompt `food-event-v12`, 31,079 prompt plus 1,311 response tokens, 32,390 total, `actual_dkk_micros=248385`. The strict seeder accepted uncertain confidence, the focused candidate question, and the exact synthetic context-note citation. The judge account remains within its hard ceiling at 23 of 25 traces. |
 
 ## Current balance
 
 - Authorized ceiling: **DKK 200.000000**
-- Recorded spend since authorization: **DKK 0.871630**
-- Remaining authorized testing budget: **DKK 199.128370**
+- Recorded spend since authorization: **DKK 1.120015**
+- Remaining authorized testing budget: **DKK 198.879985**
