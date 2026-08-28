@@ -1,0 +1,225 @@
+# Devpost submission copy and judge test plan
+
+- **Hackathon:** Google All Things Agentic Hackathon 2026
+- **Category:** The Taskmaster
+- **Hosted application:** <https://gemini-foodlog-2026.web.app>
+- **Repository:** <https://github.com/oana-ffg/gemini-foodlog>
+- **Language:** English
+- **Last reconciled with the official rules:** 2026-08-28
+
+This file is the source-controlled submission copy. It deliberately contains no
+password, private inbound-mail address, camera token, or private household data.
+The dedicated judge credential belongs only in Devpost's private testing
+instructions after the privacy-safe account is provisioned and verified.
+
+## Short description
+
+Gemini FoodLog is an autonomous, uncertainty-aware food journal that reconstructs
+meals from ordinary, unstaged kitchen activity. It observes imperfect camera
+frames over time, combines them with authorized household context, asks only
+focused questions, learns from corrections, and maintains an inspectable food
+timeline on Google Cloud.
+
+## The friction
+
+Food and symptom diaries can help people investigate possible triggers, but
+manual logging is burdensome and incomplete. Existing approaches still ask the
+person to photograph a plate, scan packaging, weigh ingredients, search for a
+dish, or type a description. FoodLog starts with a stricter requirement: the
+household should not have to change how it cooks.
+
+Real kitchen evidence is messy. A hand obscures an ingredient, a label faces
+away, several low-quality frames belong to one event, leftovers resemble a new
+meal, and a pet on the counter is activity but not cooking. The useful unit of
+work is therefore not one image classification. It is a background workflow
+that gathers evidence, maintains a revisable hypothesis, retrieves only relevant
+context, decides when uncertainty deserves a question, and persists the result.
+
+## What the project does
+
+1. A signed-in phone camera, the Python capture client, or a revocable physical
+   camera credential sends ordinary JPEG or PNG observations through one API.
+2. The API enforces the account's image entitlement, stores the immutable image
+   privately, persists metadata, and publishes a durable event.
+3. Independent Cloud Run workers group captures into revisioned kitchen events
+   and run a Google ADK agent with Gemini 3.6 Flash on Vertex AI.
+4. The agent receives ordered private images plus bounded, account-scoped tools
+   for relevant purchases, temporary context notes, household knowledge, and
+   prior corrections. It emits an evidence-linked structured hypothesis rather
+   than an unsupported label.
+5. The web application shows the real image sequence, tentative or confirmed
+   meal, uncertainty, observations, alternatives, context used, and complete
+   revision history. The user can confirm it, correct a meal or component, or
+   discard an event as not cooking.
+6. Corrections remain in immutable history and can create versioned household
+   knowledge. Separate longitudinal questions let the agent ask whether a
+   repeated pattern is real without turning unidentified-meal questions into a
+   generic inbox.
+7. Optional authenticated Nemlig order and invoice emails become
+   provenance-preserving purchase evidence. A person can also add time-bounded
+   context such as an unusual ingredient expected tomorrow.
+8. The account-data page exposes the records FoodLog holds and supports a
+   private, temporary export. Stored evidence is tenant-scoped; browser clients
+   cannot read Firestore or Cloud Storage directly.
+
+The food timeline is intended to support later, cautious exploration of possible
+food and symptom associations. FoodLog does not diagnose conditions or claim
+causality. Calories are secondary to building a low-effort longitudinal record.
+
+## Why this is a Taskmaster agent
+
+FoodLog completes a messy personal workflow instead of returning a chat answer.
+It runs asynchronously, transforms unstructured multimodal observations into
+durable state, calls bounded retrieval tools, handles retries and partial
+failures, chooses whether human input is worth requesting, and updates a real
+product record. Its core action is maintaining the journal over time.
+
+## Technology and architecture
+
+- **Agent and model:** Google ADK, Google Gen AI SDK, Gemini 3.6 Flash, and the
+  Vertex AI `eu` multi-region.
+- **Google Cloud:** six scale-to-zero Cloud Run services, Pub/Sub with isolated
+  subscriptions and dead-letter paths, Firestore, private Cloud Storage,
+  Artifact Registry, Secret Manager, Cloud Logging, Cloud Monitoring, and an
+  App Engine inbound-mail gateway.
+- **User surface:** React, TypeScript, Vite, Firebase Hosting, and Firebase
+  Authentication.
+- **Capture clients:** protected browser manual/motion capture, a locked Python
+  client for fixtures or webcams, and a portable C++20 physical-camera capture
+  core targeting the M5Stack Unit CamS3-5MP.
+- **Delivery and operations:** Terraform, keyless GitHub Workload Identity
+  Federation, immutable container digests, protected deployment approval,
+  bounded model-spend reservation, and source-controlled operational runbooks.
+
+The [production architecture diagram](architecture-diagram.md) shows the public,
+asynchronous, agentic, and tenant-data boundaries. The [deployment guide](deployment.md)
+contains the clean-checkout and cloud release procedure.
+
+## Authorized data sources
+
+- kitchen images deliberately uploaded by the account's browser or camera;
+- user corrections, pattern answers, temporary context notes, and explicitly
+  taught household knowledge;
+- authenticated Nemlig confirmation and final-invoice email evidence forwarded
+  to an opaque per-account address;
+- application-generated capture, grouping, inference, purchase, feedback,
+  accounting, and revision metadata.
+
+No browser route receives direct Firestore or Cloud Storage credentials. Gemini
+receives only the bounded evidence selected for one account and one run. The
+application stores a redacted operational trace; it does not expose hidden model
+reasoning as a product claim.
+
+## Findings and learnings
+
+- **Time changes the problem.** A blurry ingredient can be ambiguous in one
+  frame but useful when combined with what appeared immediately before and
+  after it. Durable event grouping must precede meal reasoning.
+- **Uncertainty needs product semantics.** A weak best guess, a genuinely unknown
+  event, and non-cooking activity require different actions. A blanket “Looks
+  right” button teaches the wrong thing.
+- **Questions belong with their evidence.** Event-specific ambiguity stays on
+  the matching timeline card. A separate agent-observation surface is useful for
+  longitudinal hypotheses such as a recurring weekday breakfast pattern.
+- **Learning needs provenance and scope.** “The next white meat may be duck” is
+  temporary context; “this household often cooks steak in this basket” is a
+  revisable household belief. Confirmation must not silently broaden either.
+- **Retries are normal, not exceptional.** Images, Pub/Sub messages, model calls,
+  feedback, and email all need stable identities, immutable revisions, bounded
+  retry behavior, and inspectable failure states.
+- **Cost controls must exist before autonomy.** Public accounts are capped at 25,
+  public trials at 200 accepted images, Cloud Run at one instance per service,
+  and every Gemini workflow reserves against a DKK 400 application ceiling
+  before calling the provider.
+- **Privacy changes the architecture.** Account identity is derived from verified
+  authentication or server-owned events, object keys are server-generated,
+  direct browser database access is denied, and cross-tenant negative tests are
+  part of the release evidence.
+
+## Current limitations
+
+- The physical-camera package contains a tested portable capture, motion,
+  pacing, and retry core, but final board integration requires the selected
+  hardware and real-device endurance testing.
+- Manual phone capture works in the hosted app. Motion mode and offline queue
+  recovery still require the planned multi-hour real-phone test.
+- The live model path has passed bounded synthetic production smoke tests, but
+  prompt quality and question frequency still need the planned multi-day
+  ordinary-kitchen dataset and Oana's final normal-user evaluation.
+- Purchase grounding currently targets Nemlig confirmation and invoice emails;
+  it is optional and not a general retailer parser.
+- The judge account and reviewed synthetic dataset are a release artifact and
+  are not stored in this repository. They must be completed and verified before
+  submission.
+- The known promotional Google Cloud credit expires on 2026-09-24 while judging
+  ends on 2026-10-01. The project has hard usage controls, but availability for
+  that final seven-day interval still requires the explicit pre-expiry decision
+  in the [judge availability runbook](judge-availability-runbook.md).
+- The product supports exploratory food/symptom journaling; it is not a medical
+  device and does not make diagnostic or causal claims.
+
+## Judge testing instructions
+
+### Public pre-login check
+
+1. Open <https://gemini-foodlog-2026.web.app> in a fresh browser session.
+2. Confirm the sign-in boundary loads over HTTPS.
+3. Directly open `/camera`, `/context`, `/knowledge`, `/purchases`, and `/data`.
+   Each protected route should return the sign-in boundary rather than exposing
+   account data.
+
+### Authenticated workflow
+
+The final Devpost testing field must include the verified dedicated judge
+account's email and password. Those values must never be copied into this file,
+the repository, screenshots, logs, or the public video.
+
+After signing in with that dedicated account:
+
+1. On **Your food timeline**, open one reviewed synthetic cooking event. Switch
+   between its captured frames and inspect **Evidence and alternatives**,
+   **Context used**, and **View revision history**.
+2. Open one uncertain but tentative meal. Use **Correct it** to correct only a
+   meal or component and read the newly appended revision. Do not use private or
+   identifying text in the correction.
+3. Open the reviewed synthetic non-cooking event and use **Discard as not
+   cooking** if it is still provisional. Confirm it moves to **Discarded
+   non-cooking activity** while its evidence and revision history remain.
+4. Under **Patterns FoodLog wants you to check**, answer the reviewed synthetic
+   longitudinal question. Confirm the response is stored and the active
+   household knowledge reflects only the supported scope.
+5. Open **Tell FoodLog something**. Add a short time-bounded synthetic note,
+   confirm its visible validity window, then retire it so no test residue remains
+   active.
+6. Open **Open the household wiki** and inspect the selected page's immutable
+   revision history. No edit is required.
+7. Open **Inspect purchase evidence** and view the reviewed synthetic purchase
+   lifecycle. Do not forward or upload a real email during judging.
+8. Open **View all stored account data** and inspect the collection counts. If
+   testing export, request it once, wait for completion, download the private
+   archive, and sign out before sharing the browser.
+9. Open **Open the phone camera page** only for a manual synthetic snapshot.
+   Grant camera permission, register a browser camera, start it, use **Send
+   snapshot**, pause it, then return to the journal and refresh. Do not start an
+   unattended motion test during a short judge session.
+
+REL-003 owns creating this dedicated identity, loading only reviewed synthetic
+evidence, and replaying every step above. Until that ticket passes, these are the
+accurate intended steps, not a claim that the judge dataset already exists.
+
+## Submission rules reconciliation
+
+| Official requirement | FoodLog evidence | Final gate |
+| --- | --- | --- |
+| New project built during the 3–31 Aug 2026 submission period | Repository history and provenance audit in REL-007 | Oana resolves the final license and public-history decisions. |
+| Gemini 3.5 or newer plus a Google agent framework and Google Cloud infrastructure | Gemini 3.6 Flash through Google ADK/Gen AI SDK on Vertex AI; Cloud Run, Pub/Sub, Firestore, Storage, and other GCP services | Reconfirm the exact deployed release in REL-015. |
+| One category | The Taskmaster | Reconfirm on the Devpost form. |
+| Free working access through 1 Oct 2026 | Hosted Firebase URL, scale-to-zero runtime, account/trial caps, and judge-availability runbook | REL-002 needs the post-credit-expiry operating decision. |
+| English description covering features, technologies, data sources, findings, and learnings | This document | Fresh-reader and final-form review. |
+| Repository URL and spin-up instructions | Repository above; README and deployment guide | REL-008 needs final repository-sharing approval. |
+| Architecture diagram | `docs/architecture-diagram.md`, locally rendered and implementation-audited | Reconfirm its GitHub render after the next safe push. |
+| Public demonstration video, no longer than four minutes, showing Google Cloud execution | REL-009 and REL-010 | Record, privacy-review, publish, and add the final URL. |
+| English application and submission materials | English UI, documentation, test plan, and planned narration | Oana completes the final human language review. |
+| Privacy and IP-safe media | Synthetic judge data and explicit media review tickets | REL-011 remains Oana's frame-by-frame publication gate. |
+
+The authoritative requirements are the [official hackathon rules](https://allthingsagentichackathon.devpost.com/rules).
