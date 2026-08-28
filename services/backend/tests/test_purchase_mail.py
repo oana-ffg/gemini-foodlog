@@ -4,6 +4,7 @@ from base64 import b64encode
 from hashlib import sha256
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from foodlog_backend.mail_events import RawMailStoredEventV1
@@ -11,6 +12,8 @@ from foodlog_backend.mail_worker_app import MailWorkerSettings, create_mail_work
 from foodlog_backend.models import (
     PurchaseDocumentKind,
     PurchaseReconciliationDisposition,
+    RawMailAuthentication,
+    RawMailAuthenticationOutcome,
 )
 from foodlog_backend.purchase_mail import (
     MailClassificationOutcome,
@@ -27,12 +30,51 @@ def fixture(name: str) -> bytes:
     return (FIXTURES / name).read_bytes()
 
 
+def trusted_authentication(
+    raw_message: bytes,
+    *,
+    account_id: str,
+    mail_id: str,
+) -> RawMailAuthentication:
+    return RawMailAuthentication(
+        id=mail_id,
+        account_id=account_id,
+        raw_mail_id=mail_id,
+        raw_content_sha256=sha256(raw_message).hexdigest(),
+        outcome=RawMailAuthenticationOutcome.ALIGNED_DKIM_PASS,
+        signer_domain="nemlig.com",
+        signed_headers=("from", "subject", "mime-version", "content-type"),
+        verifier_version="test-aligned-dkim-v1",
+    )
+
+
+class FixtureMailAuthenticator:
+    async def authenticate(
+        self,
+        raw_message: bytes,
+        *,
+        account_id: str,
+        raw_mail_id: str,
+    ) -> RawMailAuthentication:
+        return trusted_authentication(
+            raw_message,
+            account_id=account_id,
+            mail_id=raw_mail_id,
+        )
+
+
 def classify(name: str, *, account_id: str = "account-a"):
     raw_message = fixture(name)
+    mail_id = sha256(raw_message).hexdigest()
     return classify_nemlig_purchase_email(
         raw_message,
         account_id=account_id,
-        mail_id=sha256(raw_message).hexdigest(),
+        mail_id=mail_id,
+        authentication=trusted_authentication(
+            raw_message,
+            account_id=account_id,
+            mail_id=mail_id,
+        ),
     )
 
 
@@ -95,6 +137,76 @@ def test_unrelated_nemlig_mail_and_unverified_sender_are_not_purchase_evidence()
     assert spoof_result.candidate is None
 
 
+@pytest.mark.parametrize(
+    "forged_header",
+    [b"Authentication-Results", b"ARC-Authentication-Results"],
+)
+def test_sender_controlled_authentication_results_cannot_authenticate_purchase(
+    forged_header: bytes,
+) -> None:
+    forged = fixture("order-confirmation.eml").replace(
+        b"Authentication-Results",
+        forged_header,
+    )
+
+    result = classify_nemlig_purchase_email(
+        forged,
+        account_id="account-a",
+        mail_id=sha256(forged).hexdigest(),
+    )
+
+    assert result.outcome == MailClassificationOutcome.NOT_TRUSTED_NEMLIG
+    assert result.candidate is None
+
+
+def test_mail_worker_persists_untrusted_verdict_for_forged_headers() -> None:
+    async def prepare():
+        repository = InMemoryRepository(public_account_limit=25, trial_image_limit=200)
+        store = InMemoryObjectStore()
+        account = await repository.provision_account("forged-mail-worker-owner")
+        content = fixture("order-confirmation.eml")
+        mail_id = sha256(content).hexdigest()
+        key = raw_mail_object_key(account_id=account.id, mail_id=mail_id)
+        await store.put(account.id, key, content, "message/rfc822")
+        await repository.seed_published_raw_mail(
+            account_id=account.id,
+            raw_mail_id=mail_id,
+            content_sha256=sha256(content).hexdigest(),
+        )
+        return repository, store, account.id, RawMailStoredEventV1(
+            account_id=account.id,
+            mail_id=mail_id,
+        )
+
+    repository, store, account_id, event = asyncio.run(prepare())
+    app = create_mail_worker_app(
+        worker_settings(),
+        repository=repository,
+        object_store=store,
+    )
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/internal/pubsub/raw-mail-stored",
+            json=push_envelope(event, message_id="forged-mail-message-1"),
+        )
+        retry = client.post(
+            "/internal/pubsub/raw-mail-stored",
+            json=push_envelope(event, message_id="forged-mail-message-2"),
+        )
+
+    authentication = asyncio.run(
+        repository.raw_mail_authentication(
+            account_id=account_id,
+            raw_mail_id=event.mail_id,
+        )
+    )
+    assert first.status_code == retry.status_code == 204
+    assert authentication is not None
+    assert authentication.outcome == RawMailAuthenticationOutcome.UNTRUSTED
+    assert repository._purchase_documents == {}
+
+
 def test_invoice_requires_matching_pdf_filename_and_magic_bytes() -> None:
     wrong_name = fixture("final-invoice.eml").replace(
         b"Faktura - 9000000001.pdf",
@@ -110,6 +222,11 @@ def test_invoice_requires_matching_pdf_filename_and_magic_bytes() -> None:
             raw_message,
             account_id="account-a",
             mail_id=sha256(raw_message).hexdigest(),
+            authentication=trusted_authentication(
+                raw_message,
+                account_id="account-a",
+                mail_id=sha256(raw_message).hexdigest(),
+            ),
         )
         assert result.outcome == MailClassificationOutcome.UNSUPPORTED_NEMLIG
         assert result.candidate is None
@@ -139,6 +256,7 @@ def test_mail_worker_preserves_confirmation_then_final_invoice_as_one_purchase()
         worker_settings(),
         repository=repository,
         object_store=store,
+        mail_authenticator=FixtureMailAuthenticator(),
     )
 
     with TestClient(app) as client:

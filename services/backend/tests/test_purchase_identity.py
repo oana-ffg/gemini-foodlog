@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from foodlog_backend.errors import (
     PurchaseDocumentConflict,
     PurchaseIdentityConflict,
+    RawMailAuthenticationConflict,
     RawMailNotFound,
 )
 from foodlog_backend.firestore_repository import FirestoreRepository
@@ -23,8 +24,15 @@ from foodlog_backend.models import (
     PurchaseItemDisposition,
     PurchaseItemDraft,
     PurchaseReconciliationDisposition,
+    RawMailAuthentication,
+    RawMailAuthenticationOutcome,
 )
 from foodlog_backend.repository import InMemoryRepository, purchase_identity_alias_id
+
+from .purchase_test_support import (
+    seed_authenticated_raw_mail,
+    trusted_authentication_for_candidate,
+)
 
 
 def digest(value: str) -> str:
@@ -51,11 +59,7 @@ def candidate(
 
 async def seed(repository, *candidates: PurchaseDocumentCandidate) -> None:
     for item in candidates:
-        await repository.seed_published_raw_mail(
-            account_id=item.account_id,
-            raw_mail_id=item.raw_mail_id,
-            content_sha256=item.raw_content_sha256,
-        )
+        await seed_authenticated_raw_mail(repository, item)
 
 
 def test_purchase_references_are_conservatively_normalized_and_bounded() -> None:
@@ -115,6 +119,41 @@ def test_transport_retry_is_idempotent_but_revised_documents_append() -> None:
         assert {first.purchase.id, second.purchase.id, third.purchase.id} == {first.purchase.id}
         assert [first.document.revision_number, second.document.revision_number] == [1, 2]
         assert third.document.revision_number == third.purchase.revision_count == 3
+
+    asyncio.run(scenario())
+
+
+def test_purchase_attachment_requires_matching_immutable_authentication() -> None:
+    async def scenario() -> None:
+        repository = InMemoryRepository(public_account_limit=25, trial_image_limit=200)
+        account = await repository.provision_account("purchase-auth-owner")
+        item = candidate(account.id, "purchase-auth", order_reference="order-123")
+        await repository.seed_published_raw_mail(
+            account_id=item.account_id,
+            raw_mail_id=item.raw_mail_id,
+            content_sha256=item.raw_content_sha256,
+        )
+
+        with pytest.raises(RawMailNotFound):
+            await repository.attach_purchase_document(item)
+
+        untrusted = RawMailAuthentication(
+            id=item.raw_mail_id,
+            account_id=item.account_id,
+            raw_mail_id=item.raw_mail_id,
+            raw_content_sha256=item.raw_content_sha256,
+            outcome=RawMailAuthenticationOutcome.UNTRUSTED,
+            verifier_version="test-aligned-dkim-v1",
+        )
+        recorded = await repository.record_raw_mail_authentication(untrusted)
+        retry = await repository.record_raw_mail_authentication(untrusted)
+        assert retry == recorded
+        with pytest.raises(RawMailNotFound):
+            await repository.attach_purchase_document(item)
+        with pytest.raises(RawMailAuthenticationConflict):
+            await repository.record_raw_mail_authentication(
+                trusted_authentication_for_candidate(item)
+            )
 
     asyncio.run(scenario())
 
@@ -230,6 +269,10 @@ def test_firestore_transaction_connects_only_exact_business_aliases() -> None:
             trial_image_limit=200,
             client=database,
         )
+        for item in (order, receipt):
+            await repository.record_raw_mail_authentication(
+                trusted_authentication_for_candidate(item)
+            )
 
         first = await repository.attach_purchase_document(order)
         second = await repository.attach_purchase_document(receipt)

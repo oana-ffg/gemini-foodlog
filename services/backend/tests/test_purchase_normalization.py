@@ -22,6 +22,8 @@ from foodlog_backend.purchase_normalization import (
 )
 from foodlog_backend.repository import InMemoryRepository
 
+from .purchase_test_support import seed_authenticated_raw_mail
+
 FIXTURES = Path(__file__).parent / "fixtures" / "nemlig"
 
 
@@ -238,11 +240,7 @@ def test_normalization_retry_is_idempotent_and_changed_payload_conflicts() -> No
             kind=PurchaseDocumentKind.ORDER_CONFIRMATION,
             order_reference="9000000001",
         )
-        await repository.seed_published_raw_mail(
-            account_id=account.id,
-            raw_mail_id=mail_id,
-            content_sha256=mail_id,
-        )
+        await seed_authenticated_raw_mail(repository, candidate)
         identity = await repository.attach_purchase_document(candidate)
         parsed = parse_order_confirmation(raw_message)
 

@@ -311,8 +311,11 @@ stay opaque in private storage. Only account/mail references plus an explicit
 `untrusted_external` trust class enter Pub/Sub; recognizing instruction-like prose is
 not used as a security control.
 
-The private mail worker independently requires the exact Nemlig sender plus aligned
-DKIM and DMARC results before it promotes any content into purchase evidence. Its
+The private mail worker independently verifies an aligned Nemlig DKIM signature over
+the exact retained bytes and requires a content-bound immutable verdict before it
+promotes any content into purchase evidence. Sender-authored authentication-result
+headers are ignored, and the repository checks the verdict again in the attachment
+transaction. Its
 first structural classifier recognizes the observed `Tak for din ordre` confirmation
 and numbered `Faktura` final-invoice shapes. The retailer's ten-digit identifier is
 explicitly labelled as the order number in the confirmation and appears in both the

@@ -35,6 +35,7 @@ EXPORT_COLLECTIONS = (
     "question_responses",
     "questions",
     "raw_mail",
+    "raw_mail_authentication",
     "segments",
     "traces",
     "user_context_notes",

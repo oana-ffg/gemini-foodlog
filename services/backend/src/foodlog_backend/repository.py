@@ -47,6 +47,7 @@ from .errors import (
     QuestionAlreadyAnswered,
     QuestionNotFound,
     QuestionSuperseded,
+    RawMailAuthenticationConflict,
     RawMailNotFound,
     TrialQuotaExhausted,
     UserContextNoteNotFound,
@@ -143,6 +144,8 @@ from .models import (
     QuestionResponseResult,
     QuestionResponseView,
     QuestionStatus,
+    RawMailAuthentication,
+    RawMailAuthenticationOutcome,
     UserContextNote,
     UserContextNoteCreate,
     UserContextNoteStatus,
@@ -672,6 +675,18 @@ class Repository(Protocol):
         address_hash: str,
     ) -> InboundMailAddress: ...
 
+    async def raw_mail_authentication(
+        self,
+        *,
+        account_id: str,
+        raw_mail_id: str,
+    ) -> RawMailAuthentication | None: ...
+
+    async def record_raw_mail_authentication(
+        self,
+        authentication: RawMailAuthentication,
+    ) -> RawMailAuthentication: ...
+
     async def attach_purchase_document(
         self,
         candidate: PurchaseDocumentCandidate,
@@ -1152,6 +1167,9 @@ class InMemoryRepository:
         self._inbound_mail_addresses: dict[str, InboundMailAddress] = {}
         self._inbound_mail_routes: dict[str, InboundMailRoute] = {}
         self._published_raw_mail: dict[tuple[str, str], str] = {}
+        self._raw_mail_authentication: dict[
+            tuple[str, str], RawMailAuthentication
+        ] = {}
         self._purchases: dict[tuple[str, str], Purchase] = {}
         self._purchase_documents: dict[tuple[str, str], PurchaseDocument] = {}
         self._purchase_aliases: dict[tuple[str, str], PurchaseIdentityAlias] = {}
@@ -1763,6 +1781,37 @@ class InMemoryRepository:
                 raise AccountNotProvisioned
             self._published_raw_mail[(account_id, raw_mail_id)] = content_sha256
 
+    async def raw_mail_authentication(
+        self,
+        *,
+        account_id: str,
+        raw_mail_id: str,
+    ) -> RawMailAuthentication | None:
+        async with self._lock:
+            authentication = self._raw_mail_authentication.get((account_id, raw_mail_id))
+            return authentication.model_copy(deep=True) if authentication else None
+
+    async def record_raw_mail_authentication(
+        self,
+        authentication: RawMailAuthentication,
+    ) -> RawMailAuthentication:
+        async with self._lock:
+            raw_content_sha256 = self._published_raw_mail.get(
+                (authentication.account_id, authentication.raw_mail_id)
+            )
+            if raw_content_sha256 != authentication.raw_content_sha256:
+                raise RawMailNotFound
+            key = (authentication.account_id, authentication.raw_mail_id)
+            existing = self._raw_mail_authentication.get(key)
+            if existing is not None:
+                if existing.model_dump(exclude={"verified_at"}) != authentication.model_dump(
+                    exclude={"verified_at"}
+                ):
+                    raise RawMailAuthenticationConflict
+                return existing.model_copy(deep=True)
+            self._raw_mail_authentication[key] = authentication.model_copy(deep=True)
+            return authentication.model_copy(deep=True)
+
     async def attach_purchase_document(
         self,
         candidate: PurchaseDocumentCandidate,
@@ -1774,6 +1823,16 @@ class InMemoryRepository:
                 (candidate.account_id, candidate.raw_mail_id)
             )
             if raw_content_sha256 != candidate.raw_content_sha256:
+                raise RawMailNotFound
+            authentication = self._raw_mail_authentication.get(
+                (candidate.account_id, candidate.raw_mail_id)
+            )
+            if (
+                authentication is None
+                or authentication.raw_content_sha256 != candidate.raw_content_sha256
+                or authentication.outcome
+                != RawMailAuthenticationOutcome.ALIGNED_DKIM_PASS
+            ):
                 raise RawMailNotFound
 
             document_key = (candidate.account_id, candidate.raw_mail_id)

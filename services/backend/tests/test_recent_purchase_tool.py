@@ -16,6 +16,8 @@ from foodlog_backend.models import (
 )
 from foodlog_backend.repository import InMemoryRepository
 
+from .purchase_test_support import seed_authenticated_raw_mail
+
 
 class StateContext:
     def __init__(self, account_id: str) -> None:
@@ -68,11 +70,7 @@ def test_recent_purchase_tool_prefers_delivery_and_preserves_uncertainty() -> No
             invoice_reference="synthetic-invoice-701",
         )
         for candidate in (confirmation, final):
-            await repository.seed_published_raw_mail(
-                account_id=account.id,
-                raw_mail_id=candidate.raw_mail_id,
-                content_sha256=candidate.raw_content_sha256,
-            )
+            await seed_authenticated_raw_mail(repository, candidate)
         confirmation_identity = await repository.attach_purchase_document(confirmation)
         final_identity = await repository.attach_purchase_document(final)
         await repository.normalize_purchase_document(

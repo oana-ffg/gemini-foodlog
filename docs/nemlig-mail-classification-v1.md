@@ -23,7 +23,8 @@ purchase. It never links messages by dates, totals, product similarity, or timin
 Purchase promotion requires all of the following:
 
 - the exact normalized sender `kontakt@nemlig.com`;
-- aligned passing DKIM and DMARC results for `nemlig.com` or its subdomains;
+- a cryptographically verified DKIM signature aligned to `nemlig.com` or one of its
+  subdomains, covering `From`, `Subject`, and the top-level MIME interpretation headers;
 - one of the two exact document structures above;
 - a bounded retailer-labelled numeric identifier;
 - for a final invoice, a matching PDF filename and decoded PDF signature.
@@ -32,5 +33,14 @@ Delivery updates, surveys, credit notes, support messages, incomplete purchase s
 or messages without aligned authentication remain raw retained mail and do not become
 purchase evidence. Email prose is passive input, never agent instructions.
 
+The private worker verifies the exact retained MIME bytes against the signer's DNS key,
+rejects partial-body (`l=`) signatures, and persists an immutable verdict bound to the
+account, raw-mail ID, and content hash. Both the classifier and the purchase-attachment
+transaction require that verdict. Sender-authored `Authentication-Results` and
+`ARC-Authentication-Results` headers are ignored. Resolver timeouts are retried; missing,
+invalid, or unaligned signatures are durably untrusted.
+
 The committed `.eml` fixtures contain synthetic identifiers and content while
-preserving the observed headers, MIME declaration, labels, and document relationship.
+preserving the observed MIME declaration, labels, and document relationship. Their
+invented authentication headers are deliberately not trusted; cryptographic verifier
+tests generate ephemeral keys at runtime and commit no private key.

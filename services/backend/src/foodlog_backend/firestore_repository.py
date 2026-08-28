@@ -47,6 +47,7 @@ from .errors import (
     QuestionAlreadyAnswered,
     QuestionNotFound,
     QuestionSuperseded,
+    RawMailAuthenticationConflict,
     RawMailNotFound,
     TrialQuotaExhausted,
     UserContextNoteNotFound,
@@ -136,6 +137,8 @@ from .models import (
     QuestionResponseResult,
     QuestionResponseView,
     QuestionStatus,
+    RawMailAuthentication,
+    RawMailAuthenticationOutcome,
     UserContextNote,
     UserContextNoteCreate,
     UserContextNoteStatus,
@@ -1082,6 +1085,62 @@ class FirestoreRepository:
 
         return await create(transaction)
 
+    async def raw_mail_authentication(
+        self,
+        *,
+        account_id: str,
+        raw_mail_id: str,
+    ) -> RawMailAuthentication | None:
+        snapshot = await self._collection(account_id, "raw_mail_authentication").document(
+            raw_mail_id
+        ).get()
+        if not snapshot.exists:
+            return None
+        authentication = _model(snapshot, RawMailAuthentication)
+        if (
+            authentication.account_id != account_id
+            or authentication.raw_mail_id != raw_mail_id
+        ):
+            raise RawMailAuthenticationConflict
+        return authentication
+
+    async def record_raw_mail_authentication(
+        self,
+        authentication: RawMailAuthentication,
+    ) -> RawMailAuthentication:
+        raw_mail_ref = self._collection(authentication.account_id, "raw_mail").document(
+            authentication.raw_mail_id
+        )
+        authentication_ref = self._collection(
+            authentication.account_id, "raw_mail_authentication"
+        ).document(authentication.raw_mail_id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def record(transaction):
+            raw_mail_snapshot = await raw_mail_ref.get(transaction=transaction)
+            existing_snapshot = await authentication_ref.get(transaction=transaction)
+            raw_mail_data = raw_mail_snapshot.to_dict() or {}
+            if (
+                not raw_mail_snapshot.exists
+                or raw_mail_data.get("account_id") != authentication.account_id
+                or raw_mail_data.get("status") not in {"stored", "published"}
+                or raw_mail_data.get("content_sha256")
+                != authentication.raw_content_sha256
+            ):
+                raise RawMailNotFound
+            if existing_snapshot.exists:
+                existing = _model(existing_snapshot, RawMailAuthentication)
+                if existing.model_dump(exclude={"verified_at"}) != authentication.model_dump(
+                    exclude={"verified_at"}
+                ):
+                    raise RawMailAuthenticationConflict
+                return existing
+            transaction.create(authentication_ref, _document(authentication))
+            return authentication
+
+        return await record(transaction)
+
     async def attach_purchase_document(
         self,
         candidate: PurchaseDocumentCandidate,
@@ -1090,6 +1149,9 @@ class FirestoreRepository:
         raw_mail_ref = self._collection(candidate.account_id, "raw_mail").document(
             candidate.raw_mail_id
         )
+        authentication_ref = self._collection(
+            candidate.account_id, "raw_mail_authentication"
+        ).document(candidate.raw_mail_id)
         document_ref = self._collection(candidate.account_id, "purchase_documents").document(
             candidate.raw_mail_id
         )
@@ -1110,6 +1172,7 @@ class FirestoreRepository:
         async def attach(transaction):
             account_snapshot = await account_ref.get(transaction=transaction)
             raw_mail_snapshot = await raw_mail_ref.get(transaction=transaction)
+            authentication_snapshot = await authentication_ref.get(transaction=transaction)
             document_snapshot = await document_ref.get(transaction=transaction)
             if not account_snapshot.exists or account_snapshot.get("status") != "active":
                 raise AccountNotProvisioned
@@ -1119,6 +1182,17 @@ class FirestoreRepository:
                 or raw_mail_data.get("account_id") != candidate.account_id
                 or raw_mail_data.get("status") not in {"stored", "published"}
                 or raw_mail_data.get("content_sha256") != candidate.raw_content_sha256
+            ):
+                raise RawMailNotFound
+            if not authentication_snapshot.exists:
+                raise RawMailNotFound
+            authentication = _model(authentication_snapshot, RawMailAuthentication)
+            if (
+                authentication.account_id != candidate.account_id
+                or authentication.raw_mail_id != candidate.raw_mail_id
+                or authentication.raw_content_sha256 != candidate.raw_content_sha256
+                or authentication.outcome
+                != RawMailAuthenticationOutcome.ALIGNED_DKIM_PASS
             ):
                 raise RawMailNotFound
 

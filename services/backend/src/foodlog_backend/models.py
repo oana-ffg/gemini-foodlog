@@ -378,9 +378,57 @@ class PurchaseDocumentKind(StrEnum):
     FINAL_RECEIPT = "final_receipt"
 
 
+class RawMailAuthenticationOutcome(StrEnum):
+    ALIGNED_DKIM_PASS = "aligned_dkim_pass"
+    UNTRUSTED = "untrusted"
+
+
 class PurchaseItemDisposition(StrEnum):
     ORDERED = "ordered"
     DELIVERED = "delivered"
+
+
+class RawMailAuthentication(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = 1
+    id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    account_id: str = Field(min_length=1, max_length=128)
+    raw_mail_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    raw_content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    outcome: RawMailAuthenticationOutcome
+    method: Literal["dkim"] = "dkim"
+    signer_domain: str | None = Field(default=None, min_length=1, max_length=253)
+    signed_headers: tuple[str, ...] = Field(default=(), max_length=20)
+    verifier_version: str = Field(min_length=1, max_length=80)
+    verified_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("verified_at")
+    @classmethod
+    def verified_at_has_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("raw-mail authentication timestamps must include a UTC offset")
+        return value.astimezone(UTC)
+
+    @model_validator(mode="after")
+    def trust_evidence_is_consistent(self) -> "RawMailAuthentication":
+        if self.id != self.raw_mail_id:
+            raise ValueError("raw-mail authentication ID must match the raw-mail ID")
+        if self.outcome == RawMailAuthenticationOutcome.ALIGNED_DKIM_PASS:
+            if not self.signer_domain or not self.signed_headers:
+                raise ValueError("trusted raw mail requires signer and signed-header evidence")
+            normalized_domain = self.signer_domain.casefold().rstrip(".")
+            if normalized_domain != "nemlig.com" and not normalized_domain.endswith(
+                ".nemlig.com"
+            ):
+                raise ValueError("trusted raw mail requires an aligned Nemlig signer")
+            if not {"from", "subject"}.issubset(
+                header.casefold() for header in self.signed_headers
+            ):
+                raise ValueError("trusted raw mail requires signed From and Subject headers")
+        elif self.signer_domain is not None or self.signed_headers:
+            raise ValueError("untrusted raw mail cannot contain trusted-signature evidence")
+        return self
 
 
 class PurchaseChargeKind(StrEnum):

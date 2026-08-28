@@ -40,7 +40,7 @@ def invoice_bytes(*, smoke_id: str, reference: str) -> bytes:
     )
 
 
-def wait_for_document(
+def wait_for_authentication(
     database: firestore.Client,
     *,
     account_id: str,
@@ -50,7 +50,7 @@ def wait_for_document(
     reference = (
         database.collection("accounts")
         .document(account_id)
-        .collection("purchase_documents")
+        .collection("raw_mail_authentication")
         .document(mail_id)
     )
     deadline = time.monotonic() + timeout_seconds
@@ -59,29 +59,19 @@ def wait_for_document(
         if snapshot.exists:
             return snapshot.to_dict() or {}
         time.sleep(2)
-    raise TimeoutError(f"purchase document {mail_id} was not materialized")
+    raise TimeoutError(f"raw-mail authentication {mail_id} was not materialized")
 
 
-def wait_for_normalization(
+def assert_no_purchase_artifacts(
     database: firestore.Client,
     *,
     account_id: str,
     mail_id: str,
-    timeout_seconds: int,
-) -> dict:
-    reference = (
-        database.collection("accounts")
-        .document(account_id)
-        .collection("purchase_normalizations")
-        .document(mail_id)
-    )
-    deadline = time.monotonic() + timeout_seconds
-    while time.monotonic() < deadline:
-        snapshot = reference.get()
-        if snapshot.exists:
-            return snapshot.to_dict() or {}
-        time.sleep(2)
-    raise TimeoutError(f"purchase normalization {mail_id} was not materialized")
+) -> None:
+    account = database.collection("accounts").document(account_id)
+    for collection in ("purchase_documents", "purchase_normalizations"):
+        if account.collection(collection).document(mail_id).get().exists:
+            raise AssertionError(f"forged mail created {collection}/{mail_id}")
 
 
 def smoke(args: argparse.Namespace) -> None:
@@ -118,13 +108,7 @@ def smoke(args: argparse.Namespace) -> None:
         recipient=recipient,
         raw_message=confirmation_message,
     )
-    confirmation_document = wait_for_document(
-        database,
-        account_id=args.account_id,
-        mail_id=confirmation.id,
-        timeout_seconds=args.timeout_seconds,
-    )
-    confirmation_normalization = wait_for_normalization(
+    confirmation_authentication = wait_for_authentication(
         database,
         account_id=args.account_id,
         mail_id=confirmation.id,
@@ -141,79 +125,40 @@ def smoke(args: argparse.Namespace) -> None:
     )
     if repeated_invoice != invoice:
         raise AssertionError("final invoice transport retry was not idempotent")
-    invoice_document = wait_for_document(
+    invoice_authentication = wait_for_authentication(
         database,
         account_id=args.account_id,
         mail_id=invoice.id,
         timeout_seconds=args.timeout_seconds,
     )
-    invoice_normalization = wait_for_normalization(
+    if confirmation_authentication.get("outcome") != "untrusted":
+        raise AssertionError("forged confirmation was not marked untrusted")
+    if invoice_authentication.get("outcome") != "untrusted":
+        raise AssertionError("forged invoice was not marked untrusted")
+    assert_no_purchase_artifacts(
+        database,
+        account_id=args.account_id,
+        mail_id=confirmation.id,
+    )
+    assert_no_purchase_artifacts(
         database,
         account_id=args.account_id,
         mail_id=invoice.id,
-        timeout_seconds=args.timeout_seconds,
     )
 
-    if confirmation_document.get("kind") != "order_confirmation":
-        raise AssertionError("confirmation was not classified correctly")
-    if invoice_document.get("kind") != "final_receipt":
-        raise AssertionError("invoice was not classified as authoritative final receipt")
-    if confirmation_document.get("purchase_id") != invoice_document.get("purchase_id"):
-        raise AssertionError("exact retailer identity did not join the purchase lifecycle")
-    if confirmation_document.get("order_reference") != args.reference:
-        raise AssertionError("confirmation order reference was not preserved")
-    if invoice_document.get("order_reference") != args.reference:
-        raise AssertionError("final invoice order reference was not preserved")
-    if invoice_document.get("invoice_reference") != args.reference:
-        raise AssertionError("final invoice identity was not preserved")
-    purchase = (
-        database.collection("accounts")
-        .document(args.account_id)
-        .collection("purchases")
-        .document(str(invoice_document["purchase_id"]))
-        .get()
-    )
-    purchase_data = purchase.to_dict() or {}
-    if not purchase.exists or purchase_data.get("revision_count") != 2:
-        raise AssertionError("purchase lifecycle does not contain exactly two revisions")
-    if confirmation_normalization.get("item_count") != 2:
-        raise AssertionError("confirmation items were not normalized")
-    if invoice_normalization.get("item_count") != 2:
-        raise AssertionError("final delivered items were not normalized")
-    if confirmation_normalization.get("charge_count") != 6:
-        raise AssertionError("confirmation charges were not normalized")
-    if invoice_normalization.get("charge_count") != 5:
-        raise AssertionError("invoice charges were not normalized")
-    reconciliation = (
-        database.collection("accounts")
-        .document(args.account_id)
-        .collection("purchase_reconciliations")
-        .document(str(invoice_document["purchase_id"]))
-        .get()
-    )
-    reconciliation_data = reconciliation.to_dict() or {}
-    if not reconciliation.exists or reconciliation_data.get("unresolved_item_count") != 0:
-        raise AssertionError("exact synthetic items were not reconciled")
-    if reconciliation_data.get("has_unresolved_substitution_pairing") is not False:
-        raise AssertionError("synthetic reconciliation unexpectedly contains uncertainty")
-
-    print(f"purchase_id={invoice_document['purchase_id']}")
     print(f"confirmation_mail_id={confirmation.id}")
     print(f"invoice_mail_id={invoice.id}")
-    print("confirmation_revision=1")
-    print("authoritative_final_revision=2")
     print("exact_transport_retry=true")
-    print("normalized_confirmation_items=2")
-    print("normalized_final_items=2")
-    print("reconciliation_unresolved_items=0")
+    print("forged_authentication_headers_rejected=true")
+    print("purchase_documents_created=0")
     print("model_calls=0")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Write a labelled synthetic Nemlig confirmation and final invoice through "
-            "the production gateway adapters, then verify the pushed worker result."
+            "Write labelled Nemlig-shaped fixtures with forged authentication headers "
+            "through production adapters, then verify the worker rejects both."
         )
     )
     parser.add_argument("--project", required=True)

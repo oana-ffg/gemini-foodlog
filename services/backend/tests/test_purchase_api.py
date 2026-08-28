@@ -23,6 +23,11 @@ from foodlog_backend.models import (
 from foodlog_backend.repository import InMemoryRepository
 from foodlog_backend.settings import Settings
 
+from .purchase_test_support import (
+    seed_authenticated_raw_mail,
+    trusted_authentication_for_candidate,
+)
+
 
 def digest(value: str) -> str:
     return sha256(value.encode()).hexdigest()
@@ -77,11 +82,7 @@ async def seed_purchase(
     account = await repository.provision_account(owner_user_id)
     candidate = purchase_candidate(account.id, label)
     if firestore_client is None:
-        await repository.seed_published_raw_mail(
-            account_id=account.id,
-            raw_mail_id=candidate.raw_mail_id,
-            content_sha256=candidate.raw_content_sha256,
-        )
+        await seed_authenticated_raw_mail(repository, candidate)
     else:
         await (
             firestore_client.collection("accounts")
@@ -95,6 +96,9 @@ async def seed_purchase(
                     "content_sha256": candidate.raw_content_sha256,
                 }
             )
+        )
+        await repository.record_raw_mail_authentication(
+            trusted_authentication_for_candidate(candidate)
         )
     identity = await repository.attach_purchase_document(candidate)
     await repository.normalize_purchase_document(

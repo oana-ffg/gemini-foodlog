@@ -1,3 +1,4 @@
+from hashlib import sha256
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Response, status
@@ -5,6 +6,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .firestore_repository import FirestoreRepository
+from .mail_authentication import DkimMailAuthenticator, MailAuthenticator
 from .mail_events import RawMailStoredEventV1
 from .operational_logging import emit_operational_event, install_request_logging, safe_error_kind
 from .pubsub import PubSubPushEnvelope, decode_event
@@ -33,6 +35,7 @@ def create_mail_worker_app(
     *,
     repository: Repository | None = None,
     object_store: ObjectStore | None = None,
+    mail_authenticator: MailAuthenticator | None = None,
 ) -> FastAPI:
     active_settings = settings or MailWorkerSettings()
     active_repository = repository or FirestoreRepository(
@@ -44,6 +47,7 @@ def create_mail_worker_app(
         project_id=active_settings.gcp_project_id,
         bucket_name=active_settings.raw_mail_bucket,
     )
+    active_authenticator = mail_authenticator or DkimMailAuthenticator()
     app = FastAPI(
         title="Gemini FoodLog mail worker",
         version="0.1.0",
@@ -66,10 +70,27 @@ def create_mail_worker_app(
         try:
             key = raw_mail_object_key(account_id=event.account_id, mail_id=event.mail_id)
             raw_message = await active_store.get(event.account_id, key)
+            raw_content_sha256 = sha256(raw_message).hexdigest()
+            authentication = await active_repository.raw_mail_authentication(
+                account_id=event.account_id,
+                raw_mail_id=event.mail_id,
+            )
+            if authentication is None:
+                authentication = await active_authenticator.authenticate(
+                    raw_message,
+                    account_id=event.account_id,
+                    raw_mail_id=event.mail_id,
+                )
+                authentication = await active_repository.record_raw_mail_authentication(
+                    authentication
+                )
+            if authentication.raw_content_sha256 != raw_content_sha256:
+                raise ValueError("raw-mail authentication content hash mismatch")
             classification = classify_nemlig_purchase_email(
                 raw_message,
                 account_id=event.account_id,
                 mail_id=event.mail_id,
+                authentication=authentication,
             )
             if classification.outcome == MailClassificationOutcome.PURCHASE_DOCUMENT:
                 assert classification.candidate is not None

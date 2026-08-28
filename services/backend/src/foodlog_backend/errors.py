@@ -54,6 +54,10 @@ class RawMailNotFound(FoodLogError):
     pass
 
 
+class RawMailAuthenticationConflict(FoodLogError):
+    pass
+
+
 class PurchaseIdentityConflict(FoodLogError):
     pass
 

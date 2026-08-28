@@ -31,13 +31,13 @@ exact retry and private bytes, then proves an executable attachment leaves no re
 or object. Run it only against the dedicated test account after reviewing `--help`;
 the generated Pub/Sub test event must be verified and acknowledged afterward.
 
-`scripts/smoke_purchase_worker.py` is the explicit-write end-to-end classifier check.
-It sends one synthetic authenticated Nemlig confirmation, waits for the private push
-worker to materialize it, then sends a matching final-invoice MIME using the observed
-octet-stream PDF declaration. It proves the two immutable documents form one purchase,
-the final document is typed as authoritative, and an exact transport retry is a no-op.
-The operator supplies a unique synthetic ten-digit reference; the check never invokes
-Gemini.
+`scripts/smoke_purchase_worker.py` is the explicit-write production rejection check.
+It sends synthetic Nemlig-shaped confirmation and invoice fixtures containing forged
+passing authentication-result headers, waits for the private worker's immutable
+`untrusted` verdicts, and proves that neither message becomes purchase evidence. A
+positive production check requires a real forwarded, cryptographically signed Nemlig
+message; no synthetic fixture or committed private signing key can establish that
+boundary. The check never invokes Gemini.
 
 ## Production deployment
 

@@ -11,7 +11,12 @@ from html.parser import HTMLParser
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from .models import PurchaseDocumentCandidate, PurchaseDocumentKind
+from .models import (
+    PurchaseDocumentCandidate,
+    PurchaseDocumentKind,
+    RawMailAuthentication,
+    RawMailAuthenticationOutcome,
+)
 
 MAX_RAW_MAIL_BYTES = 20 * 1024 * 1024
 MAX_CLASSIFIER_TEXT_CHARS = 250_000
@@ -106,29 +111,6 @@ def _sender_address(message: Message) -> str | None:
     return parsed[0][1].strip().casefold() or None
 
 
-def _domain_matches_nemlig(value: str) -> bool:
-    candidate = value.strip().casefold().lstrip("@").rstrip(".;")
-    return candidate == "nemlig.com" or candidate.endswith(".nemlig.com")
-
-
-def _authentication_passes(message: Message) -> bool:
-    values = [
-        *message.get_all("Authentication-Results", []),
-        *message.get_all("ARC-Authentication-Results", []),
-    ]
-    clauses = [clause.casefold() for value in values for clause in re.split(r";", str(value))]
-    dkim_pass = False
-    dmarc_pass = False
-    for clause in clauses:
-        if "dkim=pass" in clause:
-            match = re.search(r"header\.(?:d|i)\s*=\s*(@?[a-z0-9.-]+)", clause)
-            dkim_pass = dkim_pass or bool(match and _domain_matches_nemlig(match.group(1)))
-        if "dmarc=pass" in clause:
-            match = re.search(r"header\.from\s*=\s*([a-z0-9.-]+)", clause)
-            dmarc_pass = dmarc_pass or bool(match and _domain_matches_nemlig(match.group(1)))
-    return dkim_pass and dmarc_pass
-
-
 def _decode_text_part(part: Message) -> str:
     payload = part.get_payload(decode=True)
     if not isinstance(payload, bytes):
@@ -181,13 +163,23 @@ def classify_nemlig_purchase_email(
     *,
     account_id: str,
     mail_id: str,
+    authentication: RawMailAuthentication | None = None,
 ) -> PurchaseMailClassification:
     if not raw_message or len(raw_message) > MAX_RAW_MAIL_BYTES:
         raise ValueError("raw mail exceeds the accepted classifier boundary")
+    raw_content_sha256 = sha256(raw_message).hexdigest()
     message = BytesParser(policy=policy.default).parsebytes(raw_message)
     if message.defects:
         raise ValueError("raw mail is malformed")
-    if _sender_address(message) != NEMLIG_SENDER or not _authentication_passes(message):
+    if (
+        _sender_address(message) != NEMLIG_SENDER
+        or authentication is None
+        or authentication.account_id != account_id
+        or authentication.raw_mail_id != mail_id
+        or authentication.raw_content_sha256 != raw_content_sha256
+        or authentication.outcome
+        != RawMailAuthenticationOutcome.ALIGNED_DKIM_PASS
+    ):
         return PurchaseMailClassification(
             outcome=MailClassificationOutcome.NOT_TRUSTED_NEMLIG,
             evidence_codes=("sender_or_authentication_not_trusted",),
@@ -195,14 +187,13 @@ def classify_nemlig_purchase_email(
 
     subject = _normalized_subject(message)
     body = visible_message_text(message)
-    raw_content_sha256 = sha256(raw_message).hexdigest()
     if subject == ORDER_SUBJECT:
         match = ORDER_REFERENCE_PATTERN.search(body)
         if match and "tak for din ordre" in body.casefold():
             return PurchaseMailClassification(
                 outcome=MailClassificationOutcome.PURCHASE_DOCUMENT,
                 evidence_codes=(
-                    "authenticated_nemlig_sender",
+                    "cryptographically_verified_aligned_dkim",
                     "order_confirmation_subject",
                     "retailer_labelled_order_reference",
                 ),
@@ -230,7 +221,7 @@ def classify_nemlig_purchase_email(
             return PurchaseMailClassification(
                 outcome=MailClassificationOutcome.PURCHASE_DOCUMENT,
                 evidence_codes=(
-                    "authenticated_nemlig_sender",
+                    "cryptographically_verified_aligned_dkim",
                     "final_invoice_subject",
                     "matching_pdf_attachment",
                     "retailer_identifier_links_order_and_invoice",
