@@ -83,9 +83,28 @@ resource "google_project_iam_custom_role" "ci_artifact_tag_rotator" {
   }
 }
 
+resource "google_project_iam_custom_role" "ci_cloud_run_operation_reader" {
+  project     = var.project_id
+  role_id     = "foodlogCloudRunOperationReader"
+  title       = "FoodLog Cloud Run operation reader"
+  description = "Observe completion of Cloud Run updates started by the protected deployment workflow."
+  permissions = ["run.operations.get"]
+  stage       = "GA"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 resource "google_project_iam_member" "ci_deploy_service_user" {
   project = var.project_id
   role    = google_project_iam_custom_role.ci_service_user.name
+  member  = "serviceAccount:${google_service_account.runtime["ci_deploy"].email}"
+}
+
+resource "google_project_iam_member" "ci_deploy_cloud_run_operation_reader" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.ci_cloud_run_operation_reader.name
   member  = "serviceAccount:${google_service_account.runtime["ci_deploy"].email}"
 }
 

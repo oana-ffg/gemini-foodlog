@@ -174,7 +174,7 @@ jobs:
           fi
           echo "changed_count=$changed_count" >> "$GITHUB_OUTPUT"
 
-      - name: Persist the immutable release input
+      - name: Commit the immutable release input
         if: inputs.operation == 'deploy'
         env:
           NEW_IMAGE: ${{ steps.image.outputs.qualified_digest }}
@@ -185,12 +185,15 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "deploy: promote ${GITHUB_SHA::12}"
-          git push origin HEAD:main
 
       - name: Apply the reviewed Cloud Run image plan
         if: inputs.operation == 'deploy'
         working-directory: infra/terraform/production
         run: terraform apply -auto-approve "$RUNNER_TEMP/foodlog-deploy.tfplan"
+
+      - name: Publish the immutable release input
+        if: inputs.operation == 'deploy'
+        run: git push origin HEAD:main
 
       - name: Rotate protected active and rollback tags
         if: inputs.operation == 'deploy'
