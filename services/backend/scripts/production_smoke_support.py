@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 from datetime import datetime
+from hashlib import sha256
 from pathlib import Path
 
 import httpx
@@ -43,9 +44,57 @@ def trace_ids(client: httpx.Client) -> set[str]:
     }
 
 
+def _event_trace_ids(*, account_id: str, event_id: str) -> set[str]:
+    """Return the bounded trace identities an ordinary event run can produce."""
+    trace_ids: set[str] = set()
+    for revision in range(1, 21):
+        for attempt in range(1, 21):
+            root_key = f"event:{event_id}:revision:{revision}:attempt:{attempt}"
+            for invocation_key in (root_key, f"{root_key}:repair:1"):
+                identity = (
+                    f"application-visible-ai-trace-v1\0{account_id}\0{event_id}\0"
+                    f"{invocation_key}"
+                )
+                trace_ids.add(f"trace-{sha256(identity.encode()).hexdigest()}")
+    return trace_ids
+
+
+def _latest_event_trace_id(
+    client: httpx.Client,
+    *,
+    account_id: str,
+    event_id: str,
+    previous_trace_ids: set[str],
+) -> str | None:
+    expected_ids = _event_trace_ids(account_id=account_id, event_id=event_id)
+    events = request_json(
+        client,
+        "GET",
+        "/v1/audit-events?limit=200",
+        expected_status=200,
+    )
+    assert isinstance(events, list)
+    candidates = [
+        event
+        for event in events
+        if event.get("action") == "ai.trace_recorded"
+        and event.get("subject_kind") == "trace"
+        and event.get("subject_id") in expected_ids
+        and event.get("subject_id") not in previous_trace_ids
+        and isinstance(event.get("created_at"), str)
+    ]
+    if not candidates:
+        return None
+    latest = max(candidates, key=lambda event: event["created_at"])
+    trace_id = latest.get("subject_id")
+    assert isinstance(trace_id, str)
+    return trace_id
+
+
 def wait_for_activity(
     client: httpx.Client,
     *,
+    account_id: str,
     capture_id: str,
     previous_trace_ids: set[str],
     timeout_seconds: int,
@@ -73,13 +122,14 @@ def wait_for_activity(
                 None,
             )
             if isinstance(activity, dict):
-                new_trace_ids = trace_ids(client) - previous_trace_ids
-                if len(new_trace_ids) == 1:
-                    return activity, new_trace_ids.pop()
-                if len(new_trace_ids) > 1:
-                    raise AssertionError(
-                        "more than one new AI trace appeared in the test account"
-                    )
+                trace_id = _latest_event_trace_id(
+                    client,
+                    account_id=account_id,
+                    event_id=event_id,
+                    previous_trace_ids=previous_trace_ids,
+                )
+                if trace_id is not None:
+                    return activity, trace_id
 
         processing = request_json(
             client,

@@ -47,29 +47,51 @@ def smoke(args: argparse.Namespace) -> None:
         account_id = account["id"]
 
         try:
-            issued = request_json(
-                client,
-                "POST",
-                "/v1/device-cameras",
-                expected_status=200,
-                json_body={"name": f"Cat negative smoke {run_id[:8]}"},
-            )
-            assert isinstance(issued, dict)
-            camera_id = issued["camera"]["id"]
-            baseline_trace_ids = trace_ids(client)
-            capture_id = upload_fixture(
-                api_url=args.api_url,
-                camera_id=camera_id,
-                credential=issued["credential"],
-                fixture=args.fixture,
-                captured_at=datetime.now(UTC) - timedelta(days=58),
-                client_version="cat-not-cooking-smoke/1",
-                sequence_id=f"cat-negative-{run_id}",
-                sequence_number=0,
-                idempotency_key=f"cat-negative-{run_id}",
-            )
+            if args.resume_capture_id is not None:
+                captures = request_json(
+                    client,
+                    "GET",
+                    "/v1/captures?limit=200",
+                    expected_status=200,
+                )
+                assert isinstance(captures, list)
+                resumed = next(
+                    (
+                        item
+                        for item in captures
+                        if item.get("id") == args.resume_capture_id
+                    ),
+                    None,
+                )
+                assert isinstance(resumed, dict), "resume capture is not visible"
+                assert resumed.get("content_sha256") == fixture_sha256
+                capture_id = args.resume_capture_id
+                baseline_trace_ids: set[str] = set()
+            else:
+                issued = request_json(
+                    client,
+                    "POST",
+                    "/v1/device-cameras",
+                    expected_status=200,
+                    json_body={"name": f"Cat negative smoke {run_id[:8]}"},
+                )
+                assert isinstance(issued, dict)
+                camera_id = issued["camera"]["id"]
+                baseline_trace_ids = trace_ids(client)
+                capture_id = upload_fixture(
+                    api_url=args.api_url,
+                    camera_id=camera_id,
+                    credential=issued["credential"],
+                    fixture=args.fixture,
+                    captured_at=datetime.now(UTC) - timedelta(days=58),
+                    client_version="cat-not-cooking-smoke/1",
+                    sequence_id=f"cat-negative-{run_id}",
+                    sequence_number=0,
+                    idempotency_key=f"cat-negative-{run_id}",
+                )
             activity, trace_id = wait_for_activity(
                 client,
+                account_id=account_id,
                 capture_id=capture_id,
                 previous_trace_ids=baseline_trace_ids,
                 timeout_seconds=args.timeout_seconds,
@@ -185,6 +207,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--origin", required=True)
     parser.add_argument("--fixture", required=True, type=Path)
     parser.add_argument("--fixture-sha256", required=True)
+    parser.add_argument("--resume-capture-id")
     parser.add_argument("--timeout-seconds", type=int, default=240, choices=range(30, 601))
     return parser.parse_args()
 

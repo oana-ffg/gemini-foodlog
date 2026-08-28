@@ -73,6 +73,7 @@ def smoke(args: argparse.Namespace) -> None:
             )
             first_activity, first_trace_id = wait_for_activity(
                 client,
+                account_id=account_id,
                 capture_id=first_capture_id,
                 previous_trace_ids=first_trace_baseline,
                 timeout_seconds=args.timeout_seconds,
@@ -132,6 +133,7 @@ def smoke(args: argparse.Namespace) -> None:
             )
             second_activity, second_trace_id = wait_for_activity(
                 client,
+                account_id=account_id,
                 capture_id=second_capture_id,
                 previous_trace_ids=second_trace_baseline,
                 timeout_seconds=args.timeout_seconds,
