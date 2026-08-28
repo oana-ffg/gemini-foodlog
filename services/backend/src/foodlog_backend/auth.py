@@ -7,6 +7,7 @@ import firebase_admin
 from firebase_admin import App
 from firebase_admin import auth as firebase_auth
 from firebase_admin.exceptions import FirebaseError
+from google.auth.credentials import Credentials
 
 
 class InvalidAuthenticationToken(Exception):
@@ -22,12 +23,17 @@ def normalize_verified_email(value: object) -> str | None:
     return normalized
 
 
-def firebase_app_for_project(project_id: str) -> App:
+def firebase_app_for_project(
+    project_id: str,
+    *,
+    credential: Credentials | None = None,
+) -> App:
     app_name = f"foodlog-auth-{project_id}"
     try:
         return firebase_admin.get_app(app_name)
     except ValueError:
         return firebase_admin.initialize_app(
+            credential=credential,
             options={"projectId": project_id},
             name=app_name,
         )

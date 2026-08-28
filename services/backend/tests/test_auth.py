@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any, cast
 
+import firebase_admin
 import pytest
 from fastapi.testclient import TestClient
 from firebase_admin import App
@@ -11,6 +12,7 @@ from firebase_admin import auth as firebase_auth
 from pydantic import ValidationError
 
 import foodlog_backend.app as app_module
+import foodlog_backend.auth as auth_module
 from foodlog_backend.app import create_app
 from foodlog_backend.auth import (
     FirebaseIdentityTokenVerifier,
@@ -18,6 +20,40 @@ from foodlog_backend.auth import (
     VerifiedIdentity,
 )
 from foodlog_backend.settings import Settings
+
+
+def test_firebase_app_uses_explicit_operator_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    credential = cast(Any, object())
+    initialized = object()
+    captured: dict[str, Any] = {}
+
+    def missing_app(_name: str):
+        raise ValueError("missing")
+
+    def initialize_app(*, credential, options, name):
+        captured.update(
+            credential=credential,
+            options=options,
+            name=name,
+        )
+        return initialized
+
+    monkeypatch.setattr(firebase_admin, "get_app", missing_app)
+    monkeypatch.setattr(firebase_admin, "initialize_app", initialize_app)
+
+    app = auth_module.firebase_app_for_project(
+        "operator-project",
+        credential=credential,
+    )
+
+    assert app is initialized
+    assert captured == {
+        "credential": credential,
+        "options": {"projectId": "operator-project"},
+        "name": "foodlog-auth-operator-project",
+    }
 
 
 class AcceptingTokenVerifier:

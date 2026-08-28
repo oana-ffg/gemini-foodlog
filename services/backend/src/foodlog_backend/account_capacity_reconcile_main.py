@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any
 
+import google.auth
 from firebase_admin import auth as firebase_auth
 from google.cloud import firestore
 from google.cloud.firestore_v1.async_client import AsyncClient
@@ -388,7 +389,11 @@ async def apply_legacy_public_backfill(
 
 async def run(args: argparse.Namespace) -> None:
     client = AsyncClient(project=args.project_id)
-    firebase_app = firebase_app_for_project(args.project_id)
+    credentials, _ = google.auth.default(quota_project_id=args.project_id)
+    firebase_app = firebase_app_for_project(
+        args.project_id,
+        credential=credentials,
+    )
     try:
         report, backfills, legacy_backfills = await reconcile(
             client=client,
