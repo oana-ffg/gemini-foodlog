@@ -367,7 +367,15 @@
       ["SEC-009", "Done"],
       ["SEC-010", "Done"],
       ["SEC-011", "Blocked"],
+      ["REL-007", "Done"],
       ["REL-009", "Needs Long Test"],
+    ]);
+
+    const liveBlockerOverrides = new Map([
+      ["SEC-007", ""],
+      ["SEC-009", ""],
+      ["SEC-010", ""],
+      ["REL-007", ""],
     ]);
 
     const liveEvidenceAdditions = new Map([
@@ -380,6 +388,7 @@
       ["SEC-009", "Completed 29 Aug 2026 after Oana chose Apache-2.0. The repository now contains the canonical license grant and a NOTICE separating FoodLog copyright, third-party dependency terms, and the explicitly synthetic OpenAI-generated fixture provenance. Root and web package metadata plus all three Python distributions declare Apache-2.0; npm typecheck/build and every Python wheel/sdist build passed. GitHub detects the repository license as Apache License 2.0, and logged-out raw LICENSE and NOTICE requests return HTTP 200."],
       ["SEC-010", "Completed 29 Aug 2026 after Oana explicitly approved the recommended false-positive disposition. Fresh GCP readback proved the sole FoodLog web key remains HTTP-referrer restricted to localhost and the two Firebase Hosting domains and API-restricted to Firebase App Check, Installations, Identity Toolkit, and Secure Token. GitHub alert 1 points only to the intentional public Firebase client config and now reads state resolved, resolution false_positive, with the restriction evidence recorded in its resolution comment."],
       ["SEC-011", "The protected release pipeline and completed deployed controls are green. The final consolidated regression gate is blocked only on Oana's explicit SEC-007 public-history decision, SEC-009 project-license choice, and SEC-010 GitHub alert disposition; resume immediately after those release decisions."],
+      ["REL-007", "Completed 29 Aug 2026 after Oana resolved every release decision. Sealed Codex Security diff scan f6fc2295-1d70-4029-b0af-8c52f458a2bb reviewed all ten changed files and all six intermediate commits from 7681978 through 120a178 with complete coverage and zero findings. Focused credential/private-data scans found no changed-line matches; GitHub reports zero open secret alerts, a public active repository, and Apache-2.0 detection. LICENSE and NOTICE are publicly readable; all project package metadata agrees; synthetic image provenance remains explicit. Oana accepted the already-public history, so no visibility or history rewrite occurred."],
     ]);
 
     const T = (id, title, status, phase, deps, acceptance, verification, options = {}) => ({
@@ -388,7 +397,7 @@
       kind: options.kind || "MVP Core",
       priority: options.priority || "High",
       evidence: [options.evidence, liveEvidenceAdditions.get(id)].filter(Boolean).join(" "),
-      blocker: options.blocker || "",
+      blocker: liveBlockerOverrides.has(id) ? liveBlockerOverrides.get(id) : options.blocker || "",
       gate: Boolean(options.gate),
     });
 
