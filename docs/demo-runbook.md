@@ -3,8 +3,8 @@
 - **Target duration:** 3:35–3:50
 - **Hard limit:** 4:00
 - **Language:** English
-- **Primary scenario:** ambiguous distant meat preparation with relevant recent
-  chicken purchase context
+- **Primary scenario:** ambiguous distant meat preparation with relevant,
+  explicitly synthetic recent chicken-availability context
 - **Negative control:** cat on an otherwise inactive counter
 - **Data boundary:** dedicated judge/demo account containing only reviewed
   synthetic evidence unless Oana explicitly approves a real clip for publication
@@ -16,19 +16,21 @@ remains the frame-by-frame privacy and IP gate.
 ## The story in one sentence
 
 FoodLog turns an ordinary, poor-angle kitchen observation into a durable,
-evidence-linked food event; uses recent purchase context without treating it as
-proof; asks one useful question when the distinction matters; learns from the
-answer; and correctly keeps obvious non-cooking activity out of the journal.
+evidence-linked food event; uses a time-bounded synthetic availability note
+without treating it as proof; asks one useful question when the distinction
+matters; learns from the answer; and correctly keeps obvious non-cooking activity
+out of the journal.
 
 ## Why this scenario
 
 The distant ambiguous-meat fixture captures the actual product difficulty:
 someone opens a package by the sink, the air-fryer basket is nearby, and meat
-colour is barely visible from roughly two metres away. Recent synthetic chicken
-purchase evidence makes chicken relevant but does not prove that the pictured
-pack is chicken. A useful agent should preserve that distinction, make a
-tentative guess, explain its evidence and alternatives, and ask a focused
-chicken-versus-red-meat question rather than “What meal were you cooking?”
+colour is barely visible from roughly two metres away. A reviewed, time-bounded
+synthetic note says chicken is available in the kitchen that week; this makes
+chicken relevant but does not prove that the pictured pack is chicken. A useful
+agent should preserve that distinction, make a tentative guess, explain its
+evidence and alternatives, and ask a focused chicken-versus-red-meat question
+rather than “What meal were you cooking?”
 
 The cat fixture is the negative control requested for the product. It proves the
 system has an explicit non-cooking path and preserves reversible evidence rather
@@ -39,7 +41,8 @@ than forcing every kitchen motion into a meal.
 Before recording, REL-003 must provide a dedicated account containing only
 reviewed synthetic data:
 
-- a recent synthetic chicken purchase lifecycle;
+- a time-bounded synthetic note stating that chicken is known to be available in
+  the kitchen that week;
 - the ambiguous distant-meat capture and its completed real Gemini/ADK run;
 - the red-meat follow-up capture used after the correction;
 - the cat-on-counter capture and its completed real Gemini/ADK run;
@@ -107,9 +110,9 @@ the hosted journal result.
 4. Refresh **Your food timeline** and open the resulting event.
 5. Switch between source frames if the event contains more than one.
 6. Expand **Evidence and alternatives** and **Context used**.
-7. Point out that recent chicken makes chicken relevant but is not treated as
-   visual proof. Show the tentative best guess, explicit uncertainty, and focused
-   question if the reviewed run produced them.
+7. Point out that the displayed synthetic availability note makes chicken
+   relevant but is not treated as visual proof. Show the tentative best guess,
+   explicit uncertainty, and focused question if the reviewed run produced them.
 
 Do not narrate exact model wording before it is visibly loaded. If processing
 does not finish inside the segment's rehearsal envelope, use the fallback path

@@ -193,8 +193,10 @@ After signing in with that dedicated account:
    active.
 6. Open **Open the household wiki** and inspect the selected page's immutable
    revision history. No edit is required.
-7. Open **Inspect purchase evidence** and view the reviewed synthetic purchase
-   lifecycle. Do not forward or upload a real email during judging.
+7. Open **Inspect purchase evidence** and read the optional forwarding workflow.
+   The judge account intentionally contains no synthetic “authenticated Nemlig”
+   record: fixture mail cannot honestly stand in for a real aligned DKIM result.
+   Do not forward or upload a real email during judging.
 8. Open **View all stored account data** and inspect the collection counts. If
    testing export, request it once, wait for completion, download the private
    archive, and sign out before sharing the browser.

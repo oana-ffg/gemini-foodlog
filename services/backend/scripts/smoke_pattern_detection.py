@@ -3,34 +3,19 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
-from datetime import UTC, datetime, timedelta, timezone
-from hashlib import sha256
-from io import BytesIO
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
 import httpx
 from google.cloud.firestore_v1 import DELETE_FIELD
-from PIL import Image
+from synthetic_dataset_support import publish_synthetic_event, seed_synthetic_meal
 
 from foodlog_backend.firestore_repository import FirestoreRepository
 from foodlog_backend.grouping import CaptureGroupingService, GroupingPolicy
 from foodlog_backend.image_events import CaptureStoredEventV1, PubSubCaptureEventPublisher
-from foodlog_backend.inference_schema import (
-    ActivityMealInferenceV1,
-    DirectObservation,
-    ImageEvidenceLink,
-    InferenceConfidence,
-    InferenceKind,
-    InferenceMealComponent,
-    UserAction,
-)
 from foodlog_backend.models import (
-    ActivityEvent,
-    CaptureEnvelopeV1,
-    CaptureRecord,
     ClarificationQuestion,
-    Confidence,
     DurableJob,
     JobStatus,
     MealEntry,
@@ -98,139 +83,6 @@ async def wait_for_open_pattern(
             return matches[0]
         await asyncio.sleep(1)
     raise AssertionError("deployed detector did not surface the expected pattern in 30 seconds")
-
-
-async def publish_synthetic_event(
-    repository: FirestoreRepository,
-    *,
-    event: ActivityEvent,
-    captures: list[CaptureRecord],
-    title: str,
-) -> MealEntry:
-    lease_id = str(uuid4())
-    lease_owner = "synthetic-pattern-smoke-publication"
-    claimed = await repository.claim_job(
-        account_id=event.account_id,
-        job_id=event_inference_job_id(event.id),
-        expected_subject_revision=event.current_revision,
-        lease_id=lease_id,
-        lease_owner=lease_owner,
-        lease_expires_at=utc_now() + timedelta(minutes=5),
-    )
-    assert claimed is not None
-    published = await repository.publish_event_inference(
-        account_id=event.account_id,
-        event_id=event.id,
-        expected_event_revision=event.current_revision,
-        lease_id=lease_id,
-        lease_owner=lease_owner,
-        hypothesis=ActivityMealInferenceV1(
-            schema_version="activity-meal-inference-v1",
-            event_id=event.id,
-            source_capture_ids=[item.id for item in captures],
-            kind=InferenceKind.TENTATIVE_MEAL,
-            best_guess=title,
-            confidence=InferenceConfidence.LIKELY,
-            components=[
-                InferenceMealComponent(
-                    id="synthetic_meal",
-                    name=title,
-                    ingredients=[title],
-                    preparation_methods=[],
-                    confidence=InferenceConfidence.LIKELY,
-                    alternatives=[],
-                    evidence_ids=["synthetic_observation"],
-                )
-            ],
-            direct_observations=[
-                DirectObservation(
-                    id="synthetic_observation",
-                    description=f"{SYNTHETIC_MARKER} retained evidence.",
-                    image_evidence=[
-                        ImageEvidenceLink(capture_id=item.id) for item in captures
-                    ],
-                )
-            ],
-            contextual_evidence=[],
-            assumptions=[],
-            deductions=[],
-            alternatives=[],
-            rationale="Synthetic no-model production detector smoke.",
-            allowed_actions=[
-                UserAction.CONFIRM_GUESS,
-                UserAction.CORRECT,
-                UserAction.DISCARD_NOT_COOKING,
-            ],
-        ),
-    )
-    assert published is not None
-    return published
-
-
-async def seed_synthetic_meal(
-    repository: FirestoreRepository,
-    store: GCSObjectStore,
-    grouping: CaptureGroupingService,
-    *,
-    account,
-    camera,
-    image: bytes,
-    local_at: datetime,
-    title: str,
-    run_id: str,
-    ordinal: int,
-) -> MealEntry:
-    capture_id = str(uuid4())
-    digest = sha256(image).hexdigest()
-    object_key = f"accounts/{account.id}/captures/{capture_id}.png"
-    captured_at = local_at.astimezone(UTC)
-    with Image.open(BytesIO(image)) as decoded:
-        width, height = decoded.size
-    metadata = CaptureEnvelopeV1(
-        camera_id=camera.id,
-        captured_at=local_at,
-        client_kind="browser",
-        client_version="pattern-production-smoke-v1",
-        sequence_id=f"pattern-smoke-{run_id}",
-        sequence_number=ordinal,
-        width=width,
-        height=height,
-    )
-    capture, _, created = await repository.reserve_capture(
-        capture_id=capture_id,
-        account=account,
-        camera=camera,
-        idempotency_key=f"pattern-detection-smoke-{run_id}-{ordinal}",
-        content_type="image/png",
-        content_sha256=digest,
-        object_key=object_key,
-        metadata=metadata,
-    )
-    assert created
-    assert capture.captured_utc_offset_minutes == 120
-    assert await store.put(account.id, object_key, image, "image/png")
-    await repository.mark_stored(account_id=account.id, capture_id=capture.id)
-    grouped = await grouping.process(
-        account_id=account.id,
-        capture_id=capture.id,
-        worker_id="synthetic-pattern-smoke",
-    )
-    assert grouped is not None
-    event, captures = await repository.event_evidence_for_account(
-        account_id=account.id,
-        event_id=grouped.event.id,
-    )
-    published = await publish_synthetic_event(
-        repository,
-        event=event,
-        captures=captures,
-        title=title,
-    )
-    assert published.title == title
-    assert published.confidence == Confidence.LIKELY
-    assert published.occurred_at == captured_at
-    assert published.occurred_utc_offset_minutes == 120
-    return published
 
 
 async def recover_incomplete_smoke_captures(
@@ -301,6 +153,9 @@ async def recover_incomplete_smoke_captures(
             event=event,
             captures=captures,
             title=f"{SYNTHETIC_MARKER} Recovered",
+            evidence_description=f"{SYNTHETIC_MARKER} retained evidence.",
+            rationale="Synthetic no-model production detector smoke.",
+            lease_owner="synthetic-pattern-smoke-publication",
         )
         recovered.append(snapshot.id)
     return recovered
@@ -429,10 +284,17 @@ async def smoke(args: argparse.Namespace) -> None:
                         image=image,
                         local_at=first_thursday + timedelta(weeks=ordinal - 1),
                         title=title,
-                        run_id=run_id,
-                        ordinal=ordinal,
+                        sequence_id=f"pattern-smoke-{run_id}",
+                        sequence_number=ordinal,
+                        idempotency_key=f"pattern-detection-smoke-{run_id}-{ordinal}",
+                        client_version="pattern-production-smoke-v1",
+                        worker_id="synthetic-pattern-smoke",
+                        lease_owner="synthetic-pattern-smoke-publication",
+                        evidence_description=f"{SYNTHETIC_MARKER} retained evidence.",
+                        rationale="Synthetic no-model production detector smoke.",
                     )
                 )
+                assert meals[-1].occurred_utc_offset_minutes == 120
                 if ordinal == 4:
                     deployed_message_ids.append(
                         await invoke_deployed_detector(
