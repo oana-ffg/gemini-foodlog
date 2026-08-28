@@ -229,6 +229,23 @@ def scenario_idempotency_key(dataset_id: str, scenario: RealScenarioSpec) -> str
     return f"{base}-retry-{scenario.attempt}"
 
 
+def selected_real_scenarios(
+    spec: JudgeDatasetSpec,
+    only_scenario: str | None,
+) -> list[tuple[int, RealScenarioSpec]]:
+    scenarios = [
+        (sequence_number, scenario)
+        for sequence_number, scenario in enumerate(
+            spec.real_inference_scenarios,
+            start=1,
+        )
+        if only_scenario is None or scenario.key == only_scenario
+    ]
+    if only_scenario is not None and not scenarios:
+        raise ValueError(f"unknown judge scenario: {only_scenario}")
+    return scenarios
+
+
 async def propose_seeded_pattern(
     repository: Repository,
     *,
@@ -471,10 +488,8 @@ async def prepare(args: argparse.Namespace) -> None:
             knowledge_revision_id: str | None = None
             completed_scenarios: list[str] = []
             skipped_scenarios: list[str] = []
-            for sequence_number, scenario in enumerate(
-                spec.real_inference_scenarios,
-                start=1,
-            ):
+            scenario_plan = selected_real_scenarios(spec, args.only_scenario)
+            for plan_index, (sequence_number, scenario) in enumerate(scenario_plan):
                 fixture = checked_fixture(args.fixture_root, scenario.fixture, scenario.sha256)
                 current_traces = trace_ids(client)
                 client_version = scenario_client_version(scenario)
@@ -498,8 +513,7 @@ async def prepare(args: argparse.Namespace) -> None:
                 )
                 if not already_uploaded and len(current_traces) > MAX_MODEL_TRACES - 2:
                     skipped_scenarios.extend(
-                        item.key
-                        for item in spec.real_inference_scenarios[sequence_number - 1 :]
+                        item.key for _, item in scenario_plan[plan_index:]
                     )
                     break
                 capture_id, duplicate = upload_browser_fixture(
@@ -679,6 +693,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--fixture-root", required=True, type=Path)
     parser.add_argument("--timeout-seconds", type=int, default=300, choices=range(30, 601))
+    parser.add_argument("--only-scenario")
     parser.add_argument("--create-approved-identity", action="store_true")
     parser.add_argument("--confirm-production-write", action="store_true")
     return parser.parse_args()

@@ -16,6 +16,7 @@ from scripts.prepare_judge_dataset import (
     propose_seeded_pattern,
     scenario_client_version,
     scenario_idempotency_key,
+    selected_real_scenarios,
     validate_activity,
 )
 from scripts.synthetic_dataset_support import seed_synthetic_meal
@@ -64,6 +65,18 @@ def test_default_scenario_preserves_original_upload_identity() -> None:
     assert scenario_idempotency_key("judge-demo-v1", scenario) == (
         "judge-demo-v1-red-before-learning-v1"
     )
+
+
+def test_judge_recovery_can_select_one_frozen_scenario_without_renumbering() -> None:
+    dataset = load_dataset(MANIFEST, FIXTURE_ROOT)
+
+    selected = selected_real_scenarios(dataset, "cat-negative-control")
+
+    assert [(number, scenario.key) for number, scenario in selected] == [
+        (4, "cat-negative-control")
+    ]
+    with pytest.raises(ValueError, match="unknown judge scenario"):
+        selected_real_scenarios(dataset, "missing")
 
 
 def test_judge_fixture_paths_cannot_escape_the_frozen_fixture_root() -> None:

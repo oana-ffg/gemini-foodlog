@@ -76,6 +76,11 @@ configured value rather than documenting it here. The two confirmation flags are
 deliberately explicit: without them the script cannot create the approved
 identity or write the production dataset.
 
+For bounded recovery after an earlier scenario has persisted but failed its
+acceptance gate, append `--only-scenario <manifest-key>`. This keeps the
+scenario's original sequence number and upload identity; it does not rewrite or
+silently accept the failed result.
+
 ## Required successful evidence
 
 The sanitized summary must report:
