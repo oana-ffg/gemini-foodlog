@@ -57,7 +57,7 @@
       {"captured_at": "2026-08-06T18:00:00+02:00", "title": "Steak"}
     ],
     "provenance_label": "Explicitly synthetic no-model history prepared for the judge demo.",
-    "expected_claim_value": "Steak",
+    "expected_claim_value": "steak",
     "expected_condition": "thursday"
   }
 }

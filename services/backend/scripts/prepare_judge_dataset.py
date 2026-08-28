@@ -17,12 +17,19 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from foodlog_backend.firestore_repository import FirestoreRepository
 from foodlog_backend.grouping import CaptureGroupingService, GroupingPolicy
-from foodlog_backend.models import BrowserCamera, EntitlementMode, NotificationOutboxStatus
+from foodlog_backend.models import (
+    BrowserCamera,
+    ClarificationQuestion,
+    EntitlementMode,
+    KnowledgeClaim,
+    NotificationOutboxStatus,
+)
 from foodlog_backend.notifications import (
     AccountProvisioningService,
     PubSubNotificationPublisher,
 )
-from foodlog_backend.pattern_detection import PatternDetectionService
+from foodlog_backend.pattern_detection import PatternCandidate, PatternDetectionService
+from foodlog_backend.repository import Repository
 from foodlog_backend.storage import GCSObjectStore
 from scripts.production_smoke_support import request_json, trace_ids, wait_for_activity
 from scripts.synthetic_dataset_support import seed_synthetic_meal
@@ -220,6 +227,54 @@ def scenario_idempotency_key(dataset_id: str, scenario: RealScenarioSpec) -> str
     if scenario.attempt == 1:
         return f"{base}-v1"
     return f"{base}-retry-{scenario.attempt}"
+
+
+async def propose_seeded_pattern(
+    repository: Repository,
+    *,
+    account_id: str,
+    seeded_meal_ids: set[str],
+    expected_claim_value: str,
+    expected_condition: str,
+) -> ClarificationQuestion:
+    evidence = await repository.recent_meal_evidence_for_account(
+        account_id=account_id,
+        limit=100,
+    )
+    seeded = [item for item in evidence if item[0].id in seeded_meal_ids]
+    if len(seeded) != len(seeded_meal_ids):
+        raise RuntimeError("judge pattern evidence inventory is incomplete")
+    normalized_claim = " ".join(expected_claim_value.casefold().split())
+    supports = [
+        revision
+        for meal, revision in seeded
+        if " ".join(meal.title.casefold().split()) == normalized_claim
+    ]
+    counters = [
+        revision
+        for meal, revision in seeded
+        if " ".join(meal.title.casefold().split()) != normalized_claim
+    ]
+    candidate = PatternCandidate(
+        statement=(
+            f"you usually eat {expected_claim_value} on {expected_condition.title()}s"
+        ),
+        claim=KnowledgeClaim(
+            dimension="likely meal",
+            value=expected_claim_value,
+            conditions=(expected_condition,),
+        ),
+        supporting_revision_ids=tuple(item.id for item in supports),
+        counterexample_revision_ids=tuple(item.id for item in counters),
+        uncertainty=(
+            "This is a calendar correlation from explicitly synthetic no-model judge "
+            "history, not a confirmed household rule."
+        ),
+    )
+    return await PatternDetectionService(repository).propose(
+        account_id=account_id,
+        candidate=candidate,
+    )
 
 
 def upload_browser_fixture(
@@ -510,13 +565,6 @@ async def prepare(args: argparse.Namespace) -> None:
                     ) != "not_cooking":
                         raise RuntimeError("judge cat scenario was not discarded")
                 completed_scenarios.append(scenario.key)
-                remaining_calls = MAX_MODEL_TRACES - len(trace_ids(client))
-                if remaining_calls < 2:
-                    skipped_scenarios.extend(
-                        item.key
-                        for item in spec.real_inference_scenarios[sequence_number:]
-                    )
-                    break
 
             pattern = spec.synthetic_pattern_history
             pattern_fixture = checked_fixture(
@@ -528,8 +576,9 @@ async def prepare(args: argparse.Namespace) -> None:
                 repository=repository,
                 policy=GroupingPolicy(version=PATTERN_CLIENT_VERSION),
             )
+            seeded_pattern_meal_ids: set[str] = set()
             for ordinal, event in enumerate(pattern.events, start=1):
-                await seed_synthetic_meal(
+                seeded_meal = await seed_synthetic_meal(
                     repository,
                     store,
                     grouping,
@@ -556,36 +605,40 @@ async def prepare(args: argparse.Namespace) -> None:
                         )
                     ),
                 )
+                seeded_pattern_meal_ids.add(seeded_meal.id)
 
-            questions = await PatternDetectionService(repository).detect_and_propose(
-                account_id=account.id,
-                max_proposals=5,
+            visible_questions = request_json(
+                client,
+                "GET",
+                "/v1/questions",
+                expected_status=200,
             )
+            if not isinstance(visible_questions, list):
+                raise RuntimeError("judge pattern questions are not visible")
             expected_questions = [
                 question
-                for question in questions
-                if question.pattern_claim is not None
-                and question.pattern_claim.value == pattern.expected_claim_value
-                and pattern.expected_condition in question.pattern_claim.conditions
+                for question in visible_questions
+                if isinstance(question.get("pattern_claim"), dict)
+                and question["pattern_claim"].get("value")
+                == pattern.expected_claim_value
+                and pattern.expected_condition
+                in question["pattern_claim"].get("conditions", [])
             ]
-            if len(expected_questions) != 1:
-                visible_questions = request_json(
-                    client,
-                    "GET",
-                    "/v1/questions",
-                    expected_status=200,
+            if not expected_questions:
+                question = await propose_seeded_pattern(
+                    repository,
+                    account_id=account.id,
+                    seeded_meal_ids=seeded_pattern_meal_ids,
+                    expected_claim_value=pattern.expected_claim_value,
+                    expected_condition=pattern.expected_condition,
                 )
-                if not isinstance(visible_questions, list):
-                    raise RuntimeError("judge pattern questions are not visible")
-                expected_questions = [
-                    question
-                    for question in visible_questions
-                    if isinstance(question.get("pattern_claim"), dict)
-                    and question["pattern_claim"].get("value")
-                    == pattern.expected_claim_value
-                    and pattern.expected_condition
-                    in question["pattern_claim"].get("conditions", [])
-                ]
+                expected_questions = [question]
+                if (
+                    question.pattern_claim is None
+                    or question.pattern_claim.value != pattern.expected_claim_value
+                    or pattern.expected_condition not in question.pattern_claim.conditions
+                ):
+                    expected_questions = []
             if len(expected_questions) != 1:
                 raise RuntimeError("judge Thursday pattern question was not created exactly once")
 

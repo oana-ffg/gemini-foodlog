@@ -13,6 +13,7 @@ from scripts.prepare_judge_dataset import (
     RealScenarioSpec,
     checked_fixture,
     load_dataset,
+    propose_seeded_pattern,
     scenario_client_version,
     scenario_idempotency_key,
     validate_activity,
@@ -41,7 +42,7 @@ def test_judge_dataset_manifest_is_complete_and_hash_locked() -> None:
         "judge-demo-v1-ambiguous-with-context-v3-retry-2"
     )
     assert len(dataset.synthetic_pattern_history.events) == 6
-    assert dataset.synthetic_pattern_history.expected_claim_value == "Steak"
+    assert dataset.synthetic_pattern_history.expected_claim_value == "steak"
     assert all(
         event.captured_at.weekday() == 3
         for event in dataset.synthetic_pattern_history.events
@@ -187,5 +188,60 @@ def test_synthetic_meal_seed_is_an_exact_idempotent_retry() -> None:
         assert exact_retry == first
         assert len(await repository.list_meals("judge-dataset-owner")) == 1
         assert len(await repository.recent_captures_for_owner("judge-dataset-owner")) == 1
+
+    asyncio.run(scenario())
+
+
+def test_seeded_pattern_proposal_uses_only_the_frozen_history() -> None:
+    async def scenario() -> None:
+        dataset = load_dataset(MANIFEST, FIXTURE_ROOT)
+        repository = InMemoryRepository(public_account_limit=25, trial_image_limit=200)
+        account = await repository.provision_account("judge-pattern-owner")
+        camera = await repository.create_browser_camera(
+            "judge-pattern-owner",
+            "Judge pattern camera",
+            "judge-pattern-camera-instance-v1",
+        )
+        store = InMemoryObjectStore()
+        grouping = CaptureGroupingService(
+            repository=repository,
+            policy=GroupingPolicy(version="judge-pattern-recovery-test-v1"),
+        )
+        image = (FIXTURE_ROOT / dataset.synthetic_pattern_history.fixture).read_bytes()
+        seeded_meal_ids: set[str] = set()
+        for ordinal, event in enumerate(dataset.synthetic_pattern_history.events, start=1):
+            meal = await seed_synthetic_meal(
+                repository,
+                store,
+                grouping,
+                account=account,
+                camera=camera,
+                image=image,
+                local_at=event.captured_at,
+                title=event.title,
+                sequence_id="judge-pattern-recovery",
+                sequence_number=ordinal,
+                idempotency_key=f"judge-pattern-recovery-{ordinal}",
+                client_version="judge-pattern-recovery-test-v1",
+                worker_id="judge-pattern-recovery-test",
+                lease_owner="judge-pattern-recovery-publication-test",
+                evidence_description="Explicitly synthetic no-model history.",
+                rationale="Explicitly synthetic no-model judge fixture.",
+            )
+            seeded_meal_ids.add(meal.id)
+
+        question = await propose_seeded_pattern(
+            repository,
+            account_id=account.id,
+            seeded_meal_ids=seeded_meal_ids,
+            expected_claim_value="steak",
+            expected_condition="thursday",
+        )
+
+        assert question.pattern_claim is not None
+        assert question.pattern_claim.value == "steak"
+        assert question.pattern_claim.conditions == ("thursday",)
+        assert len(question.pattern_supporting_examples) == 5
+        assert len(question.pattern_counterexamples) == 1
 
     asyncio.run(scenario())
