@@ -100,7 +100,7 @@ The source-controlled [MVP backlog](./docs/mvp-backlog.html) lists every current
 
 ## Run the local slice
 
-Requirements: Node.js 24+, npm, Python 3.12+, and [uv](https://docs.astral.sh/uv/).
+Requirements: Node.js 24+, npm, Python 3.12+, [uv](https://docs.astral.sh/uv/), and Java for the Firestore Rules emulator. Testing the portable physical-camera core also requires GNU Make and a C++20 compiler.
 
 For a deterministic backend-only process, copy `services/backend/.env.example` to `services/backend/.env`, keep local authentication and in-memory storage, then run `uv sync --frozen` and `uv run uvicorn foodlog_backend.main:app --port 8080` from that package. API calls in this mode use `X-FoodLog-Local-User`; the React application does not manufacture that header.
 
@@ -122,6 +122,9 @@ cd ../../clients/python
 uv sync --frozen
 uv run ruff check .
 uv run pytest
+
+cd ../camera-firmware
+make test
 ```
 
 ## Success looks like

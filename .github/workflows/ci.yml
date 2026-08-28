@@ -73,6 +73,82 @@ jobs:
       - name: Test
         run: uv run pytest
 
+      - name: Build package
+        run: uv build
+
+  python-packages:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Mail gateway
+            package: services/mail-gateway
+          - name: Python camera client
+            package: clients/python
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: 0.5.13
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install locked dependencies
+        working-directory: ${{ matrix.package }}
+        run: uv sync --frozen
+
+      - name: Lint
+        working-directory: ${{ matrix.package }}
+        run: uv run ruff check .
+
+      - name: Test
+        working-directory: ${{ matrix.package }}
+        run: uv run pytest
+
+      - name: Build package
+        working-directory: ${{ matrix.package }}
+        run: uv build
+
+  physical-camera-core:
+    name: Physical camera core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Compile and test portable capture core
+        run: make -C clients/camera-firmware test
+
+  firestore-rules:
+    name: Firestore Rules
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Confirm emulator Java runtime
+        run: java -version
+
+      - name: Test direct-client denial rules
+        run: npm run test:firestore-rules
+
   terraform:
     name: Terraform
     runs-on: ubuntu-24.04

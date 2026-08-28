@@ -18,7 +18,8 @@ The locked CI baseline is:
 - Terraform 1.15.8 and the committed cross-platform provider lock;
 - Google Cloud CLI for operator inspection;
 - Firebase CLI 15.28.1, invoked through the locked root scripts;
-- Java for the Firestore Rules emulator test.
+- Java for the Firestore Rules emulator test;
+- GNU Make and a C++20 compiler for the portable physical-camera capture core.
 
 Docker is required only for the protected backend release workflow or an equivalent reviewed container build. No service-account key file is used; GitHub production access uses Workload Identity Federation.
 
@@ -57,6 +58,9 @@ uv sync --frozen
 uv run ruff check .
 uv run pytest
 uv build
+
+cd ../camera-firmware
+make test
 ```
 
 Verify infrastructure syntax without reading or changing production state:
@@ -75,7 +79,7 @@ cd ../../..
 npm run test:firestore-rules
 ```
 
-The ordinary GitHub CI workflow performs the web, backend, and backend-disabled Terraform checks from a clean Ubuntu checkout on every pull request and push to `main`.
+The ordinary GitHub CI workflow performs the web, all three Python package, portable physical-camera core, Firestore Rules, and backend-disabled Terraform checks from a clean Ubuntu checkout on every pull request and push to `main`.
 
 ## Local development modes
 
