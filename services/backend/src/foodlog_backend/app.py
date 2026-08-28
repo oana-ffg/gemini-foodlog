@@ -317,7 +317,14 @@ def create_app(
         household_teaching_service=HouseholdTeachingService(repository),
         pattern_hypothesis_service=PatternHypothesisService(repository),
     )
-    app = FastAPI(title="Gemini FoodLog API", version="0.1.0")
+    runtime_docs_enabled = active_settings.environment == "local"
+    app = FastAPI(
+        title="Gemini FoodLog API",
+        version="0.1.0",
+        docs_url="/docs" if runtime_docs_enabled else None,
+        redoc_url="/redoc" if runtime_docs_enabled else None,
+        openapi_url="/openapi.json" if runtime_docs_enabled else None,
+    )
     app.state.container = container
     install_request_logging(app, service="api", environment=active_settings.environment)
     allowed_headers = ["Content-Type", "Idempotency-Key"]

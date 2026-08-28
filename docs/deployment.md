@@ -91,6 +91,15 @@ uv run uvicorn foodlog_backend.main:app --port 8080
 ```
 
 Local-authenticated API requests must send `X-FoodLog-Local-User`; this mode is intended for API development and deterministic tests, not the React sign-in flow.
+Interactive API documentation is available only in this local mode at
+`http://127.0.0.1:8080/docs`. Preview and production disable `/docs`, `/redoc`,
+`/docs/oauth2-redirect`, and `/openapi.json`; the checked-in generated contract remains
+[`contracts/openapi.json`](../contracts/openapi.json).
+
+The IAM-private historical preview remains pinned to its immutable 25 Aug image
+for provenance and is not rebuilt by current releases. Its legacy FastAPI
+framework routes are therefore part of that isolated historical artifact, not
+the current preview-mode or production route contract.
 
 ### React plus local in-memory API
 

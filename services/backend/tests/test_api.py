@@ -197,6 +197,23 @@ def test_preview_requires_both_iam_defense_and_shared_secret() -> None:
         assert accepted.status_code == 200
 
 
+def test_runtime_api_documentation_is_local_only() -> None:
+    runtime_docs_paths = ("/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json")
+
+    with TestClient(create_app(Settings(environment="local"))) as local_client:
+        assert all(local_client.get(path).status_code == 200 for path in runtime_docs_paths)
+
+    preview_settings = Settings(
+        environment="preview",
+        preview_shared_secret="preview-secret-that-is-at-least-32-characters",
+    )
+    with TestClient(create_app(preview_settings)) as preview_client:
+        assert all(preview_client.get(path).status_code == 404 for path in runtime_docs_paths)
+
+    with TestClient(create_app(Settings(environment="test"))) as test_client:
+        assert all(test_client.get(path).status_code == 404 for path in runtime_docs_paths)
+
+
 def provision(client: TestClient, user: str = "owner-a") -> tuple[dict, dict]:
     headers = {"X-FoodLog-Local-User": user}
     account = client.post("/v1/accounts", headers=headers)
