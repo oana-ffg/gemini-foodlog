@@ -50,7 +50,10 @@ def test_trace_request_includes_the_application_owned_prompt_tools_and_schema() 
         "read_household_knowledge_page",
         "load_artifacts",
     ]
-    assert request["response_schema"]["title"] == "ActivityMealInferenceV1"
+    assert "title" not in request["response_schema"]
+    assert request["response_schema"]["properties"]["schema_version"]["const"] == (
+        "activity-meal-inference-v1"
+    )
     assert request["run_config"] == {
         "max_llm_calls": 4,
         "custom_metadata": {

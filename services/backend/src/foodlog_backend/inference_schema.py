@@ -196,8 +196,71 @@ class ActivityMealInferenceV1(InferenceModel):
         if self.question:
             self._require_known_references(self.question.evidence_ids, all_evidence_ids)
 
-        visual_ids = set(observation_ids)
-        contextual_ids = set(context_ids + assumption_ids)
+        tentative_actions = [
+            UserAction.CONFIRM_GUESS,
+            UserAction.CORRECT,
+            UserAction.DISCARD_NOT_COOKING,
+        ]
+        non_confirmable_actions = [UserAction.CORRECT, UserAction.DISCARD_NOT_COOKING]
+        if self.kind == InferenceKind.TENTATIVE_MEAL:
+            if self.best_guess is None or not self.components:
+                raise ValueError("tentative meals require a best guess and at least one component")
+            if self.allowed_actions != tentative_actions:
+                raise ValueError(
+                    "tentative meals must expose confirm, correct, and discard actions"
+                )
+        elif self.kind == InferenceKind.UNKNOWN_ACTIVITY:
+            if self.best_guess is not None or self.components or self.alternatives:
+                raise ValueError(
+                    "unknown activity cannot invent a guess, component, or alternative"
+                )
+            if self.confidence != InferenceConfidence.UNCERTAIN:
+                raise ValueError("unknown activity must be uncertain")
+            if self.allowed_actions != non_confirmable_actions:
+                raise ValueError("unknown activity cannot expose a confirmation action")
+        else:
+            if self.best_guess is None or self.components:
+                raise ValueError(
+                    "non-cooking activity requires a label and forbids meal components"
+                )
+            if self.allowed_actions != non_confirmable_actions:
+                raise ValueError("non-cooking activity cannot expose a meal-confirmation action")
+
+        if self.question:
+            if self.kind != InferenceKind.TENTATIVE_MEAL:
+                raise ValueError("only a tentative meal may ask a focused event question")
+            if self.confidence != InferenceConfidence.UNCERTAIN:
+                raise ValueError("a focused event question requires uncertain confidence")
+            if not self.alternatives:
+                raise ValueError("a focused event question requires at least one named alternative")
+            if self.question.candidate_labels[0] != self.best_guess:
+                raise ValueError("a focused event question must lead with the current best guess")
+            alternatives_by_label = {
+                alternative.label: alternative for alternative in self.alternatives
+            }
+            unknown_candidates = (
+                set(self.question.candidate_labels[1:]) - alternatives_by_label.keys()
+            )
+            if unknown_candidates:
+                raise ValueError(
+                    "question candidates must be exact named alternatives: "
+                    f"{sorted(unknown_candidates)}"
+                )
+            question_evidence = set(self.question.evidence_ids)
+            for candidate_label in self.question.candidate_labels[1:]:
+                candidate_evidence = set(alternatives_by_label[candidate_label].evidence_ids)
+                if not candidate_evidence <= question_evidence:
+                    raise ValueError(
+                        "question evidence must include every cited alternative's evidence"
+                    )
+        return self
+
+    def _enforce_new_output_context_identity_guard(self) -> None:
+        """Reject unsafe new output without invalidating immutable historical records."""
+        visual_ids = {item.id for item in self.direct_observations}
+        contextual_ids = {
+            item.id for item in [*self.contextual_evidence, *self.assumptions]
+        }
         context_bridged_visuals = {
             deduction.id: set(deduction.evidence_ids) & visual_ids
             for deduction in self.deductions
@@ -259,65 +322,6 @@ class ActivityMealInferenceV1(InferenceModel):
                     "at likely confidence"
                 )
 
-        tentative_actions = [
-            UserAction.CONFIRM_GUESS,
-            UserAction.CORRECT,
-            UserAction.DISCARD_NOT_COOKING,
-        ]
-        non_confirmable_actions = [UserAction.CORRECT, UserAction.DISCARD_NOT_COOKING]
-        if self.kind == InferenceKind.TENTATIVE_MEAL:
-            if self.best_guess is None or not self.components:
-                raise ValueError("tentative meals require a best guess and at least one component")
-            if self.allowed_actions != tentative_actions:
-                raise ValueError(
-                    "tentative meals must expose confirm, correct, and discard actions"
-                )
-        elif self.kind == InferenceKind.UNKNOWN_ACTIVITY:
-            if self.best_guess is not None or self.components or self.alternatives:
-                raise ValueError(
-                    "unknown activity cannot invent a guess, component, or alternative"
-                )
-            if self.confidence != InferenceConfidence.UNCERTAIN:
-                raise ValueError("unknown activity must be uncertain")
-            if self.allowed_actions != non_confirmable_actions:
-                raise ValueError("unknown activity cannot expose a confirmation action")
-        else:
-            if self.best_guess is None or self.components:
-                raise ValueError(
-                    "non-cooking activity requires a label and forbids meal components"
-                )
-            if self.allowed_actions != non_confirmable_actions:
-                raise ValueError("non-cooking activity cannot expose a meal-confirmation action")
-
-        if self.question:
-            if self.kind != InferenceKind.TENTATIVE_MEAL:
-                raise ValueError("only a tentative meal may ask a focused event question")
-            if self.confidence != InferenceConfidence.UNCERTAIN:
-                raise ValueError("a focused event question requires uncertain confidence")
-            if not self.alternatives:
-                raise ValueError("a focused event question requires at least one named alternative")
-            if self.question.candidate_labels[0] != self.best_guess:
-                raise ValueError("a focused event question must lead with the current best guess")
-            alternatives_by_label = {
-                alternative.label: alternative for alternative in self.alternatives
-            }
-            unknown_candidates = (
-                set(self.question.candidate_labels[1:]) - alternatives_by_label.keys()
-            )
-            if unknown_candidates:
-                raise ValueError(
-                    "question candidates must be exact named alternatives: "
-                    f"{sorted(unknown_candidates)}"
-                )
-            question_evidence = set(self.question.evidence_ids)
-            for candidate_label in self.question.candidate_labels[1:]:
-                candidate_evidence = set(alternatives_by_label[candidate_label].evidence_ids)
-                if not candidate_evidence <= question_evidence:
-                    raise ValueError(
-                        "question evidence must include every cited alternative's evidence"
-                    )
-        return self
-
     @staticmethod
     def _require_known_references(references: list[str], known_ids: set[str]) -> None:
         if len(set(references)) != len(references):
@@ -357,6 +361,11 @@ def _model_facing_schema(value: Any) -> Any:
 
 class ActivityMealInferenceModelOutputV1(ActivityMealInferenceV1):
     """Strict inference result with a complexity-reduced Vertex response schema."""
+
+    @model_validator(mode="after")
+    def enforce_new_output_semantics(self) -> ActivityMealInferenceModelOutputV1:
+        self._enforce_new_output_context_identity_guard()
+        return self
 
     @classmethod
     def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:

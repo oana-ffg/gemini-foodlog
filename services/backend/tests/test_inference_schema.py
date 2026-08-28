@@ -35,7 +35,7 @@ def test_genuinely_unknown_activity_has_no_guess_question_or_confirmation() -> N
         question=None,
         allowed_actions=["correct", "discard_not_cooking"],
     )
-    inference = ActivityMealInferenceV1.model_validate(payload)
+    inference = ActivityMealInferenceModelOutputV1.model_validate(payload)
     assert inference.best_guess is None
     assert "confirm_guess" not in inference.allowed_actions
 
@@ -166,7 +166,7 @@ def test_harmless_uncertainty_can_remain_visible_without_interrupting_the_user()
         }
     ]
 
-    inference = ActivityMealInferenceV1.model_validate(payload)
+    inference = ActivityMealInferenceModelOutputV1.model_validate(payload)
 
     assert inference.confidence == "uncertain"
     assert inference.question is None
@@ -180,7 +180,19 @@ def test_availability_context_cannot_resolve_a_visual_identity_tie() -> None:
     payload["question"] = None
 
     with pytest.raises(ValidationError, match="context cannot resolve"):
-        ActivityMealInferenceV1.model_validate(payload)
+        ActivityMealInferenceModelOutputV1.model_validate(payload)
+
+
+def test_historical_context_resolved_identity_tie_remains_readable() -> None:
+    payload = deepcopy(base_payload())
+    payload["confidence"] = "likely"
+    payload["components"][0]["confidence"] = "likely"
+    payload["question"] = None
+
+    historical = ActivityMealInferenceV1.model_validate(payload)
+
+    assert historical.confidence == "likely"
+    assert historical.alternatives[0].label == "Air-fried lamb"
 
 
 def test_context_resolved_visual_tie_requires_a_focused_question() -> None:
@@ -188,7 +200,7 @@ def test_context_resolved_visual_tie_requires_a_focused_question() -> None:
     payload["question"] = None
 
     with pytest.raises(ValidationError, match="requires a focused candidate question"):
-        ActivityMealInferenceV1.model_validate(payload)
+        ActivityMealInferenceModelOutputV1.model_validate(payload)
 
 
 def test_context_resolved_component_tie_must_remain_uncertain() -> None:
@@ -196,7 +208,7 @@ def test_context_resolved_component_tie_must_remain_uncertain() -> None:
     payload["components"][0]["confidence"] = "likely"
 
     with pytest.raises(ValidationError, match="component alternative"):
-        ActivityMealInferenceV1.model_validate(payload)
+        ActivityMealInferenceModelOutputV1.model_validate(payload)
 
 
 def test_likely_visual_result_can_keep_non_decisive_context() -> None:
@@ -207,7 +219,7 @@ def test_likely_visual_result_can_keep_non_decisive_context() -> None:
     payload["components"][0]["evidence_ids"] = ["obs_meat", "ded_meat"]
     payload["question"] = None
 
-    inference = ActivityMealInferenceV1.model_validate(payload)
+    inference = ActivityMealInferenceModelOutputV1.model_validate(payload)
 
     assert inference.confidence == "likely"
     assert inference.contextual_evidence[0].source_id == "purchase-001"

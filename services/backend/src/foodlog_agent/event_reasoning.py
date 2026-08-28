@@ -25,7 +25,11 @@ from foodlog_backend.ai_traces import (
     trace_service_from_environment,
 )
 from foodlog_backend.errors import ModelInvocationAlreadyReconciled
-from foodlog_backend.inference_schema import ActivityMealInferenceV1, ContextSourceKind
+from foodlog_backend.inference_schema import (
+    ActivityMealInferenceModelOutputV1,
+    ActivityMealInferenceV1,
+    ContextSourceKind,
+)
 from foodlog_backend.model_accounting import (
     CompletedModelInvocation,
     ModelInvocationExecutionError,
@@ -128,7 +132,9 @@ def application_visible_model_request(
         "model": MODEL,
         "system_instruction": INSTRUCTION,
         "user_content": bundle,
-        "response_schema": ActivityMealInferenceV1.model_json_schema(mode="validation"),
+        "response_schema": ActivityMealInferenceModelOutputV1.model_json_schema(
+            mode="validation"
+        ),
         "tools": [
             "get_current_event_evidence",
             "get_recent_meals",
@@ -151,18 +157,18 @@ def application_visible_model_request(
 
 
 def _structured_response(event: Event) -> ActivityMealInferenceV1:
-    if isinstance(event.output, ActivityMealInferenceV1):
+    if isinstance(event.output, ActivityMealInferenceModelOutputV1):
         return event.output
     if isinstance(event.output, BaseModel):
-        return ActivityMealInferenceV1.model_validate(event.output.model_dump())
+        return ActivityMealInferenceModelOutputV1.model_validate(event.output.model_dump())
     if isinstance(event.output, dict):
-        return ActivityMealInferenceV1.model_validate(event.output)
+        return ActivityMealInferenceModelOutputV1.model_validate(event.output)
     if event.content is None:
         raise RuntimeError("final ADK event omitted both structured output and content")
     text = "".join(part.text or "" for part in event.content.parts or [])
     if not text:
         raise RuntimeError("final ADK event contained no text response")
-    return ActivityMealInferenceV1.model_validate_json(text)
+    return ActivityMealInferenceModelOutputV1.model_validate_json(text)
 
 
 def _context_source_ids(bundle: dict[str, Any]) -> dict[ContextSourceKind, set[str]]:

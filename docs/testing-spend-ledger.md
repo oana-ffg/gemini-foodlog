@@ -30,10 +30,12 @@ Operational rules:
 | Recorded at (Europe/Copenhagen) | Test | Incremental cost (DKK) | Authorized cumulative (DKK) | Evidence |
 | --- | --- | ---: | ---: | --- |
 | 2026-08-28 | Authorization baseline | 0.000000 | 0.000000 | New DKK 200 testing envelope begins at this authorization. Earlier project usage remains preserved in the application and Cloud Billing ledgers but is outside this newly authorized envelope. |
+| 2026-08-28 21:46 CEST | Judge ambiguity control preflight | 0.000000 | 0.000000 | Identity Toolkit rejected the local ADC quota-project selection before upload or inference. A post-attempt production log query found no new `model_usage_recorded` event. No paid model test ran. |
+| 2026-08-28 21:48 CEST | Judge ambiguity control authentication preflight | 0.000000 | 0.000000 | The shell expanded the temporary Firebase-key variable before applying its one-command environment assignment, so sign-in failed before upload or inference. No model test ran. |
+| 2026-08-28 21:49 CEST | Judge ambiguity control, historical-schema failure | 0.000000 | 0.000000 | Production accepted the resumable upload, then rejected an older persisted unsafe hypothesis while assembling API/agent context. The failure happened before provider invocation; the model-usage query returned no new record. The compatibility boundary was fixed without changing immutable history. |
 
 ## Current balance
 
 - Authorized ceiling: **DKK 200.000000**
 - Recorded spend since authorization: **DKK 0.000000**
 - Remaining authorized testing budget: **DKK 200.000000**
-
