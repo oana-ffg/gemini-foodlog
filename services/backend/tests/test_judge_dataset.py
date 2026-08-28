@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -12,6 +13,7 @@ from foodlog_backend.storage import InMemoryObjectStore
 from scripts.prepare_judge_dataset import (
     RealScenarioSpec,
     checked_fixture,
+    firebase_identity,
     load_dataset,
     propose_seeded_pattern,
     scenario_client_version,
@@ -24,6 +26,36 @@ from scripts.synthetic_dataset_support import seed_synthetic_meal
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_ROOT = REPOSITORY_ROOT / "tests" / "fixtures"
 MANIFEST = FIXTURE_ROOT / "judge-demo-dataset.v3.json"
+
+
+def test_judge_identity_uses_target_project_for_adc_quota(monkeypatch) -> None:
+    credential = Mock()
+    app = Mock()
+    user = Mock(disabled=False, email_verified=True)
+    default = Mock(return_value=(credential, "ambient-project"))
+    app_factory = Mock(return_value=app)
+    get_user = Mock(return_value=user)
+    delete_app = Mock()
+    monkeypatch.setattr("scripts.prepare_judge_dataset.google.auth.default", default)
+    monkeypatch.setattr(
+        "scripts.prepare_judge_dataset.firebase_app_for_project",
+        app_factory,
+    )
+    monkeypatch.setattr("scripts.prepare_judge_dataset.auth.get_user_by_email", get_user)
+    monkeypatch.setattr("scripts.prepare_judge_dataset.firebase_admin.delete_app", delete_app)
+
+    result = firebase_identity(
+        project_id="target-project",
+        email="judge@example.invalid",
+        password="unused-existing-password",
+        allow_create=False,
+    )
+
+    assert result is user
+    default.assert_called_once_with(quota_project_id="target-project")
+    app_factory.assert_called_once_with("target-project", credential=credential)
+    get_user.assert_called_once_with("judge@example.invalid", app=app)
+    delete_app.assert_called_once_with(app)
 
 
 def test_judge_dataset_manifest_is_complete_and_hash_locked() -> None:
@@ -51,8 +83,7 @@ def test_judge_dataset_manifest_is_complete_and_hash_locked() -> None:
     assert len(dataset.synthetic_pattern_history.events) == 6
     assert dataset.synthetic_pattern_history.expected_claim_value == "steak"
     assert all(
-        event.captured_at.weekday() == 3
-        for event in dataset.synthetic_pattern_history.events
+        event.captured_at.weekday() == 3 for event in dataset.synthetic_pattern_history.events
     )
 
 

@@ -11,10 +11,12 @@ from typing import Literal
 from uuid import NAMESPACE_URL, uuid5
 
 import firebase_admin
+import google.auth
 import httpx
 from firebase_admin import auth
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from foodlog_backend.auth import firebase_app_for_project
 from foodlog_backend.firestore_repository import FirestoreRepository
 from foodlog_backend.grouping import CaptureGroupingService, GroupingPolicy
 from foodlog_backend.models import (
@@ -168,9 +170,10 @@ def firebase_identity(
     password: str,
     allow_create: bool,
 ) -> auth.UserRecord:
-    app = firebase_admin.initialize_app(
-        options={"projectId": project_id},
-        name=f"judge-dataset-{os.getpid()}",
+    credential, _ = google.auth.default(quota_project_id=project_id)
+    app = firebase_app_for_project(
+        project_id,
+        credential=credential,
     )
     try:
         try:
@@ -273,9 +276,7 @@ async def propose_seeded_pattern(
         if " ".join(meal.title.casefold().split()) != normalized_claim
     ]
     candidate = PatternCandidate(
-        statement=(
-            f"you usually eat {expected_claim_value} on {expected_condition.title()}s"
-        ),
+        statement=(f"you usually eat {expected_claim_value} on {expected_condition.title()}s"),
         claim=KnowledgeClaim(
             dimension="likely meal",
             value=expected_claim_value,
@@ -428,9 +429,11 @@ async def prepare(args: argparse.Namespace) -> None:
         )
         if account.entitlement_mode != EntitlementMode.UNLIMITED:
             raise RuntimeError("judge account is not an internal unlimited account")
-        notification = await repository._client.collection("outbox").document(
-            f"account-created-{account.id}"
-        ).get()
+        notification = (
+            await repository._client.collection("outbox")
+            .document(f"account-created-{account.id}")
+            .get()
+        )
         if notification.get("status") not in {
             NotificationOutboxStatus.PUBLISHED.value,
             NotificationOutboxStatus.DELIVERING.value,
@@ -448,9 +451,10 @@ async def prepare(args: argparse.Namespace) -> None:
             timeout=60,
         ) as client:
             visible_account = request_json(client, "POST", "/v1/accounts", expected_status=200)
-            if not isinstance(visible_account, dict) or visible_account.get(
-                "entitlement_mode"
-            ) != EntitlementMode.UNLIMITED.value:
+            if (
+                not isinstance(visible_account, dict)
+                or visible_account.get("entitlement_mode") != EntitlementMode.UNLIMITED.value
+            ):
                 raise RuntimeError("deployed API does not see the unlimited judge entitlement")
 
             camera_view = request_json(
@@ -505,16 +509,13 @@ async def prepare(args: argparse.Namespace) -> None:
                 already_uploaded = any(
                     capture.get("content_sha256") == scenario.sha256
                     and isinstance(capture.get("metadata"), dict)
-                    and capture["metadata"].get("client_version")
-                    == client_version
+                    and capture["metadata"].get("client_version") == client_version
                     and capture["metadata"].get("sequence_id") == spec.dataset_id
                     and capture["metadata"].get("sequence_number") == sequence_number
                     for capture in captures
                 )
                 if not already_uploaded and len(current_traces) > MAX_MODEL_TRACES - 2:
-                    skipped_scenarios.extend(
-                        item.key for _, item in scenario_plan[plan_index:]
-                    )
+                    skipped_scenarios.extend(item.key for _, item in scenario_plan[plan_index:])
                     break
                 capture_id, duplicate = upload_browser_fixture(
                     client,
@@ -557,9 +558,10 @@ async def prepare(args: argparse.Namespace) -> None:
                             "learning_disposition": scenario.feedback.learning_disposition,
                         },
                     )
-                    if not isinstance(feedback, dict) or feedback.get(
-                        "learning_outcome"
-                    ) != "knowledge_applied":
+                    if (
+                        not isinstance(feedback, dict)
+                        or feedback.get("learning_outcome") != "knowledge_applied"
+                    ):
                         raise RuntimeError("judge correction did not create reusable knowledge")
                     knowledge_revision_id = feedback["knowledge"]["revision"]["id"]
                 if scenario.discard_explanation is not None:
@@ -574,9 +576,10 @@ async def prepare(args: argparse.Namespace) -> None:
                             "explanation": scenario.discard_explanation,
                         },
                     )
-                    if not isinstance(discarded, dict) or discarded.get(
-                        "learning_outcome"
-                    ) != "not_cooking":
+                    if (
+                        not isinstance(discarded, dict)
+                        or discarded.get("learning_outcome") != "not_cooking"
+                    ):
                         raise RuntimeError("judge cat scenario was not discarded")
                 completed_scenarios.append(scenario.key)
 
@@ -633,10 +636,8 @@ async def prepare(args: argparse.Namespace) -> None:
                 question
                 for question in visible_questions
                 if isinstance(question.get("pattern_claim"), dict)
-                and question["pattern_claim"].get("value")
-                == pattern.expected_claim_value
-                and pattern.expected_condition
-                in question["pattern_claim"].get("conditions", [])
+                and question["pattern_claim"].get("value") == pattern.expected_claim_value
+                and pattern.expected_condition in question["pattern_claim"].get("conditions", [])
             ]
             if not expected_questions:
                 question = await propose_seeded_pattern(
