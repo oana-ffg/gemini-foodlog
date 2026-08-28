@@ -34,9 +34,10 @@ Operational rules:
 | 2026-08-28 21:48 CEST | Judge ambiguity control authentication preflight | 0.000000 | 0.000000 | The shell expanded the temporary Firebase-key variable before applying its one-command environment assignment, so sign-in failed before upload or inference. No model test ran. |
 | 2026-08-28 21:49 CEST | Judge ambiguity control, historical-schema failure | 0.000000 | 0.000000 | Production accepted the resumable upload, then rejected an older persisted unsafe hypothesis while assembling API/agent context. The failure happened before provider invocation; the model-usage query returned no new record. The compatibility boundary was fixed without changing immutable history. |
 | 2026-08-28 22:01 CEST | Judge ambiguity control, post-deploy resume | 0.000000 | 0.000000 | The deployed compatibility fix made the existing activity readable. The idempotent resume completed in 0.732 seconds and the acceptance check rejected that historical activity as overconfident; no new `model_usage_recorded` event exists after the release, so no paid provider call ran. |
+| 2026-08-28 22:03 CEST | Fresh judge ambiguity release control | 0.041811 | 0.041811 | Persisted production `model_usage_recorded` event for event `811a98ae-514e-41c8-a832-8323a964c426`: Gemini 3.6 Flash, 4,191 tokens, primary attempt succeeded, `actual_dkk_micros=41811`. The result was safely uncertain and included a focused candidate question, but the judge acceptance check rejected it because it did not cite the synthetic availability note. |
 
 ## Current balance
 
 - Authorized ceiling: **DKK 200.000000**
-- Recorded spend since authorization: **DKK 0.000000**
-- Remaining authorized testing budget: **DKK 200.000000**
+- Recorded spend since authorization: **DKK 0.041811**
+- Remaining authorized testing budget: **DKK 199.958189**
