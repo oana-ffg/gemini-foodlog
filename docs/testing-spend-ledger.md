@@ -33,6 +33,7 @@ Operational rules:
 | 2026-08-28 21:46 CEST | Judge ambiguity control preflight | 0.000000 | 0.000000 | Identity Toolkit rejected the local ADC quota-project selection before upload or inference. A post-attempt production log query found no new `model_usage_recorded` event. No paid model test ran. |
 | 2026-08-28 21:48 CEST | Judge ambiguity control authentication preflight | 0.000000 | 0.000000 | The shell expanded the temporary Firebase-key variable before applying its one-command environment assignment, so sign-in failed before upload or inference. No model test ran. |
 | 2026-08-28 21:49 CEST | Judge ambiguity control, historical-schema failure | 0.000000 | 0.000000 | Production accepted the resumable upload, then rejected an older persisted unsafe hypothesis while assembling API/agent context. The failure happened before provider invocation; the model-usage query returned no new record. The compatibility boundary was fixed without changing immutable history. |
+| 2026-08-28 22:01 CEST | Judge ambiguity control, post-deploy resume | 0.000000 | 0.000000 | The deployed compatibility fix made the existing activity readable. The idempotent resume completed in 0.732 seconds and the acceptance check rejected that historical activity as overconfident; no new `model_usage_recorded` event exists after the release, so no paid provider call ran. |
 
 ## Current balance
 

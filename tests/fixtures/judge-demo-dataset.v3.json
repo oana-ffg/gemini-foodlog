@@ -29,7 +29,7 @@
     },
     {
       "key": "ambiguous-with-context-v3",
-      "attempt": 2,
+      "attempt": 3,
       "fixture": "images/adversarial/synthetic-distant-ambiguous-meat-pack-v2.png",
       "sha256": "de2366772dea61d97eba571b9c84b82403d78bb77bbf0e3157bc85fbac4145f6",
       "captured_at": "2026-08-27T18:00:00+02:00",
