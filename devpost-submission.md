@@ -1,18 +1,18 @@
-# Devpost submission copy and judge test plan
+# Gemini FoodLog
 
 - **Hackathon:** Google All Things Agentic Hackathon 2026
 - **Category:** The Taskmaster
 - **Hosted application:** <https://gemini-foodlog-2026.web.app>
 - **Repository:** <https://github.com/oana-ffg/gemini-foodlog>
 - **Language:** English
-- **Last reconciled with the official rules:** 2026-08-28
+- **Last reconciled with live Devpost requirements:** 2026-08-29
 
 This file is the source-controlled submission copy. It deliberately contains no
 password, private inbound-mail address, camera token, or private household data.
 The dedicated judge credential belongs only in Devpost's private testing
 instructions after the privacy-safe account is provisioned and verified.
 
-## Short description
+## One-line Summary
 
 Gemini FoodLog is an autonomous, uncertainty-aware food journal that reconstructs
 meals from ordinary, unstaged kitchen activity. It observes imperfect camera
@@ -20,7 +20,7 @@ frames over time, combines them with authorized household context, asks only
 focused questions, learns from corrections, and maintains an inspectable food
 timeline on Google Cloud.
 
-## The friction
+## Problem
 
 Food and symptom diaries can help people investigate possible triggers, but
 manual logging is burdensome and incomplete. Existing approaches still ask the
@@ -35,7 +35,15 @@ work is therefore not one image classification. It is a background workflow
 that gathers evidence, maintains a revisable hypothesis, retrieves only relevant
 context, decides when uncertainty deserves a question, and persists the result.
 
-## What the project does
+## Solution
+
+FoodLog turns passive, ordinary kitchen observations into a revisable food
+journal. It groups images over time, retrieves only relevant account context,
+uses an agent to form an evidence-linked hypothesis, asks a focused question
+only when it would materially help, and preserves corrections as future
+household knowledge.
+
+## Key Features
 
 1. A signed-in phone camera, the Python capture client, or a revocable physical
    camera credential sends ordinary JPEG or PNG observations through one API.
@@ -66,7 +74,13 @@ The food timeline is intended to support later, cautious exploration of possible
 food and symptom associations. FoodLog does not diagnose conditions or claim
 causality. Calories are secondary to building a low-effort longitudinal record.
 
-## Why this is a Taskmaster agent
+## Why This Matters
+
+People investigating food-related symptoms need longitudinal evidence, but the
+burden of manually maintaining a diary makes that evidence sparse precisely
+when it matters. FoodLog aims to make the journal emerge from ordinary life
+without asking the household to stage ingredients, scan products, or remember
+to log every meal.
 
 FoodLog completes a messy personal workflow instead of returning a chat answer.
 It runs asynchronously, transforms unstructured multimodal observations into
@@ -74,7 +88,7 @@ durable state, calls bounded retrieval tools, handles retries and partial
 failures, chooses whether human input is worth requesting, and updates a real
 product record. Its core action is maintaining the journal over time.
 
-## Technology and architecture
+## Architecture
 
 - **Agent and model:** Google ADK, Google Gen AI SDK, Gemini 3.6 Flash, and the
   Vertex AI `eu` multi-region.
@@ -95,6 +109,33 @@ The [production architecture diagram](https://github.com/oana-ffg/gemini-foodlog
 shows the public, asynchronous, agentic, and tenant-data boundaries. The
 [deployment guide](https://github.com/oana-ffg/gemini-foodlog/blob/main/docs/deployment.md)
 contains the clean-checkout and cloud release procedure.
+
+## How We Used AI
+
+Gemini 3.6 Flash receives an ordered, bounded set of private kitchen images and
+works through a Google ADK tool loop. The account-scoped tools retrieve only the
+purchase evidence, temporary context, household knowledge, and prior corrections
+relevant to the event. The model returns a validated structured hypothesis with
+literal observations, alternatives, uncertainty, evidence references, and at
+most one focused question. Deterministic application guards reject unsupported
+certainty and preserve the original result plus every correction as immutable
+history.
+
+Veo 3.1 Lite produced one private synthetic evaluation probe. That probe is test
+data, not a product feature, and FoodLog does not currently claim Veo as a
+successfully integrated application model.
+
+## How We Used Codex
+
+Codex helped turn the initial product idea into an auditable build: architecture
+and threat-boundary design, the sequenced HTML backlog, implementation across the
+web, backend, mail, camera, Terraform, and CI packages, and repeated production
+deployment and smoke testing. It also generated privacy-safe still fixtures,
+constructed reproducible longitudinal evaluation manifests, reviewed failures
+instead of retrying them into passes, ran focused and repository-wide security
+reviews, and kept the submission claims tied to committed or deployed evidence.
+Oana made the product, privacy, spending, publication, and external-submission
+decisions; Codex did not silently grant itself those approvals.
 
 ## Authorized data sources
 
@@ -137,7 +178,7 @@ reasoning as a product claim.
   direct browser database access is denied, and cross-tenant negative tests are
   part of the release evidence.
 
-## Current limitations
+## Known Limitations
 
 - The physical-camera package contains a tested portable capture, motion,
   pacing, and retry core, but final board integration requires the selected
@@ -163,7 +204,7 @@ reasoning as a product claim.
 - The product supports exploratory food/symptom journaling; it is not a medical
   device and does not make diagnostic or causal claims.
 
-## Judge testing instructions
+## Testing Instructions
 
 ### Public pre-login check
 
@@ -224,19 +265,83 @@ scenarios with no call-cap skips while preserving the prepared read-only state.
 The remaining REL-003 check is a human judge-style browser login through the
 steps above; the account and dataset already exist.
 
-## Submission rules reconciliation
+## Public Demo Link
+
+<https://gemini-foodlog-2026.web.app>
+
+## Public Repository Link
+
+<https://github.com/oana-ffg/gemini-foodlog>
+
+## Demo Video
+
+The verified private draft is 198.033 seconds and remains pending Oana's final
+viewing, frame-by-frame privacy/IP approval, and public YouTube or Vimeo upload.
+No public video URL exists yet.
+
+The rehearsed outline is: state the logging friction and value; show the
+production architecture; run one continuous production capture-to-journal
+sequence; show one correction becoming scoped learning; show the cat negative
+control; show the longitudinal pattern question; prove the active Google Cloud
+deployment; then close on the symptom-journal value. Exact timing, fallbacks,
+and permitted claims live in
+[the four-minute demo runbook](docs/demo-runbook.md).
+
+## Screenshot Shot List
+
+1. A degraded event on the food timeline showing the tentative guess, literal
+   evidence, alternatives, and focused uncertainty question.
+2. The immutable correction and household-learning revision history.
+3. The cat-on-counter negative control in discarded non-cooking activity.
+4. The longitudinal Thursday-steak pattern question and its supporting events.
+5. Sanitized Google Cloud proof showing the deployed Cloud Run revision,
+   immutable digest, Gemini 3.6 Flash configuration, and bounded runtime.
+
+## Submission Readiness Notes
 
 | Official requirement | FoodLog evidence | Final gate |
 | --- | --- | --- |
-| New project built during the 3–31 Aug 2026 submission period | Repository history and provenance audit in REL-007 | Oana resolves the final license and public-history decisions. |
+| New project built during the 3–31 Aug 2026 submission period | First commit is 23 Aug 2026; REL-007 provenance, license, history, and secret audit is complete | Recheck the exact submitted commit. |
 | Gemini 3.5 or newer plus a Google agent framework and Google Cloud infrastructure | Gemini 3.6 Flash through Google ADK/Gen AI SDK on Vertex AI; Cloud Run, Pub/Sub, Firestore, Storage, and other GCP services | Reconfirm the exact deployed release in REL-015. |
 | One category | The Taskmaster | Reconfirm on the Devpost form. |
 | Hosted URL optional but strongly encouraged; clear Google Cloud deployment proof required | Hosted Firebase URL plus judge account; the public demo and repository remain proof if billing-safe shutdown is chosen | Complete the consolidated human login and make the separate pre-expiry funding or shutdown decision. |
 | English description covering features, technologies, data sources, findings, and learnings | This document | Fresh-reader and final-form review. |
-| Repository URL and spin-up instructions | Repository above; README and deployment guide | REL-008 needs final repository-sharing approval. |
-| Architecture diagram | `docs/architecture-diagram.md`, locally rendered, implementation-audited, and publicly available through the repository link above | Reconfirm the final diagram against the release shown in the video. |
+| Repository URL and spin-up instructions | Public repository above; logged-out access plus clean-checkout README/deployment rehearsal passed | Recheck the exact submitted commit and public URL. |
+| Architecture diagram | `docs/architecture-diagram.md` is implementation-audited and render-verified | Complete REL-017's committed upload-ready file and inspect it at submission scale. |
 | Public demonstration video, no longer than four minutes, showing Google Cloud execution | REL-009 and REL-010 | Record, privacy-review, publish, and add the final URL. |
 | English application and submission materials | English UI, documentation, test plan, and planned narration | Oana completes the final human language review. |
 | Privacy and IP-safe media | Synthetic judge data and explicit media review tickets | REL-011 remains Oana's frame-by-frame publication gate. |
 
 The authoritative requirements are the [official hackathon rules](https://allthingsagentichackathon.devpost.com/rules).
+
+## TODO Official Form Fields
+
+- **Submitter type:** Oana must choose Individuals or Organization. Organization
+  is appropriate only if FoodLog is genuinely submitted on behalf of the
+  incorporated entity.
+- **Country of residence:** Denmark.
+- **Category:** Taskmaster.
+- **Organization name:** required by the live form only when submitting on
+  behalf of an organization; do not invent a value for an individual entry.
+- **Project start date:** 08-23-26, matching the first repository commit.
+- **Repository:** <https://github.com/oana-ffg/gemini-foodlog>.
+- **Reproducible README instructions:** Yes; the clean-checkout rehearsal and CI
+  evidence are recorded in the backlog.
+- **Hosted project:** <https://gemini-foodlog-2026.web.app>.
+- **Private testing instructions:** paste the verified judge email and password
+  from the secret store into Devpost's private field, followed by the read-only
+  workflow above. Never put those credentials in this file.
+- **Google SDK dropdown:** Agent Development Kit (ADK). The implementation also
+  uses the Google Gen AI SDK.
+- **Google Cloud service dropdown:** Cloud Run. The description additionally
+  documents Pub/Sub, Firestore, Cloud Storage, App Engine, and other services.
+- **Architecture diagram upload:** pending REL-017's upload-ready render.
+- **Startup Excellence opt-in:** Oana must decide whether this is an eligible
+  organization entry and, if so, provide the truthful incorporated name and
+  corporate email in the private form.
+- **Google AI models:** Gemini 3.6 Flash. Disclose the private Veo 3.1 Lite
+  evaluation probe separately; do not claim it as a completed product
+  integration unless that changes before submission.
+- **Bonus content URL:** not available until REL-013 is approved and published.
+- **Bonus social URL:** not available until REL-014 is approved and published.
+- **Public video URL:** not available until REL-011 and REL-012 are complete.

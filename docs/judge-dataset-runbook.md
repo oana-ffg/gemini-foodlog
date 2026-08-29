@@ -96,6 +96,6 @@ The sanitized summary must report:
 - confirmation that credentials and generated resource IDs were omitted.
 
 After seeding, perform the judge workflow in
-[`devpost-submission.md`](devpost-submission.md) using the hosted UI. Credentials
+[`devpost-submission.md`](../devpost-submission.md) using the hosted UI. Credentials
 belong only in Devpost's private testing-instructions field or an equally private
 judge channel; they never belong in the repository or public video.

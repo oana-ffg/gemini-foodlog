@@ -9,20 +9,21 @@
     "source": "known"
   },
   "participant": {
-    "name": "",
-    "display_name": ""
+    "name": "Oana Goge",
+    "display_name": "Oana Goge"
   },
   "project": {
-    "name": "",
-    "summary": "",
-    "ai_usage": "",
-    "codex_usage": ""
+    "name": "Gemini FoodLog",
+    "summary": "An autonomous, uncertainty-aware food journal reconstructed from ordinary, unstaged kitchen activity.",
+    "ai_usage": "Gemini 3.6 Flash through Google ADK uses ordered images and bounded account-scoped context tools to produce evidence-linked, revisable meal hypotheses.",
+    "codex_usage": "Codex helped design, implement, test, secure, deploy, evaluate, and document the project while Oana retained spending, privacy, product, publication, and submission decisions."
   },
-  "current_stage": "review-hackathon-rules",
+  "current_stage": "prepare-submission",
   "completed_stages": [
-    "start-hackathon"
+    "start-hackathon",
+    "review-hackathon-rules"
   ],
-  "rules_acknowledged": false,
+  "rules_acknowledged": true,
   "learning": {
     "status": "not-started",
     "current_step": "",
@@ -32,7 +33,7 @@
   },
   "submission": {
     "draft_file": "devpost-submission.md",
-    "status": "not-started"
+    "status": "drafting"
   },
-  "next_command": "review-hackathon-rules"
+  "next_command": "prepare-submission"
 }
