@@ -154,10 +154,12 @@ reasoning as a product claim.
   hashes, and declarative seed manifest are source-controlled for auditability.
   Provisioning and automatic four-scenario verification are complete; the final
   judge-style browser login remains in the consolidated human test pass.
-- The known promotional Google Cloud credit expires on 2026-09-24 while judging
-  ends on 2026-10-01. The project has hard usage controls, but availability for
-  that final seven-day interval still requires the explicit pre-expiry decision
+- The known promotional Google Cloud credit expires on 2026-09-24. Continuous
+  hosted availability after that date depends on the explicit safety decision
   in the [judge availability runbook](https://github.com/oana-ffg/gemini-foodlog/blob/main/docs/judge-availability-runbook.md).
+  The official requirements make a hosted URL optional but strongly encouraged
+  and accept the public demo plus repository as deployment proof if the app is
+  offline during judging.
 - The product supports exploratory food/symptom journaling; it is not a medical
   device and does not make diagnostic or causal claims.
 
@@ -229,7 +231,7 @@ steps above; the account and dataset already exist.
 | New project built during the 3–31 Aug 2026 submission period | Repository history and provenance audit in REL-007 | Oana resolves the final license and public-history decisions. |
 | Gemini 3.5 or newer plus a Google agent framework and Google Cloud infrastructure | Gemini 3.6 Flash through Google ADK/Gen AI SDK on Vertex AI; Cloud Run, Pub/Sub, Firestore, Storage, and other GCP services | Reconfirm the exact deployed release in REL-015. |
 | One category | The Taskmaster | Reconfirm on the Devpost form. |
-| Free working access through 1 Oct 2026 | Hosted Firebase URL, scale-to-zero runtime, account/trial caps, and judge-availability runbook | REL-002 needs the post-credit-expiry operating decision. |
+| Hosted URL optional but strongly encouraged; clear Google Cloud deployment proof required | Hosted Firebase URL plus judge account; the public demo and repository remain proof if billing-safe shutdown is chosen | Complete the consolidated human login and make the separate pre-expiry funding or shutdown decision. |
 | English description covering features, technologies, data sources, findings, and learnings | This document | Fresh-reader and final-form review. |
 | Repository URL and spin-up instructions | Repository above; README and deployment guide | REL-008 needs final repository-sharing approval. |
 | Architecture diagram | `docs/architecture-diagram.md`, locally rendered, implementation-audited, and publicly available through the repository link above | Reconfirm the final diagram against the release shown in the video. |
