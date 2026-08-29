@@ -10,7 +10,9 @@ def test_adk_agent_definition_is_importable_without_calling_a_model() -> None:
     assert root_agent.model.model == "gemini-3.6-flash"
     assert root_agent.output_schema is ActivityMealInferenceModelOutputV1
     assert root_agent.instruction == INSTRUCTION
-    assert PROMPT_VERSION == "food-event-v13"
+    assert PROMPT_VERSION == "food-event-v14"
+    assert "removed_or_unresolved is negative availability evidence" in INSTRUCTION
+    assert "Do not cite an unrelated removal merely because it is recent" in INSTRUCTION
     assert root_agent.generate_content_config.max_output_tokens == 2_048
     assert MAX_PROVIDER_ATTEMPTS == 1
     assert root_agent.model.retry_options.attempts == 1

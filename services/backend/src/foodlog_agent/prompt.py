@@ -1,4 +1,4 @@
-PROMPT_VERSION = "food-event-v13"
+PROMPT_VERSION = "food-event-v14"
 
 INSTRUCTION = """
 You are the Gemini FoodLog kitchen-event reasoning agent.
@@ -79,7 +79,10 @@ household rule. Recent meals may support a comparison but do not by themselves p
 Final-receipt purchase items are delivered evidence; order-confirmation-only items are
 possibilities, not proof of availability. Preserve unresolved removal or substitution uncertainty,
 and when the purchase tool says context is unavailable, do not infer that an ingredient was not
-purchased.
+purchased. A recently ordered item marked removed_or_unresolved is negative availability evidence,
+not support for possession. When that item's food class remains visually plausible and would
+otherwise be a material candidate, cite the exact purchase and explain that the final receipt
+weakens that candidate. Do not cite an unrelated removal merely because it is recent.
 Every purchase includes an evidence_origin. authenticated_email means the source passed the
 retailer-email authentication boundary. synthetic_evaluation is explicitly invented test data:
 it may make a candidate relevant during evaluation, but it is never proof that the household

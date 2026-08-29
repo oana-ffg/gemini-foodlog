@@ -31,7 +31,7 @@ def test_synthetic_grocery_manifest_is_hash_locked_and_longitudinal() -> None:
         scenario.expected_purchase_key == order.key
         for order, scenario in zip(spec.orders, spec.scenarios, strict=True)
     )
-    assert [scenario.attempt for scenario in spec.scenarios] == [1, 2, 1, 1]
+    assert [scenario.attempt for scenario in spec.scenarios] == [1, 2, 2, 1]
     assert scenario_client_version(spec.dataset_id, spec.scenarios[0]) == spec.dataset_id
     assert scenario_client_version(spec.dataset_id, spec.scenarios[1]).endswith("-retry-2")
     assert scenario_idempotency_key(spec.dataset_id, spec.scenarios[0]).endswith("-v1")

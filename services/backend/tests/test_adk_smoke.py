@@ -66,7 +66,7 @@ def test_trace_request_includes_the_application_owned_prompt_tools_and_schema() 
 
 
 def test_prompt_explicitly_couples_questions_to_uncertain_confidence() -> None:
-    assert PROMPT_VERSION == "food-event-v13"
+    assert PROMPT_VERSION == "food-event-v14"
     assert "Follow this exact bounded tool-turn plan" in INSTRUCTION
     assert "Never call more than four tools in one turn" in INSTRUCTION
     assert "select at most two relevant pages" in INSTRUCTION
