@@ -118,7 +118,7 @@ def test_synthetic_grocery_activity_requires_provenance_and_rejects_future_leaka
             "kind": "tentative_meal",
             "confidence": "uncertain",
             "best_guess": "Duck breast",
-            "alternatives": [{"label": "Chicken breast"}],
+            "alternatives": [{"label": "Raw poultry"}],
             "contextual_evidence": [
                 {
                     "source_kind": "purchase",
@@ -126,7 +126,10 @@ def test_synthetic_grocery_activity_requires_provenance_and_rejects_future_leaka
                     "description": "Explicitly synthetic purchase evaluation context.",
                 }
             ],
-            "question": {"candidate_labels": ["Duck breast", "Chicken breast"]},
+            "question": {
+                "candidate_labels": ["Raw poultry", "Duck breast"],
+                "prompt": "Was this chicken breast or duck breast?",
+            },
         }
     }
 

@@ -362,6 +362,21 @@ def validate_activity(
     ]
     if isinstance(question, dict):
         labels.extend(str(item) for item in question.get("candidate_labels", []))
+        labels.append(str(question.get("prompt") or ""))
+    for component in hypothesis.get("components", []):
+        if not isinstance(component, dict):
+            continue
+        labels.extend(
+            (
+                str(component.get("name") or ""),
+                *[str(item) for item in component.get("ingredients", [])],
+                *[
+                    str(item.get("label") or "")
+                    for item in component.get("alternatives", [])
+                    if isinstance(item, dict)
+                ],
+            )
+        )
     normalized_labels = " ".join(labels).casefold()
     matched_terms = {
         term for term in scenario.candidate_terms if term.casefold() in normalized_labels
