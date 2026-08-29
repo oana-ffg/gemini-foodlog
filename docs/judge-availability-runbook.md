@@ -8,6 +8,8 @@
 
 The official [hackathon rules](https://allthingsagentichackathon.devpost.com/rules) request a hosted project URL for judging and place the judging period after the promotional-credit expiry. This creates a real seven-day funding gap; it must not be hidden behind a budget alert or an assumption about free tiers.
 
+The official Devpost MCP currently exposes conflicting dates: its structured key-dates endpoint says judging ends on 2026-09-25 at 00:00 UTC, while the binding rules still say 2026-10-01 at 11:45 PM Pacific Time. FoodLog deliberately uses the later rules date until Devpost resolves the discrepancy. The same official final-call announcement says the repository, video, and other linked materials should not change after the submission deadline until winners are announced around 2026-10-08; REL-018 tracks that separate artifact freeze.
+
 ## Verified hosted path
 
 On 2026-08-28, a fresh signed-out browser session loaded the production Firebase Hosting site with no console warnings or errors. The root, `/camera`, `/context`, `/knowledge`, `/purchases`, and `/data` routes all resolved directly over HTTPS and exposed only the sign-in boundary. The production API health endpoint returned the production application rather than the historical preview. A privacy-safe judge identity and dataset are created separately under REL-003; credentials never enter source control or this document.
