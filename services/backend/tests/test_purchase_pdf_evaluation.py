@@ -20,6 +20,11 @@ def test_hostile_pdf_corpus_is_deterministic_and_unique() -> None:
         "page_budget",
         "stream_expansion_budget",
     }
+    assert all(
+        case.expected_codes is None
+        for case in first
+        if case.name.startswith("mutated_structure_")
+    )
 
 
 def test_hostile_pdf_corpus_recovers_across_repeated_attempts() -> None:

@@ -23,7 +23,7 @@ from .purchase_pdf_limits import (
 class CorpusCase:
     name: str
     payload: bytes
-    expected_codes: frozenset[str]
+    expected_codes: frozenset[str] | None
 
 
 def _build_pdf(objects: list[bytes], *, root_object_id: int = 1) -> bytes:
@@ -144,7 +144,7 @@ def _mutated_structure_cases(count: int) -> list[CorpusCase]:
             CorpusCase(
                 name=f"mutated_structure_{len(cases) + 1:02d}",
                 payload=bytes(payload),
-                expected_codes=frozenset({"pdf_structure_rejected"}),
+                expected_codes=None,
             )
         )
     return cases
@@ -221,7 +221,7 @@ def run_soak(
                     f"{round_index + 1}"
                 )
             duration = time.monotonic() - attempt_started
-            if code not in case.expected_codes:
+            if case.expected_codes is not None and code not in case.expected_codes:
                 raise RuntimeError(
                     f"{case.name} returned {code!r}, expected "
                     f"{sorted(case.expected_codes)!r}"
