@@ -120,7 +120,8 @@
     },
     {
       "key": "red-after-removed-pork",
-      "attempt": 2,
+      "attempt": 3,
+      "retry_offset_minutes": 180,
       "fixture": "images/adversarial/synthetic-distant-red-meat-pack.png",
       "sha256": "273a2e11050a5e7cc3464e6a45f039b8732ac0405244ada956c12e16c0fff906",
       "captured_at": "2026-07-23T18:00:00+02:00",

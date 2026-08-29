@@ -4,7 +4,7 @@ import argparse
 import asyncio
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from typing import Literal
@@ -85,6 +85,7 @@ class GroceryScenarioSpec(BaseModel):
 
     key: str = Field(pattern=r"^[a-z0-9-]+$")
     attempt: int = Field(default=1, ge=1, le=20)
+    retry_offset_minutes: int = Field(default=0, ge=0, le=720)
     fixture: Path
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     captured_at: datetime
@@ -99,6 +100,8 @@ class GroceryScenarioSpec(BaseModel):
     def timestamp_has_offset(self) -> GroceryScenarioSpec:
         if self.captured_at.tzinfo is None or self.captured_at.utcoffset() is None:
             raise ValueError("synthetic scenario timestamp requires a UTC offset")
+        if self.attempt == 1 and self.retry_offset_minutes != 0:
+            raise ValueError("a primary scenario cannot have a retry time offset")
         return self
 
 
@@ -281,7 +284,7 @@ def upload_fixture(
                     {
                         "schema_version": 1,
                         "camera_id": camera_id,
-                        "captured_at": scenario.captured_at.isoformat(),
+                        "captured_at": scenario_capture_time(scenario).isoformat(),
                         "client_kind": "browser",
                         "client_version": scenario_client_version(dataset_id, scenario),
                         "sequence_id": dataset_id,
@@ -314,6 +317,10 @@ def scenario_idempotency_key(dataset_id: str, scenario: GroceryScenarioSpec) -> 
     if scenario.attempt == 1:
         return f"{base}-v1"
     return f"{base}-retry-{scenario.attempt}"
+
+
+def scenario_capture_time(scenario: GroceryScenarioSpec) -> datetime:
+    return scenario.captured_at + timedelta(minutes=scenario.retry_offset_minutes)
 
 
 def validate_activity(
@@ -529,7 +536,7 @@ async def prepare(args: argparse.Namespace) -> None:
                 future_purchase_ids = {
                     purchase_ids[order.key]
                     for order in spec.orders
-                    if order.confirmation.recorded_at > scenario.captured_at
+                    if order.confirmation.recorded_at > scenario_capture_time(scenario)
                 }
                 result = validate_activity(
                     activity,
@@ -544,7 +551,7 @@ async def prepare(args: argparse.Namespace) -> None:
                     scenario.captured_at - ordered_scenarios[0].captured_at
                 ).days
                 result["eligible_purchase_histories"] = sum(
-                    order.confirmation.recorded_at <= scenario.captured_at
+                    order.confirmation.recorded_at <= scenario_capture_time(scenario)
                     for order in spec.orders
                 )
                 result["prior_inferred_events"] = len(scenario_results)

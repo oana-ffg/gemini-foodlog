@@ -5,11 +5,13 @@ from pathlib import Path
 
 import pytest
 
+from foodlog_backend.grouping import GroupingPolicy
 from foodlog_backend.models import PurchaseEvidenceOrigin
 from foodlog_backend.repository import InMemoryRepository
 from scripts.prepare_synthetic_grocery_evaluation import (
     _contains_unqualified_claim,
     load_dataset,
+    scenario_capture_time,
     scenario_client_version,
     scenario_idempotency_key,
     seed_synthetic_purchases,
@@ -31,11 +33,16 @@ def test_synthetic_grocery_manifest_is_hash_locked_and_longitudinal() -> None:
         scenario.expected_purchase_key == order.key
         for order, scenario in zip(spec.orders, spec.scenarios, strict=True)
     )
-    assert [scenario.attempt for scenario in spec.scenarios] == [1, 2, 2, 1]
+    assert [scenario.attempt for scenario in spec.scenarios] == [1, 2, 3, 1]
     assert scenario_client_version(spec.dataset_id, spec.scenarios[0]) == spec.dataset_id
     assert scenario_client_version(spec.dataset_id, spec.scenarios[1]).endswith("-retry-2")
     assert scenario_idempotency_key(spec.dataset_id, spec.scenarios[0]).endswith("-v1")
     assert scenario_idempotency_key(spec.dataset_id, spec.scenarios[1]).endswith("-retry-2")
+    isolated_retry = spec.scenarios[2]
+    assert (
+        scenario_capture_time(isolated_retry) - isolated_retry.captured_at
+        > GroupingPolicy().reopen_window
+    )
 
 
 def test_synthetic_grocery_seed_is_exactly_idempotent_and_temporally_bounded() -> None:
