@@ -381,6 +381,11 @@ class PurchaseDocumentKind(StrEnum):
     FINAL_RECEIPT = "final_receipt"
 
 
+class PurchaseEvidenceOrigin(StrEnum):
+    AUTHENTICATED_EMAIL = "authenticated_email"
+    SYNTHETIC_EVALUATION = "synthetic_evaluation"
+
+
 class RawMailAuthenticationOutcome(StrEnum):
     ALIGNED_DKIM_PASS = "aligned_dkim_pass"
     UNTRUSTED = "untrusted"
@@ -701,6 +706,7 @@ class PurchaseDocumentCandidate(BaseModel):
     raw_mail_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     raw_content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     merchant: Literal["nemlig"] = "nemlig"
+    evidence_origin: PurchaseEvidenceOrigin = PurchaseEvidenceOrigin.AUTHENTICATED_EMAIL
     kind: PurchaseDocumentKind = PurchaseDocumentKind.UNKNOWN
     order_reference: str | None = Field(default=None, min_length=1, max_length=128)
     invoice_reference: str | None = Field(default=None, min_length=1, max_length=128)
@@ -715,6 +721,7 @@ class Purchase(BaseModel):
     id: str = Field(min_length=1, max_length=128)
     account_id: str = Field(min_length=1, max_length=128)
     merchant: Literal["nemlig"] = "nemlig"
+    evidence_origin: PurchaseEvidenceOrigin = PurchaseEvidenceOrigin.AUTHENTICATED_EMAIL
     revision_count: int = Field(default=0, ge=0)
     latest_confirmation_document_id: str | None = Field(
         default=None,
@@ -735,6 +742,7 @@ class PurchaseDocument(BaseModel):
     raw_mail_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     raw_content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     merchant: Literal["nemlig"] = "nemlig"
+    evidence_origin: PurchaseEvidenceOrigin = PurchaseEvidenceOrigin.AUTHENTICATED_EMAIL
     kind: PurchaseDocumentKind = PurchaseDocumentKind.UNKNOWN
     revision_number: int = Field(ge=1)
     order_reference: str | None = Field(default=None, min_length=1, max_length=128)
@@ -902,6 +910,10 @@ class PurchaseEvidenceBundle(BaseModel):
             item.account_id != account_id or item.purchase_id != purchase_id for item in evidence
         ):
             raise ValueError("purchase evidence crosses an account or purchase boundary")
+        if any(
+            document.evidence_origin != self.purchase.evidence_origin for document in self.documents
+        ):
+            raise ValueError("purchase evidence mixes authenticated and synthetic origins")
         return self
 
 

@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "dataset_id": "synthetic-grocery-longitudinal-v1",
+  "provenance_label": "Explicitly synthetic evaluation grocery history; not an authenticated retailer order, receipt, or statement about a real household.",
+  "orders": [
+    {
+      "key": "week-one-steak",
+      "order_reference": "synthetic-eval-order-2026-07-06",
+      "confirmation": {
+        "recorded_at": "2026-07-06T09:00:00+02:00",
+        "items": [
+          {"name": "Beef ribeye steak", "quantity": 1, "category": "Meat", "line_total_ore": 12900},
+          {"name": "Chicken breast", "quantity": 1, "category": "Meat", "line_total_ore": 6900},
+          {"name": "Breakfast cereal", "quantity": 1, "category": "Breakfast", "line_total_ore": 3200},
+          {"name": "Whole milk", "quantity": 2, "category": "Dairy", "line_total_ore": 3000}
+        ],
+        "total_ore": 26000
+      },
+      "final": {
+        "invoice_reference": "synthetic-eval-invoice-2026-07-07",
+        "recorded_at": "2026-07-07T16:00:00+02:00",
+        "items": [
+          {"name": "Beef ribeye steak", "quantity": 1, "category": "Meat", "line_total_ore": 12900},
+          {"name": "Breakfast cereal", "quantity": 1, "category": "Breakfast", "line_total_ore": 3200},
+          {"name": "Whole milk", "quantity": 2, "category": "Dairy", "line_total_ore": 3000}
+        ],
+        "total_ore": 19100,
+        "included_vat_ore": 3820
+      }
+    },
+    {
+      "key": "week-two-duck-substitution",
+      "order_reference": "synthetic-eval-order-2026-07-13",
+      "confirmation": {
+        "recorded_at": "2026-07-13T09:00:00+02:00",
+        "items": [
+          {"name": "Chicken breast", "quantity": 2, "category": "Meat", "line_total_ore": 11800},
+          {"name": "Eggs", "quantity": 1, "category": "Dairy", "line_total_ore": 3300}
+        ],
+        "total_ore": 15100
+      },
+      "final": {
+        "invoice_reference": "synthetic-eval-invoice-2026-07-14",
+        "recorded_at": "2026-07-14T16:00:00+02:00",
+        "items": [
+          {"name": "Duck breast", "quantity": 2, "category": "Meat", "line_total_ore": 15400},
+          {"name": "Eggs", "quantity": 1, "category": "Dairy", "line_total_ore": 3300}
+        ],
+        "total_ore": 18700,
+        "included_vat_ore": 3740
+      }
+    },
+    {
+      "key": "week-three-removed-pork",
+      "order_reference": "synthetic-eval-order-2026-07-20",
+      "confirmation": {
+        "recorded_at": "2026-07-20T09:00:00+02:00",
+        "items": [
+          {"name": "Pork chops", "quantity": 2, "category": "Meat", "line_total_ore": 8400},
+          {"name": "Potatoes", "quantity": 1, "category": "Produce", "line_total_ore": 2500}
+        ],
+        "total_ore": 10900
+      },
+      "final": {
+        "invoice_reference": "synthetic-eval-invoice-2026-07-21",
+        "recorded_at": "2026-07-21T16:00:00+02:00",
+        "items": [
+          {"name": "Potatoes", "quantity": 1, "category": "Produce", "line_total_ore": 2500}
+        ],
+        "total_ore": 2500,
+        "included_vat_ore": 500
+      }
+    },
+    {
+      "key": "week-four-ordered-chicken-only",
+      "order_reference": "synthetic-eval-order-2026-07-27",
+      "confirmation": {
+        "recorded_at": "2026-07-27T09:00:00+02:00",
+        "items": [
+          {"name": "Chicken breast", "quantity": 1, "category": "Meat", "line_total_ore": 6200},
+          {"name": "Pancake mix", "quantity": 1, "category": "Breakfast", "line_total_ore": 2900}
+        ],
+        "total_ore": 9100
+      },
+      "final": null
+    }
+  ],
+  "scenarios": [
+    {
+      "key": "steak-after-delivery",
+      "fixture": "images/adversarial/synthetic-distant-red-meat-pack.png",
+      "sha256": "273a2e11050a5e7cc3464e6a45f039b8732ac0405244ada956c12e16c0fff906",
+      "captured_at": "2026-07-09T18:00:00+02:00",
+      "expected_purchase_key": "week-one-steak",
+      "expected_kind": "tentative_meal",
+      "expected_confidence": "uncertain",
+      "question_policy": "allowed",
+      "candidate_terms": ["steak", "beef", "red meat"]
+    },
+    {
+      "key": "pale-after-duck-substitution",
+      "fixture": "images/adversarial/synthetic-distant-pale-meat-pack.png",
+      "sha256": "64d25cdef45a5b23c308c76bd582a4bde76bee957014b063d25af8d6189de369",
+      "captured_at": "2026-07-16T18:00:00+02:00",
+      "expected_purchase_key": "week-two-duck-substitution",
+      "expected_kind": "tentative_meal",
+      "expected_confidence": "uncertain",
+      "question_policy": "required",
+      "candidate_terms": ["duck", "chicken"]
+    },
+    {
+      "key": "red-after-removed-pork",
+      "fixture": "images/adversarial/synthetic-distant-ambiguous-meat-pack-v2.png",
+      "sha256": "de2366772dea61d97eba571b9c84b82403d78bb77bbf0e3157bc85fbac4145f6",
+      "captured_at": "2026-07-23T18:00:00+02:00",
+      "expected_purchase_key": "week-three-removed-pork",
+      "expected_kind": "tentative_meal",
+      "expected_confidence": "uncertain",
+      "question_policy": "allowed",
+      "candidate_terms": ["meat", "beef", "pork"],
+      "forbidden_asserted_terms": ["delivered pork", "pork was delivered", "pork is available"]
+    },
+    {
+      "key": "ambiguous-after-order-only",
+      "fixture": "images/adversarial/synthetic-distant-ambiguous-meat-pack-v2.png",
+      "sha256": "de2366772dea61d97eba571b9c84b82403d78bb77bbf0e3157bc85fbac4145f6",
+      "captured_at": "2026-07-30T18:00:00+02:00",
+      "expected_purchase_key": "week-four-ordered-chicken-only",
+      "expected_kind": "tentative_meal",
+      "expected_confidence": "uncertain",
+      "question_policy": "required",
+      "candidate_terms": ["chicken", "red meat", "beef"],
+      "forbidden_asserted_terms": ["chicken was delivered", "chicken is available"]
+    }
+  ]
+}

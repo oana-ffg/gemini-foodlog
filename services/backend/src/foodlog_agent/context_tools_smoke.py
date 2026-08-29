@@ -3,13 +3,17 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 from foodlog_agent.context_tools import (
     ContextToolsService,
     production_context_tools_service,
 )
-from foodlog_agent.event_evidence_tool import ACCOUNT_ID_STATE_KEY
+from foodlog_agent.event_evidence_tool import (
+    ACCOUNT_ID_STATE_KEY,
+    EVENT_OCCURRED_AT_STATE_KEY,
+)
 from foodlog_agent.knowledge_tools import (
     KnowledgeToolsService,
     production_knowledge_tools_service,
@@ -18,7 +22,10 @@ from foodlog_agent.knowledge_tools import (
 
 class SmokeContext:
     def __init__(self, *, account_id: str) -> None:
-        self.state = {ACCOUNT_ID_STATE_KEY: account_id}
+        self.state = {
+            ACCOUNT_ID_STATE_KEY: account_id,
+            EVENT_OCCURRED_AT_STATE_KEY: datetime.now(UTC).isoformat(),
+        }
 
 
 async def run_smoke(

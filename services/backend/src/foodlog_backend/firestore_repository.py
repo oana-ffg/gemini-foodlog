@@ -41,6 +41,7 @@ from .errors import (
     ModelSpendReservationConflict,
     ModelUsageConflict,
     ModelUsageExceedsReservation,
+    PurchaseDocumentConflict,
     PurchaseIdentityConflict,
     PurchaseNormalizationConflict,
     PurchaseNotFound,
@@ -128,6 +129,7 @@ from .models import (
     PurchaseDocumentKind,
     PurchaseDocumentNormalization,
     PurchaseEvidenceBundle,
+    PurchaseEvidenceOrigin,
     PurchaseIdentityAlias,
     PurchaseIdentityResult,
     PurchaseItem,
@@ -1637,6 +1639,37 @@ class FirestoreRepository:
         self,
         candidate: PurchaseDocumentCandidate,
     ) -> PurchaseIdentityResult:
+        if candidate.evidence_origin != PurchaseEvidenceOrigin.AUTHENTICATED_EMAIL:
+            raise PurchaseIdentityConflict
+        return await self._attach_purchase_document(
+            candidate,
+            require_authenticated_mail=True,
+            recorded_at=None,
+        )
+
+    async def attach_synthetic_purchase_document(
+        self,
+        candidate: PurchaseDocumentCandidate,
+        *,
+        recorded_at: datetime,
+    ) -> PurchaseIdentityResult:
+        if candidate.evidence_origin != PurchaseEvidenceOrigin.SYNTHETIC_EVALUATION:
+            raise PurchaseIdentityConflict
+        if recorded_at.tzinfo is None or recorded_at.utcoffset() is None:
+            raise ValueError("synthetic purchase timestamps require a UTC offset")
+        return await self._attach_purchase_document(
+            candidate,
+            require_authenticated_mail=False,
+            recorded_at=recorded_at,
+        )
+
+    async def _attach_purchase_document(
+        self,
+        candidate: PurchaseDocumentCandidate,
+        *,
+        require_authenticated_mail: bool,
+        recorded_at: datetime | None,
+    ) -> PurchaseIdentityResult:
         account_ref = self._account(candidate.account_id)
         raw_mail_ref = self._collection(candidate.account_id, "raw_mail").document(
             candidate.raw_mail_id
@@ -1663,33 +1696,46 @@ class FirestoreRepository:
         @firestore.async_transactional
         async def attach(transaction):
             account_snapshot = await account_ref.get(transaction=transaction)
-            raw_mail_snapshot = await raw_mail_ref.get(transaction=transaction)
-            authentication_snapshot = await authentication_ref.get(transaction=transaction)
+            raw_mail_snapshot = (
+                await raw_mail_ref.get(transaction=transaction)
+                if require_authenticated_mail
+                else None
+            )
+            authentication_snapshot = (
+                await authentication_ref.get(transaction=transaction)
+                if require_authenticated_mail
+                else None
+            )
             document_snapshot = await document_ref.get(transaction=transaction)
             if not account_snapshot.exists or account_snapshot.get("status") != "active":
                 raise AccountNotProvisioned
-            raw_mail_data = raw_mail_snapshot.to_dict() or {}
-            if (
-                not raw_mail_snapshot.exists
-                or raw_mail_data.get("account_id") != candidate.account_id
-                or raw_mail_data.get("status") not in {"stored", "published"}
-                or raw_mail_data.get("content_sha256") != candidate.raw_content_sha256
-            ):
-                raise RawMailNotFound
-            if not authentication_snapshot.exists:
-                raise RawMailNotFound
-            authentication = _model(authentication_snapshot, RawMailAuthentication)
-            if (
-                authentication.account_id != candidate.account_id
-                or authentication.raw_mail_id != candidate.raw_mail_id
-                or authentication.raw_content_sha256 != candidate.raw_content_sha256
-                or authentication.outcome != RawMailAuthenticationOutcome.ALIGNED_DKIM_PASS
-            ):
-                raise RawMailNotFound
+            if require_authenticated_mail:
+                if raw_mail_snapshot is None or authentication_snapshot is None:
+                    raise RawMailNotFound
+                raw_mail_data = raw_mail_snapshot.to_dict() or {}
+                if (
+                    not raw_mail_snapshot.exists
+                    or raw_mail_data.get("account_id") != candidate.account_id
+                    or raw_mail_data.get("status") not in {"stored", "published"}
+                    or raw_mail_data.get("content_sha256") != candidate.raw_content_sha256
+                ):
+                    raise RawMailNotFound
+                if not authentication_snapshot.exists:
+                    raise RawMailNotFound
+                authentication = _model(authentication_snapshot, RawMailAuthentication)
+                if (
+                    authentication.account_id != candidate.account_id
+                    or authentication.raw_mail_id != candidate.raw_mail_id
+                    or authentication.raw_content_sha256 != candidate.raw_content_sha256
+                    or authentication.outcome != RawMailAuthenticationOutcome.ALIGNED_DKIM_PASS
+                ):
+                    raise RawMailNotFound
 
             if document_snapshot.exists:
                 document = _model(document_snapshot, PurchaseDocument)
                 validate_purchase_document_retry(document, candidate)
+                if recorded_at is not None and document.created_at != recorded_at:
+                    raise PurchaseDocumentConflict
                 existing_aliases = []
                 for alias_id, kind, reference, alias_ref in alias_refs:
                     alias_snapshot = await alias_ref.get(transaction=transaction)
@@ -1715,6 +1761,7 @@ class FirestoreRepository:
                 if (
                     purchase.account_id != candidate.account_id
                     or purchase.merchant != candidate.merchant
+                    or purchase.evidence_origin != candidate.evidence_origin
                     or any(alias.purchase_id != purchase.id for alias in existing_aliases)
                 ):
                     raise PurchaseIdentityConflict
@@ -1744,7 +1791,7 @@ class FirestoreRepository:
             purchase_id = next(iter(purchase_ids), candidate_purchase_id)
             purchase_ref = self._collection(candidate.account_id, "purchases").document(purchase_id)
             purchase_snapshot = await purchase_ref.get(transaction=transaction)
-            now = utc_now()
+            now = recorded_at or utc_now()
             if purchase_ids:
                 if not purchase_snapshot.exists:
                     raise PurchaseIdentityConflict
@@ -1752,6 +1799,7 @@ class FirestoreRepository:
                 if (
                     purchase.account_id != candidate.account_id
                     or purchase.merchant != candidate.merchant
+                    or purchase.evidence_origin != candidate.evidence_origin
                 ):
                     raise PurchaseIdentityConflict
             else:
@@ -1761,6 +1809,7 @@ class FirestoreRepository:
                     id=purchase_id,
                     account_id=candidate.account_id,
                     merchant=candidate.merchant,
+                    evidence_origin=candidate.evidence_origin,
                     created_at=now,
                     updated_at=now,
                 )
@@ -1791,6 +1840,7 @@ class FirestoreRepository:
                 raw_mail_id=candidate.raw_mail_id,
                 raw_content_sha256=candidate.raw_content_sha256,
                 merchant=candidate.merchant,
+                evidence_origin=candidate.evidence_origin,
                 kind=candidate.kind,
                 revision_number=revision_number,
                 order_reference=candidate.order_reference,
@@ -2047,17 +2097,21 @@ class FirestoreRepository:
         self,
         *,
         account_id: str,
+        as_of: datetime | None = None,
         limit: int = 5,
     ) -> list[PurchaseEvidenceBundle]:
         validate_purchase_list_limit(limit)
+        if as_of is not None and (as_of.tzinfo is None or as_of.utcoffset() is None):
+            raise ValueError("purchase evidence cutoff requires a UTC offset")
         account = await self._account(account_id).get()
         if not account.exists or account.get("status") != "active":
             raise AccountNotProvisioned
-        query = (
-            self._collection(account_id, "purchases")
-            .order_by("updated_at", direction=firestore.Query.DESCENDING)
-            .limit(limit)
+        query = self._collection(account_id, "purchases").order_by(
+            "updated_at", direction=firestore.Query.DESCENDING
         )
+        if as_of is not None:
+            query = query.where(filter=FieldFilter("updated_at", "<=", as_of))
+        query = query.limit(limit)
         purchases = [_model(snapshot, Purchase) async for snapshot in query.stream()]
         if any(purchase.account_id != account_id for purchase in purchases):
             raise CrossAccountAccess

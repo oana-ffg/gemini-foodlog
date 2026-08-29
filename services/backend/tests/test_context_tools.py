@@ -11,7 +11,10 @@ from foodlog_agent.context_tools import (
     build_context_tools,
 )
 from foodlog_agent.context_tools_smoke import run_smoke
-from foodlog_agent.event_evidence_tool import ACCOUNT_ID_STATE_KEY
+from foodlog_agent.event_evidence_tool import (
+    ACCOUNT_ID_STATE_KEY,
+    EVENT_OCCURRED_AT_STATE_KEY,
+)
 from foodlog_agent.knowledge_tools import KnowledgeToolsService
 from foodlog_backend.models import (
     CaptureEnvelopeV1,
@@ -168,7 +171,12 @@ def test_context_tools_are_bounded_active_provenanced_and_account_scoped() -> No
         )
 
         tools = {tool.name: tool for tool in build_context_tools(repository=repository)}
-        context = StateContext({ACCOUNT_ID_STATE_KEY: account.id})
+        context = StateContext(
+            {
+                ACCOUNT_ID_STATE_KEY: account.id,
+                EVENT_OCCURRED_AT_STATE_KEY: now.isoformat(),
+            }
+        )
         recent = await tools["get_recent_meals"].run_async(  # type: ignore[arg-type]
             args={}, tool_context=context
         )
@@ -221,7 +229,12 @@ def test_context_tools_are_bounded_active_provenanced_and_account_scoped() -> No
         assert smoke["selected_knowledge_revision_id"] is None
         assert smoke["model_calls"] == 0
 
-        foreign_context = StateContext({ACCOUNT_ID_STATE_KEY: foreign.id})
+        foreign_context = StateContext(
+            {
+                ACCOUNT_ID_STATE_KEY: foreign.id,
+                EVENT_OCCURRED_AT_STATE_KEY: now.isoformat(),
+            }
+        )
         for tool in tools.values():
             response = await tool.run_async(  # type: ignore[arg-type]
                 args={}, tool_context=foreign_context

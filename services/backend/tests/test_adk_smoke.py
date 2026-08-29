@@ -66,7 +66,7 @@ def test_trace_request_includes_the_application_owned_prompt_tools_and_schema() 
 
 
 def test_prompt_explicitly_couples_questions_to_uncertain_confidence() -> None:
-    assert PROMPT_VERSION == "food-event-v12"
+    assert PROMPT_VERSION == "food-event-v13"
     assert "Follow this exact bounded tool-turn plan" in INSTRUCTION
     assert "Never call more than four tools in one turn" in INSTRUCTION
     assert "select at most two relevant pages" in INSTRUCTION
@@ -99,6 +99,17 @@ def test_prompt_calibrates_specificity_for_degraded_single_frames() -> None:
     assert "cannot by itself identify what is in the current image" in INSTRUCTION
     assert 'keep confidence "uncertain"' in INSTRUCTION
     assert "even when one candidate is known to be available" in INSTRUCTION
+
+
+def test_prompt_preserves_synthetic_purchase_provenance_and_lifecycle_uncertainty() -> None:
+    normalized_instruction = " ".join(INSTRUCTION.split())
+    assert "Every purchase includes an evidence_origin" in INSTRUCTION
+    assert "synthetic_evaluation is explicitly invented test data" in INSTRUCTION
+    assert "never proof that the household" in INSTRUCTION
+    assert "Never describe synthetic_evaluation data as a real retailer order" in INSTRUCTION
+    assert "Final-receipt purchase items are delivered evidence" in INSTRUCTION
+    assert "order-confirmation-only items are possibilities" in normalized_instruction
+    assert "Preserve unresolved removal or substitution uncertainty" in normalized_instruction
 
 
 def test_smoke_rejects_context_and_knowledge_ids_absent_from_input() -> None:

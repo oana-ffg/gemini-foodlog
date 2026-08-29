@@ -135,6 +135,7 @@ from .models import (
     PurchaseDocumentKind,
     PurchaseDocumentNormalization,
     PurchaseEvidenceBundle,
+    PurchaseEvidenceOrigin,
     PurchaseIdentityAlias,
     PurchaseIdentityResult,
     PurchaseItem,
@@ -466,11 +467,14 @@ def purchase_identity_aliases(
     candidate: PurchaseDocumentCandidate,
 ) -> list[tuple[str, str, str]]:
     aliases = []
+    merchant_scope = candidate.merchant
+    if candidate.evidence_origin != PurchaseEvidenceOrigin.AUTHENTICATED_EMAIL:
+        merchant_scope = f"{candidate.merchant}:{candidate.evidence_origin.value}"
     if candidate.order_reference is not None:
         aliases.append(
             (
                 purchase_identity_alias_id(
-                    merchant=candidate.merchant,
+                    merchant=merchant_scope,
                     kind="order",
                     reference=candidate.order_reference,
                 ),
@@ -482,7 +486,7 @@ def purchase_identity_aliases(
         aliases.append(
             (
                 purchase_identity_alias_id(
-                    merchant=candidate.merchant,
+                    merchant=merchant_scope,
                     kind="invoice",
                     reference=candidate.invoice_reference,
                 ),
@@ -502,6 +506,7 @@ def validate_purchase_document_retry(
         or existing.raw_mail_id != candidate.raw_mail_id
         or existing.raw_content_sha256 != candidate.raw_content_sha256
         or existing.merchant != candidate.merchant
+        or existing.evidence_origin != candidate.evidence_origin
         or existing.kind != candidate.kind
         or existing.order_reference != candidate.order_reference
         or existing.invoice_reference != candidate.invoice_reference
@@ -768,6 +773,13 @@ class Repository(Protocol):
         candidate: PurchaseDocumentCandidate,
     ) -> PurchaseIdentityResult: ...
 
+    async def attach_synthetic_purchase_document(
+        self,
+        candidate: PurchaseDocumentCandidate,
+        *,
+        recorded_at: datetime,
+    ) -> PurchaseIdentityResult: ...
+
     async def normalize_purchase_document(
         self,
         *,
@@ -792,6 +804,7 @@ class Repository(Protocol):
         self,
         *,
         account_id: str,
+        as_of: datetime | None = None,
         limit: int = 5,
     ) -> list[PurchaseEvidenceBundle]: ...
 
@@ -2169,33 +2182,70 @@ class InMemoryRepository:
         self,
         candidate: PurchaseDocumentCandidate,
     ) -> PurchaseIdentityResult:
+        if candidate.evidence_origin != PurchaseEvidenceOrigin.AUTHENTICATED_EMAIL:
+            raise PurchaseIdentityConflict
+        return await self._attach_purchase_document(
+            candidate,
+            require_authenticated_mail=True,
+            recorded_at=None,
+        )
+
+    async def attach_synthetic_purchase_document(
+        self,
+        candidate: PurchaseDocumentCandidate,
+        *,
+        recorded_at: datetime,
+    ) -> PurchaseIdentityResult:
+        if candidate.evidence_origin != PurchaseEvidenceOrigin.SYNTHETIC_EVALUATION:
+            raise PurchaseIdentityConflict
+        if recorded_at.tzinfo is None or recorded_at.utcoffset() is None:
+            raise ValueError("synthetic purchase timestamps require a UTC offset")
+        return await self._attach_purchase_document(
+            candidate,
+            require_authenticated_mail=False,
+            recorded_at=recorded_at,
+        )
+
+    async def _attach_purchase_document(
+        self,
+        candidate: PurchaseDocumentCandidate,
+        *,
+        require_authenticated_mail: bool,
+        recorded_at: datetime | None,
+    ) -> PurchaseIdentityResult:
         async with self._lock:
             if self._account_status_by_id.get(candidate.account_id) != "active":
                 raise AccountNotProvisioned
-            raw_content_sha256 = self._published_raw_mail.get(
-                (candidate.account_id, candidate.raw_mail_id)
-            )
-            if raw_content_sha256 != candidate.raw_content_sha256:
-                raise RawMailNotFound
-            authentication = self._raw_mail_authentication.get(
-                (candidate.account_id, candidate.raw_mail_id)
-            )
-            if (
-                authentication is None
-                or authentication.raw_content_sha256 != candidate.raw_content_sha256
-                or authentication.outcome
-                != RawMailAuthenticationOutcome.ALIGNED_DKIM_PASS
-            ):
-                raise RawMailNotFound
+            if require_authenticated_mail:
+                raw_content_sha256 = self._published_raw_mail.get(
+                    (candidate.account_id, candidate.raw_mail_id)
+                )
+                if raw_content_sha256 != candidate.raw_content_sha256:
+                    raise RawMailNotFound
+                authentication = self._raw_mail_authentication.get(
+                    (candidate.account_id, candidate.raw_mail_id)
+                )
+                if (
+                    authentication is None
+                    or authentication.raw_content_sha256 != candidate.raw_content_sha256
+                    or authentication.outcome != RawMailAuthenticationOutcome.ALIGNED_DKIM_PASS
+                ):
+                    raise RawMailNotFound
 
             document_key = (candidate.account_id, candidate.raw_mail_id)
             existing_document = self._purchase_documents.get(document_key)
             if existing_document is not None:
                 validate_purchase_document_retry(existing_document, candidate)
+                if recorded_at is not None and existing_document.created_at != recorded_at:
+                    raise PurchaseDocumentConflict
                 purchase = self._purchases.get(
                     (candidate.account_id, existing_document.purchase_id)
                 )
-                if purchase is None or purchase.merchant != candidate.merchant:
+                if (
+                    purchase is None
+                    or purchase.merchant != candidate.merchant
+                    or purchase.evidence_origin != candidate.evidence_origin
+                ):
                     raise PurchaseIdentityConflict
                 for alias_id, kind, reference in purchase_identity_aliases(candidate):
                     alias = self._purchase_aliases.get((candidate.account_id, alias_id))
@@ -2233,17 +2283,22 @@ class InMemoryRepository:
             if len(purchase_ids) > 1:
                 raise PurchaseIdentityConflict
 
-            now = utc_now()
+            now = recorded_at or utc_now()
             if purchase_ids:
                 purchase_id = purchase_ids.pop()
                 purchase = self._purchases.get((candidate.account_id, purchase_id))
-                if purchase is None or purchase.merchant != candidate.merchant:
+                if (
+                    purchase is None
+                    or purchase.merchant != candidate.merchant
+                    or purchase.evidence_origin != candidate.evidence_origin
+                ):
                     raise PurchaseIdentityConflict
             else:
                 purchase = Purchase(
                     id=str(uuid4()),
                     account_id=candidate.account_id,
                     merchant=candidate.merchant,
+                    evidence_origin=candidate.evidence_origin,
                     created_at=now,
                     updated_at=now,
                 )
@@ -2281,6 +2336,7 @@ class InMemoryRepository:
                 raw_mail_id=candidate.raw_mail_id,
                 raw_content_sha256=candidate.raw_content_sha256,
                 merchant=candidate.merchant,
+                evidence_origin=candidate.evidence_origin,
                 kind=candidate.kind,
                 revision_number=revision_number,
                 order_reference=candidate.order_reference,
@@ -2419,9 +2475,12 @@ class InMemoryRepository:
         self,
         *,
         account_id: str,
+        as_of: datetime | None = None,
         limit: int = 5,
     ) -> list[PurchaseEvidenceBundle]:
         validate_purchase_list_limit(limit)
+        if as_of is not None and (as_of.tzinfo is None or as_of.utcoffset() is None):
+            raise ValueError("purchase evidence cutoff requires a UTC offset")
         async with self._lock:
             if account_id not in self._accounts:
                 raise AccountNotProvisioned
@@ -2429,7 +2488,7 @@ class InMemoryRepository:
                 (
                     purchase
                     for (scope, _), purchase in self._purchases.items()
-                    if scope == account_id
+                    if scope == account_id and (as_of is None or purchase.updated_at <= as_of)
                 ),
                 key=lambda purchase: purchase.updated_at,
                 reverse=True,

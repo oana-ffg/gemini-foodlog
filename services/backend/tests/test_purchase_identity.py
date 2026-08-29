@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import UTC, datetime
 from hashlib import sha256
 
 import pytest
@@ -21,6 +22,7 @@ from foodlog_backend.models import (
     PurchaseChargeKind,
     PurchaseDocumentCandidate,
     PurchaseDocumentKind,
+    PurchaseEvidenceOrigin,
     PurchaseItemDisposition,
     PurchaseItemDraft,
     PurchaseReconciliationDisposition,
@@ -154,6 +156,80 @@ def test_purchase_attachment_requires_matching_immutable_authentication() -> Non
             await repository.record_raw_mail_authentication(
                 trusted_authentication_for_candidate(item)
             )
+
+    asyncio.run(scenario())
+
+
+def test_synthetic_purchase_attachment_is_explicit_and_cannot_use_authenticated_path() -> None:
+    async def scenario() -> None:
+        repository = InMemoryRepository(public_account_limit=25, trial_image_limit=200)
+        account = await repository.provision_account("synthetic-purchase-owner")
+        item = candidate(account.id, "synthetic-evaluation", order_reference="order-123")
+        item = item.model_copy(
+            update={"evidence_origin": PurchaseEvidenceOrigin.SYNTHETIC_EVALUATION}
+        )
+
+        with pytest.raises(PurchaseIdentityConflict):
+            await repository.attach_purchase_document(item)
+
+        recorded_at = datetime(2026, 8, 20, 10, tzinfo=UTC)
+        first = await repository.attach_synthetic_purchase_document(
+            item,
+            recorded_at=recorded_at,
+        )
+        retry = await repository.attach_synthetic_purchase_document(
+            item,
+            recorded_at=recorded_at,
+        )
+
+        assert first.duplicate is False
+        assert retry.duplicate is True
+        assert first.purchase.evidence_origin == PurchaseEvidenceOrigin.SYNTHETIC_EVALUATION
+        assert first.document.evidence_origin == PurchaseEvidenceOrigin.SYNTHETIC_EVALUATION
+        assert not repository._published_raw_mail
+        assert not repository._raw_mail_authentication
+
+        with pytest.raises(PurchaseDocumentConflict):
+            await repository.attach_synthetic_purchase_document(
+                item,
+                recorded_at=datetime(2026, 8, 20, 11, tzinfo=UTC),
+            )
+
+    asyncio.run(scenario())
+
+
+def test_synthetic_and_authenticated_references_never_share_a_purchase_lifecycle() -> None:
+    async def scenario() -> None:
+        repository = InMemoryRepository(public_account_limit=25, trial_image_limit=200)
+        account = await repository.provision_account("purchase-origin-owner")
+        authenticated = candidate(
+            account.id,
+            "authenticated-origin",
+            order_reference="shared-reference-123",
+        )
+        synthetic = candidate(
+            account.id,
+            "synthetic-origin",
+            order_reference="shared-reference-123",
+        ).model_copy(
+            update={"evidence_origin": PurchaseEvidenceOrigin.SYNTHETIC_EVALUATION}
+        )
+        await seed(repository, authenticated)
+
+        authenticated_result = await repository.attach_purchase_document(authenticated)
+        synthetic_result = await repository.attach_synthetic_purchase_document(
+            synthetic,
+            recorded_at=datetime(2026, 8, 20, 10, tzinfo=UTC),
+        )
+
+        assert authenticated_result.purchase.id != synthetic_result.purchase.id
+        assert len(repository._purchase_aliases) == 2
+        assert {
+            purchase.evidence_origin for purchase in repository._purchases.values()
+        } == {
+            PurchaseEvidenceOrigin.AUTHENTICATED_EMAIL,
+            PurchaseEvidenceOrigin.SYNTHETIC_EVALUATION,
+        }
 
     asyncio.run(scenario())
 

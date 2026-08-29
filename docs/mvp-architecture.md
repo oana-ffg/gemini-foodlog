@@ -382,6 +382,14 @@ Expected tools include:
 
 Every tool derives or validates the account boundary independently. The agent cannot choose an arbitrary account identifier.
 
+Purchase reads are also bounded to the current event's last capture timestamp. This
+prevents a historical replay from seeing orders or receipts that arrived later. Every
+purchase carries an evidence origin: authenticated email is retailer evidence, while
+explicitly synthetic evaluation history is test context only and can never prove that
+a real household ordered, received, owned, or consumed an item. Synthetic order and
+invoice aliases use a separate identity namespace so they cannot merge into an
+authenticated purchase lifecycle even when a reference string matches.
+
 ### 7.2 Structured inference result
 
 A meal inference contains:

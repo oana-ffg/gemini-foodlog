@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Any, Literal
 
@@ -17,6 +17,7 @@ from foodlog_backend.models import (
     PurchaseChargeKind,
     PurchaseDocumentKind,
     PurchaseEvidenceBundle,
+    PurchaseEvidenceOrigin,
     PurchaseItemDisposition,
     PurchaseReconciliationDisposition,
     QuestionEvidenceReference,
@@ -25,7 +26,7 @@ from foodlog_backend.models import (
 )
 from foodlog_backend.repository import Repository
 
-from .event_evidence_tool import ACCOUNT_ID_STATE_KEY
+from .event_evidence_tool import ACCOUNT_ID_STATE_KEY, EVENT_OCCURRED_AT_STATE_KEY
 from .session_state import SessionStateContext, required_state_identifier
 
 CONTEXT_TOOL_SCHEMA_VERSION = "agent-context-v1"
@@ -157,6 +158,7 @@ class RecentPurchaseSummary(BaseModel):
 
     purchase_id: str
     merchant: str
+    evidence_origin: PurchaseEvidenceOrigin
     revision_count: int = Field(ge=1)
     updated_at: str
     evidence_status: Literal["delivered", "ordered_only", "source_only"]
@@ -345,6 +347,7 @@ def _recent_purchase_summary(bundle: PurchaseEvidenceBundle) -> RecentPurchaseSu
     return RecentPurchaseSummary(
         purchase_id=bundle.purchase.id,
         merchant=bundle.purchase.merchant,
+        evidence_origin=bundle.purchase.evidence_origin,
         revision_count=bundle.purchase.revision_count,
         updated_at=bundle.purchase.updated_at.isoformat(),
         evidence_status=evidence_status,
@@ -406,8 +409,13 @@ class ContextToolsService:
         context: SessionStateContext,
     ) -> RecentPurchasesToolResult:
         account_id = required_state_identifier(context, ACCOUNT_ID_STATE_KEY)
+        occurred_at_raw = required_state_identifier(context, EVENT_OCCURRED_AT_STATE_KEY)
+        occurred_at = datetime.fromisoformat(occurred_at_raw)
+        if occurred_at.tzinfo is None or occurred_at.utcoffset() is None:
+            raise ValueError("Agent session state has an invalid current_event_occurred_at")
         bundles = await self._repository.recent_purchase_evidence_for_account(
             account_id=account_id,
+            as_of=occurred_at,
             limit=RECENT_PURCHASE_RESULT_LIMIT,
         )
         purchases = [_recent_purchase_summary(bundle) for bundle in bundles]

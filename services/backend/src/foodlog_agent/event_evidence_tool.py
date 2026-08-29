@@ -24,6 +24,7 @@ from .session_state import required_state_identifier
 ACCOUNT_ID_STATE_KEY = "account_id"
 EVENT_ID_STATE_KEY = "current_event_id"
 EVENT_REVISION_STATE_KEY = "current_event_revision"
+EVENT_OCCURRED_AT_STATE_KEY = "current_event_occurred_at"
 EVENT_EVIDENCE_SCHEMA_VERSION = "event-evidence-v1"
 
 

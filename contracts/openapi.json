@@ -3258,6 +3258,9 @@
             "title": "Documents",
             "type": "array"
           },
+          "evidence_origin": {
+            "$ref": "#/components/schemas/PurchaseEvidenceOrigin"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -3311,6 +3314,7 @@
         "required": [
           "id",
           "merchant",
+          "evidence_origin",
           "revision_count",
           "latest_confirmation_document_id",
           "latest_final_document_id",
@@ -3409,6 +3413,14 @@
         ],
         "title": "PurchaseDocumentView",
         "type": "object"
+      },
+      "PurchaseEvidenceOrigin": {
+        "enum": [
+          "authenticated_email",
+          "synthetic_evaluation"
+        ],
+        "title": "PurchaseEvidenceOrigin",
+        "type": "string"
       },
       "PurchaseItemDisposition": {
         "enum": [
@@ -3687,6 +3699,9 @@
             "title": "Created At",
             "type": "string"
           },
+          "evidence_origin": {
+            "$ref": "#/components/schemas/PurchaseEvidenceOrigin"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -3730,6 +3745,7 @@
         "required": [
           "id",
           "merchant",
+          "evidence_origin",
           "revision_count",
           "latest_confirmation_document_id",
           "latest_final_document_id",

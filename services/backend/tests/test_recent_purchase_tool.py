@@ -1,27 +1,33 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from hashlib import sha256
 
 from foodlog_agent.context_tools import build_context_tools
-from foodlog_agent.event_evidence_tool import ACCOUNT_ID_STATE_KEY
+from foodlog_agent.event_evidence_tool import (
+    ACCOUNT_ID_STATE_KEY,
+    EVENT_OCCURRED_AT_STATE_KEY,
+)
 from foodlog_backend.models import (
     ParsedPurchaseDocument,
     PurchaseChargeDraft,
     PurchaseChargeKind,
     PurchaseDocumentCandidate,
     PurchaseDocumentKind,
+    PurchaseEvidenceOrigin,
     PurchaseItemDisposition,
     PurchaseItemDraft,
 )
 from foodlog_backend.repository import InMemoryRepository
 
-from .purchase_test_support import seed_authenticated_raw_mail
-
 
 class StateContext:
-    def __init__(self, account_id: str) -> None:
-        self.state = {ACCOUNT_ID_STATE_KEY: account_id}
+    def __init__(self, account_id: str, occurred_at: datetime) -> None:
+        self.state = {
+            ACCOUNT_ID_STATE_KEY: account_id,
+            EVENT_OCCURRED_AT_STATE_KEY: occurred_at.isoformat(),
+        }
 
 
 def digest(value: str) -> str:
@@ -59,6 +65,7 @@ def test_recent_purchase_tool_prefers_delivery_and_preserves_uncertainty() -> No
             raw_mail_id=digest("purchase-tool-confirmation"),
             raw_content_sha256=digest("purchase-tool-confirmation-content"),
             kind=PurchaseDocumentKind.ORDER_CONFIRMATION,
+            evidence_origin=PurchaseEvidenceOrigin.SYNTHETIC_EVALUATION,
             order_reference="synthetic-order-700",
         )
         final = PurchaseDocumentCandidate(
@@ -66,13 +73,18 @@ def test_recent_purchase_tool_prefers_delivery_and_preserves_uncertainty() -> No
             raw_mail_id=digest("purchase-tool-final"),
             raw_content_sha256=digest("purchase-tool-final-content"),
             kind=PurchaseDocumentKind.FINAL_RECEIPT,
+            evidence_origin=PurchaseEvidenceOrigin.SYNTHETIC_EVALUATION,
             order_reference="synthetic-order-700",
             invoice_reference="synthetic-invoice-701",
         )
-        for candidate in (confirmation, final):
-            await seed_authenticated_raw_mail(repository, candidate)
-        confirmation_identity = await repository.attach_purchase_document(confirmation)
-        final_identity = await repository.attach_purchase_document(final)
+        confirmation_identity = await repository.attach_synthetic_purchase_document(
+            confirmation,
+            recorded_at=datetime(2026, 8, 20, 10, tzinfo=UTC),
+        )
+        final_identity = await repository.attach_synthetic_purchase_document(
+            final,
+            recorded_at=datetime(2026, 8, 21, 10, tzinfo=UTC),
+        )
         await repository.normalize_purchase_document(
             document=confirmation_identity.document,
             parsed=ParsedPurchaseDocument(
@@ -124,11 +136,11 @@ def test_recent_purchase_tool_prefers_delivery_and_preserves_uncertainty() -> No
         tools = {tool.name: tool for tool in build_context_tools(repository=repository)}
         result = await tools["get_recent_purchases"].run_async(  # type: ignore[arg-type]
             args={},
-            tool_context=StateContext(account.id),
+            tool_context=StateContext(account.id, datetime(2026, 8, 22, tzinfo=UTC)),
         )
         unavailable = await tools["get_recent_purchases"].run_async(  # type: ignore[arg-type]
             args={},
-            tool_context=StateContext(foreign.id),
+            tool_context=StateContext(foreign.id, datetime(2026, 8, 22, tzinfo=UTC)),
         )
 
         assert result["available"] is True
@@ -136,6 +148,7 @@ def test_recent_purchase_tool_prefers_delivery_and_preserves_uncertainty() -> No
         assert len(result["purchases"]) == 1
         purchase = result["purchases"][0]
         assert purchase["purchase_id"] == confirmation_identity.purchase.id
+        assert purchase["evidence_origin"] == "synthetic_evaluation"
         assert purchase["evidence_status"] == "delivered"
         assert purchase["latest_total_ore"] == 3_000
         assert [item["name"] for item in purchase["items"]] == [

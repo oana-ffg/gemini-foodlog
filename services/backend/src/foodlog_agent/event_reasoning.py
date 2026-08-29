@@ -16,6 +16,7 @@ from foodlog_agent.agent import MAX_PROVIDER_ATTEMPTS, MODEL, app
 from foodlog_agent.event_evidence_tool import (
     ACCOUNT_ID_STATE_KEY,
     EVENT_ID_STATE_KEY,
+    EVENT_OCCURRED_AT_STATE_KEY,
     EVENT_REVISION_STATE_KEY,
 )
 from foodlog_agent.prompt import INSTRUCTION, PROMPT_VERSION
@@ -132,9 +133,7 @@ def application_visible_model_request(
         "model": MODEL,
         "system_instruction": INSTRUCTION,
         "user_content": bundle,
-        "response_schema": ActivityMealInferenceModelOutputV1.model_json_schema(
-            mode="validation"
-        ),
+        "response_schema": ActivityMealInferenceModelOutputV1.model_json_schema(mode="validation"),
         "tools": [
             "get_current_event_evidence",
             "get_recent_meals",
@@ -333,6 +332,7 @@ async def run_accounted_event_inference(
                     "prompt_version": PROMPT_VERSION,
                     ACCOUNT_ID_STATE_KEY: event.account_id,
                     EVENT_ID_STATE_KEY: event.id,
+                    EVENT_OCCURRED_AT_STATE_KEY: event.last_capture_at.isoformat(),
                     EVENT_REVISION_STATE_KEY: event.current_revision,
                 },
             )

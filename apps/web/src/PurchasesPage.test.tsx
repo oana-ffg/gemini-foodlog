@@ -6,6 +6,7 @@ import type { InboundMailAddress, PurchaseDetail } from "./api";
 const purchase: PurchaseDetail = {
   id: "purchase-1",
   merchant: "Nemlig",
+  evidence_origin: "authenticated_email",
   revision_count: 2,
   latest_confirmation_document_id: "document-confirmation",
   latest_final_document_id: "document-final",
@@ -92,6 +93,16 @@ describe("purchase evidence view", () => {
     expect(html).toContain("nemlig-v1");
     expect(html).toContain("Total");
     expect(html).not.toContain("pantry inventory");
+    expect(html).not.toContain("Synthetic evaluation data");
+  });
+
+  it("labels synthetic grocery orders as evaluation context rather than authenticated evidence", () => {
+    const html = renderToStaticMarkup(
+      <PurchaseEvidence purchase={{ ...purchase, evidence_origin: "synthetic_evaluation" }} />,
+    );
+
+    expect(html).toContain("Synthetic evaluation data");
+    expect(html).toContain("not authenticated retailer evidence");
   });
 
   it("does not invent reconciliation when only one document side exists", () => {

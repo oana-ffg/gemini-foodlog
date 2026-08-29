@@ -9,6 +9,7 @@ from .models import (
     PurchaseDocumentKind,
     PurchaseDocumentNormalization,
     PurchaseEvidenceBundle,
+    PurchaseEvidenceOrigin,
     PurchaseItem,
     PurchaseItemDisposition,
     PurchaseReconciledItem,
@@ -20,6 +21,7 @@ from .models import (
 class PurchaseSummaryView(BaseModel):
     id: str
     merchant: str
+    evidence_origin: PurchaseEvidenceOrigin
     revision_count: int
     latest_confirmation_document_id: str | None
     latest_final_document_id: str | None

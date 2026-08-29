@@ -548,6 +548,7 @@ export interface AuditEvent {
 export interface PurchaseSummary {
   id: string;
   merchant: string;
+  evidence_origin: "authenticated_email" | "synthetic_evaluation";
   revision_count: number;
   latest_confirmation_document_id: string | null;
   latest_final_document_id: string | null;

@@ -31,6 +31,12 @@ export function PurchaseEvidence({ purchase }: { purchase: PurchaseDetail }) {
         </div>
         <span>{purchase.revision_count} source revision{purchase.revision_count === 1 ? "" : "s"}</span>
       </div>
+      {purchase.evidence_origin === "synthetic_evaluation" ? (
+        <p className="form-message" role="note">
+          Synthetic evaluation data — useful for testing context and uncertainty, but not
+          authenticated retailer evidence.
+        </p>
+      ) : null}
       <p className="fine-print">
         Purchase ID {purchase.id} · Updated {new Date(purchase.updated_at).toLocaleString()}
       </p>
