@@ -16,11 +16,13 @@ use of private images outside private testing.
 
 On 29 August 2026, Oana authorized exactly one privacy-safe eight-second Veo
 3.1 Lite 720p video-only credit-coverage probe, with a maximum possible
-out-of-pocket cost of **DKK 2.000000** and no automatic retry. This does not
-authorize the full Veo scenario set. The request was rejected before generation
-because Veo 3.1 prompt enhancement cannot be disabled; no video was produced
-and its gross generation cost was **DKK 0.000000**. A corrected request requires
-a new exact approval.
+out-of-pocket cost of **DKK 2.000000** and no automatic retry. The first request
+was rejected before generation because Veo 3.1 prompt enhancement cannot be
+disabled; no video was produced and its gross generation cost was **DKK
+0.000000**. Oana then directly approved one exact corrected request that omitted
+only that unsupported option and retained the same DKK 2 ceiling and disabled
+retries. It produced eight generated seconds at a gross list-price cost of **DKK
+1.540800**. This does not authorize the full Veo scenario set.
 
 Operational rules:
 
@@ -53,10 +55,11 @@ Operational rules:
 | 2026-08-28 23:47 CEST | Judge ambiguity v3 idempotent resume | 0.000000 | 0.871630 | The fixed seeder resumed the immutable attempt-three activity and correctly rejected its missing context-note citation. A post-attempt usage reconciliation found zero new rows, proving no paid provider call ran. |
 | 2026-08-28 23:50 CEST | Judge ambiguity v4 semantic-guard control | 0.248385 | 1.120015 | One immutable successful `model_usage` row for event `1a9662d4-bc22-428b-8aae-6b120dea219d`: Gemini 3.6 Flash, prompt `food-event-v12`, 31,079 prompt plus 1,311 response tokens, 32,390 total, `actual_dkk_micros=248385`. The strict seeder accepted uncertain confidence, the focused candidate question, and the exact synthetic context-note citation. The judge account remains within its hard ceiling at 23 of 25 traces. |
 | 2026-08-29 10:31 CEST | Authorized Veo 3.1 Lite credit-coverage probe | 0.000000 | 1.120015 | Exactly one eight-second 720p video-only request was submitted with SDK retries disabled. Vertex AI rejected the request before generation because Veo 3.1 prompt enhancement cannot be disabled. No video was produced, so no billable generation occurred. This separately authorized Veo probe does not consume the Gemini testing envelope. |
+| 2026-08-29 10:36 CEST | Corrected Veo 3.1 Lite credit-coverage probe | 1.540800 | 1.120015 | After direct exact approval, one corrected request omitted only the unsupported prompt-enhancement option and retained disabled SDK retries. The completed operation produced exactly eight seconds of 1280-by-720 H.264 video at 24 fps; immutable output SHA-256 is `b61268b0182089872a063544fcd7a609ea5d6eae98f9c5469c72a1e495284c30`. Gross cost uses USD 0.03 per generated second and the recorded USD/DKK 6.42 rate. This separately authorized Veo probe does not consume the Gemini testing envelope; credit offset remains pending Cloud Billing settlement. |
 
 ## Current balance
 
 - Authorized ceiling: **DKK 200.000000**
 - Recorded spend since authorization: **DKK 1.120015**
 - Remaining authorized testing budget: **DKK 198.879985**
-- Separately authorized Veo probe gross spend: **DKK 0.000000** of **DKK 2.000000**
+- Separately authorized Veo probe gross spend: **DKK 1.540800** of **DKK 2.000000**
