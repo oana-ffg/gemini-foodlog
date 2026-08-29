@@ -134,6 +134,8 @@
     },
     {
       "key": "ambiguous-after-order-only",
+      "attempt": 2,
+      "retry_offset_minutes": 180,
       "fixture": "images/adversarial/synthetic-distant-ambiguous-meat-pack-v2.png",
       "sha256": "de2366772dea61d97eba571b9c84b82403d78bb77bbf0e3157bc85fbac4145f6",
       "captured_at": "2026-07-30T18:00:00+02:00",
