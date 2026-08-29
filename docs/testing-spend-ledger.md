@@ -56,10 +56,11 @@ Operational rules:
 | 2026-08-28 23:50 CEST | Judge ambiguity v4 semantic-guard control | 0.248385 | 1.120015 | One immutable successful `model_usage` row for event `1a9662d4-bc22-428b-8aae-6b120dea219d`: Gemini 3.6 Flash, prompt `food-event-v12`, 31,079 prompt plus 1,311 response tokens, 32,390 total, `actual_dkk_micros=248385`. The strict seeder accepted uncertain confidence, the focused candidate question, and the exact synthetic context-note citation. The judge account remains within its hard ceiling at 23 of 25 traces. |
 | 2026-08-29 10:31 CEST | Authorized Veo 3.1 Lite credit-coverage probe | 0.000000 | 1.120015 | Exactly one eight-second 720p video-only request was submitted with SDK retries disabled. Vertex AI rejected the request before generation because Veo 3.1 prompt enhancement cannot be disabled. No video was produced, so no billable generation occurred. This separately authorized Veo probe does not consume the Gemini testing envelope. |
 | 2026-08-29 10:36 CEST | Corrected Veo 3.1 Lite credit-coverage probe | 1.540800 | 1.120015 | After direct exact approval, one corrected request omitted only the unsupported prompt-enhancement option and retained disabled SDK retries. The completed operation produced exactly eight seconds of 1280-by-720 H.264 video at 24 fps; immutable output SHA-256 is `b61268b0182089872a063544fcd7a609ea5d6eae98f9c5469c72a1e495284c30`. Gross cost uses USD 0.03 per generated second and the recorded USD/DKK 6.42 rate. This separately authorized Veo probe does not consume the Gemini testing envelope; credit offset remains pending Cloud Billing settlement. |
+| 2026-08-29 14:24 CEST | Synthetic grocery longitudinal replay, scenario 1 | 0.200192 | 1.320207 | One persisted production `model_usage_recorded` row for event `4bde76ef-6fb0-4f91-8b15-daa9709d093f`: Gemini 3.6 Flash, prompt `food-event-v13`, 25,384 total tokens, primary attempt succeeded, `actual_dkk_micros=200192`, and the activity was durably published. The runner then uploaded scenario 2, whose provider reservation failed closed with `ModelSpendLimitExceeded` before another model call; five Pub/Sub redeliveries repeated the zero-cost reservation failure and no second usage row exists. Semantic scoring of scenario 1 and the blocked continuation remain pending trace inspection. |
 
 ## Current balance
 
 - Authorized ceiling: **DKK 200.000000**
-- Recorded spend since authorization: **DKK 1.120015**
-- Remaining authorized testing budget: **DKK 198.879985**
+- Recorded spend since authorization: **DKK 1.320207**
+- Remaining authorized testing budget: **DKK 198.679793**
 - Separately authorized Veo probe gross spend: **DKK 1.540800** of **DKK 2.000000**

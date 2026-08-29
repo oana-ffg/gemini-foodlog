@@ -96,7 +96,7 @@ def test_accounted_invocation_reserves_before_call_and_reconciles_once(
         assert accounted.usage.actual_usd_nanos == 144_375
         assert accounted.usage.actual_dkk_micros == 1_155
         assert accounted.usage.reserved_dkk_micros == 9_900
-        assert repository._model_spend_reserved_dkk_micros == 9_900
+        assert repository._model_spend_reserved_dkk_micros == 1_155
         assert repository._model_spend_actual_dkk_micros == 1_155
         assert calls == 1
 
@@ -189,6 +189,47 @@ def test_limit_rejection_and_failed_call_never_hide_or_repeat_spend_state() -> N
         assert usage.actual_dkk_micros == 1_155
         assert usage.prompt_tokens == 100
         assert usage.retry_attempt == 1
+        assert failure_repository._model_spend_reserved_dkk_micros == 1_155
+
+    asyncio.run(scenario())
+
+
+def test_settled_calls_release_unused_reservation_capacity() -> None:
+    async def scenario() -> None:
+        repository = InMemoryRepository(
+            public_account_limit=25,
+            trial_image_limit=200,
+            model_spend_limit_dkk_micros=11_100,
+        )
+        account = await repository.provision_account("capacity-reuse-owner")
+        base_spec = replace(invocation_spec(), account_id=account.id)
+
+        async def invoke() -> CompletedModelInvocation[str]:
+            return CompletedModelInvocation(
+                result="model-result",
+                invocation_id="capacity-reuse-provider-invocation",
+                model_version="gemini-3.6-flash-001",
+                prompt_tokens=100,
+                response_tokens=10,
+                thinking_tokens=5,
+                total_tokens=115,
+            )
+
+        first = await execute_accounted_model_invocation(
+            repository=repository,
+            spec=base_spec,
+            invoke=invoke,
+        )
+        second = await execute_accounted_model_invocation(
+            repository=repository,
+            spec=replace(base_spec, invocation_key="accounted-call-capacity-reuse-0002"),
+            invoke=invoke,
+        )
+
+        assert first.usage.actual_dkk_micros == 1_155
+        assert second.usage.actual_dkk_micros == 1_155
+        assert repository._model_spend_reserved_dkk_micros == 2_310
+        assert repository._model_spend_actual_dkk_micros == 2_310
 
     asyncio.run(scenario())
 
@@ -314,7 +355,7 @@ def test_firestore_reservation_and_usage_reconcile_atomically() -> None:
         )
         assert second.usage.outcome == "succeeded"
         assert calls == 2
-        assert ledger.get("reserved_dkk_micros") == 19_800
+        assert ledger.get("reserved_dkk_micros") == 2_310
         assert ledger.get("actual_dkk_micros") == 2_310
         assert ledger.get("reconciled_reservation_count") == 2
         assert usage.get("outcome") == "succeeded"

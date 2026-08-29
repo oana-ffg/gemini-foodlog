@@ -3833,11 +3833,15 @@ class FirestoreRepository:
 
             ledger_data = ledger_snapshot.to_dict() or {}
             actual_total = ledger_data.get("actual_dkk_micros", 0)
+            reserved_total = ledger_data.get("reserved_dkk_micros")
             reconciled_count = ledger_data.get("reconciled_reservation_count", 0)
             if (
                 not isinstance(actual_total, int)
                 or isinstance(actual_total, bool)
                 or actual_total < 0
+                or not isinstance(reserved_total, int)
+                or isinstance(reserved_total, bool)
+                or reserved_total < reservation.reserved_dkk_micros
                 or not isinstance(reconciled_count, int)
                 or isinstance(reconciled_count, bool)
                 or reconciled_count < 0
@@ -3848,6 +3852,11 @@ class FirestoreRepository:
                 ledger_ref,
                 {
                     "actual_dkk_micros": actual_total + usage.actual_dkk_micros,
+                    "reserved_dkk_micros": (
+                        reserved_total
+                        - reservation.reserved_dkk_micros
+                        + usage.actual_dkk_micros
+                    ),
                     "reconciled_reservation_count": reconciled_count + 1,
                     "updated_at": usage.created_at,
                 },

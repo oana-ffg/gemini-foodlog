@@ -59,7 +59,12 @@ scope, the reserved micro-DKK amount, status, and creation time. A Firestore
 transaction reads the account, ledger, and idempotent reservation before atomically
 creating the reservation and increasing the total. A lower persisted ceiling wins
 over deployment configuration; a reservation that would exceed it performs no
-write and fails before model invocation. The separate `system/model_spend_smoke`
+write and fails before model invocation. When immutable usage is recorded, the same
+transaction replaces that invocation's conservative reservation with its actual
+cost. Consequently `reserved_dkk_micros` is the currently committed amount: all
+reconciled actual spend plus only still-outstanding reservations. It is not the sum
+of every historical estimate, so completed calls release unused headroom while the
+global ceiling remains fail-closed for concurrent work. The separate `system/model_spend_smoke`
 ledger is an isolated, deliberately tiny deployed rejection proof and is never
 consulted by production inference.
 

@@ -3724,6 +3724,11 @@ class InMemoryRepository:
                 return existing.model_copy(deep=True)
             stored = usage.model_copy(deep=True)
             self._model_usage[stored.reservation_id] = stored
+            self._model_spend_reserved_dkk_micros = (
+                self._model_spend_reserved_dkk_micros
+                - reservation.reserved_dkk_micros
+                + stored.actual_dkk_micros
+            )
             self._model_spend_actual_dkk_micros += stored.actual_dkk_micros
             return stored.model_copy(deep=True)
 
