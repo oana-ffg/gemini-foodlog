@@ -197,10 +197,23 @@ def audit_application_visible_trace(payload: Mapping[str, Any]) -> dict[str, int
 
     inspect(payload)
     events = payload.get("events")
-    if not isinstance(events, list) or not events:
-        raise AiTraceIntegrityError("AI trace contains no ADK events")
-    if tool_calls < 1 or tool_responses < 1:
-        raise AiTraceIntegrityError("AI trace omitted its tool call or returned context")
+    if not isinstance(events, list):
+        raise AiTraceIntegrityError("AI trace events are not a list")
+    usage = payload.get("usage")
+    outcome = usage.get("outcome") if isinstance(usage, Mapping) else None
+    if outcome == "succeeded":
+        if not events:
+            raise AiTraceIntegrityError("successful AI trace contains no ADK events")
+        if tool_calls < 1 or tool_responses < 1:
+            raise AiTraceIntegrityError(
+                "successful AI trace omitted its tool call or returned context"
+            )
+    elif outcome == "failed":
+        error = payload.get("error")
+        if not isinstance(error, Mapping) or not error.get("code"):
+            raise AiTraceIntegrityError("failed AI trace omitted its error evidence")
+    else:
+        raise AiTraceIntegrityError("AI trace usage outcome is invalid")
     return {
         "event_count": len(events),
         "tool_call_count": tool_calls,

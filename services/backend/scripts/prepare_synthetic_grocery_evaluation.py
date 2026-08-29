@@ -681,7 +681,8 @@ async def prepare(args: argparse.Namespace) -> None:
                         expected_purchase_id=purchase_ids[scenario.expected_purchase_key],
                         future_purchase_ids=future_purchase_ids,
                     )
-                    result["trace_ids"] = [trace_id]
+                    generated_trace_ids = trace_ids(client) - current_traces
+                    result["trace_ids"] = sorted(generated_trace_ids or {trace_id})
                 except (AssertionError, RuntimeError) as error:
                     if not args.continue_on_evaluation_failure:
                         raise

@@ -145,7 +145,7 @@ def test_operator_diagnostic_is_audited_first_and_emits_metadata_only() -> None:
         "response": {"text": private_trace_text},
         "validation_failures": [],
         "error": None,
-        "usage": {},
+        "usage": {"outcome": "succeeded"},
         "timing": {},
     }
     compressed = gzip.compress(json.dumps(payload, sort_keys=True).encode(), mtime=0)

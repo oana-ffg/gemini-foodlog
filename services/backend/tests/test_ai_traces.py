@@ -274,6 +274,48 @@ def test_trace_audit_rejects_hidden_reasoning_and_credentials() -> None:
         audit_application_visible_trace({**base, "response": {"text": "Bearer super-secret-token"}})
 
 
+def test_trace_audit_accepts_failed_attempt_without_a_tool_round_trip() -> None:
+    failed = {
+        "schema_version": "application-visible-ai-trace-v1",
+        "trace_id": "trace-failed",
+        "account_id": "account-test",
+        "event_id": "event-test",
+        "lineage": {},
+        "versions": {},
+        "request": {
+            "model": "gemini-test",
+            "system_instruction": "Classify the event.",
+            "user_content": {},
+            "response_schema": {},
+            "tools": [],
+            "run_config": {},
+        },
+        "events": [{"content": {"parts": [{"text": "invalid structured output"}]}}],
+        "response": None,
+        "validation_failures": ["ADK response skipped required tools"],
+        "error": {
+            "code": "InvalidModelOutputError",
+            "message": "ADK response skipped required tools",
+        },
+        "usage": {"outcome": "failed"},
+        "timing": {},
+    }
+
+    assert audit_application_visible_trace(failed) == {
+        "event_count": 1,
+        "tool_call_count": 0,
+        "tool_response_count": 0,
+        "binary_reference_count": 0,
+        "redaction_verified": True,
+    }
+    with pytest.raises(AiTraceIntegrityError, match="error evidence"):
+        audit_application_visible_trace({**failed, "error": None})
+    with pytest.raises(AiTraceIntegrityError, match="successful AI trace omitted"):
+        audit_application_visible_trace(
+            {**failed, "usage": {"outcome": "succeeded"}, "error": None}
+        )
+
+
 def test_trace_integrity_and_repair_lineage_fail_closed() -> None:
     async def scenario() -> None:
         repository = InMemoryRepository(public_account_limit=25, trial_image_limit=200)
