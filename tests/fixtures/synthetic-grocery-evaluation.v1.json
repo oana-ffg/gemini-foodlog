@@ -82,7 +82,16 @@
         ],
         "total_ore": 9100
       },
-      "final": null
+      "final": {
+        "invoice_reference": "synthetic-eval-invoice-2026-07-31",
+        "recorded_at": "2026-07-31T16:00:00+02:00",
+        "items": [
+          {"name": "Chicken breast", "quantity": 1, "category": "Meat", "line_total_ore": 6200},
+          {"name": "Pancake mix", "quantity": 1, "category": "Breakfast", "line_total_ore": 2900}
+        ],
+        "total_ore": 9100,
+        "included_vat_ore": 1820
+      }
     }
   ],
   "scenarios": [

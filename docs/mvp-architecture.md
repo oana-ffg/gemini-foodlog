@@ -382,8 +382,10 @@ Expected tools include:
 
 Every tool derives or validates the account boundary independently. The agent cannot choose an arbitrary account identifier.
 
-Purchase reads are also bounded to the current event's last capture timestamp. This
-prevents a historical replay from seeing orders or receipts that arrived later. Every
+Purchase reads are also projected to the immutable document revisions available at
+the current event's last capture timestamp. A confirmation remains visible when its
+later receipt is still in the future, while that receipt and its delivered items stay
+hidden. This prevents a historical replay from seeing purchase evidence that arrived later. Every
 purchase carries an evidence origin: authenticated email is retailer evidence, while
 explicitly synthetic evaluation history is test context only and can never prove that
 a real household ordered, received, owned, or consumed an item. Synthetic order and

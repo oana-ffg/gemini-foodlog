@@ -131,12 +131,7 @@ class GroceryEvaluationSpec(BaseModel):
         order_by_key = {order.key: order for order in self.orders}
         for scenario in self.scenarios:
             order = order_by_key[scenario.expected_purchase_key]
-            available_at = (
-                order.final.recorded_at
-                if order.final is not None
-                else order.confirmation.recorded_at
-            )
-            if available_at >= scenario.captured_at:
+            if order.confirmation.recorded_at >= scenario.captured_at:
                 raise ValueError("scenario must occur after its expected purchase evidence")
         return self
 
@@ -362,7 +357,10 @@ def validate_activity(
         raise RuntimeError(f"{scenario.key} did not preserve the expected candidates")
 
     user_facing_text = json.dumps(hypothesis, sort_keys=True).casefold()
-    if any(term.casefold() in user_facing_text for term in scenario.forbidden_asserted_terms):
+    if any(
+        _contains_unqualified_claim(user_facing_text, term.casefold())
+        for term in scenario.forbidden_asserted_terms
+    ):
         raise RuntimeError(f"{scenario.key} asserted unavailable synthetic groceries")
     return {
         "scenario": scenario.key,
@@ -374,6 +372,17 @@ def validate_activity(
         "synthetic_provenance_visible": True,
         "future_purchase_leak": False,
     }
+
+
+def _contains_unqualified_claim(text: str, phrase: str) -> bool:
+    search_from = 0
+    negations = ("not ", "no evidence ", "cannot ", "can't ", "unconfirmed ")
+    while (index := text.find(phrase, search_from)) >= 0:
+        prefix = text[max(0, index - 48) : index]
+        if not any(marker in prefix for marker in negations):
+            return True
+        search_from = index + len(phrase)
+    return False
 
 
 async def _usage_for_events(

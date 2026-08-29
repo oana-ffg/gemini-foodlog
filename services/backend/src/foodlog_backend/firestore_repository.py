@@ -178,6 +178,7 @@ from .repository import (
     pattern_evidence_hash,
     pattern_question_id,
     pattern_topic_key,
+    purchase_evidence_as_of,
     purchase_identity_aliases,
     revised_inference,
     rich_pattern_question_id,
@@ -2107,15 +2108,16 @@ class FirestoreRepository:
         if not account.exists or account.get("status") != "active":
             raise AccountNotProvisioned
         query = self._collection(account_id, "purchases").order_by(
-            "updated_at", direction=firestore.Query.DESCENDING
+            "created_at" if as_of is not None else "updated_at",
+            direction=firestore.Query.DESCENDING,
         )
         if as_of is not None:
-            query = query.where(filter=FieldFilter("updated_at", "<=", as_of))
+            query = query.where(filter=FieldFilter("created_at", "<=", as_of))
         query = query.limit(limit)
         purchases = [_model(snapshot, Purchase) async for snapshot in query.stream()]
         if any(purchase.account_id != account_id for purchase in purchases):
             raise CrossAccountAccess
-        return list(
+        bundles = list(
             await asyncio.gather(
                 *(
                     self._purchase_evidence_for_account(
@@ -2126,6 +2128,14 @@ class FirestoreRepository:
                 )
             )
         )
+        if as_of is not None:
+            bundles = [
+                projected
+                for bundle in bundles
+                if (projected := purchase_evidence_as_of(bundle, as_of=as_of)) is not None
+            ]
+            bundles.sort(key=lambda bundle: bundle.purchase.updated_at, reverse=True)
+        return bundles
 
     async def _purchase_evidence_for_account(
         self,

@@ -8,6 +8,7 @@ import pytest
 from foodlog_backend.models import PurchaseEvidenceOrigin
 from foodlog_backend.repository import InMemoryRepository
 from scripts.prepare_synthetic_grocery_evaluation import (
+    _contains_unqualified_claim,
     load_dataset,
     seed_synthetic_purchases,
     validate_activity,
@@ -50,7 +51,7 @@ def test_synthetic_grocery_seed_is_exactly_idempotent_and_temporally_bounded() -
         assert retry == first
         assert len(first) == 4
         assert len(repository._purchases) == 4
-        assert len(repository._purchase_documents) == 7
+        assert len(repository._purchase_documents) == 8
         assert all(
             purchase.evidence_origin == PurchaseEvidenceOrigin.SYNTHETIC_EVALUATION
             for purchase in repository._purchases.values()
@@ -80,9 +81,14 @@ def test_synthetic_grocery_seed_is_exactly_idempotent_and_temporally_bounded() -
             "synthetic-grocery-owner",
             first["week-three-removed-pork"],
         )
-        week_four = await repository.purchase_evidence_for_owner(
-            "synthetic-grocery-owner",
-            first["week-four-ordered-chicken-only"],
+        week_four_at_event = next(
+            bundle
+            for bundle in await repository.recent_purchase_evidence_for_account(
+                account_id=account.id,
+                as_of=spec.scenarios[-1].captured_at,
+                limit=5,
+            )
+            if bundle.purchase.id == first["week-four-ordered-chicken-only"]
         )
         assert week_one.reconciliation is not None
         assert week_one.reconciliation.unresolved_item_count == 1
@@ -90,7 +96,9 @@ def test_synthetic_grocery_seed_is_exactly_idempotent_and_temporally_bounded() -
         assert week_two.reconciliation.has_unresolved_substitution_pairing is True
         assert week_three.reconciliation is not None
         assert week_three.reconciliation.unresolved_item_count == 1
-        assert week_four.purchase.latest_final_document_id is None
+        assert week_four_at_event.purchase.latest_final_document_id is None
+        assert week_four_at_event.purchase.revision_count == 1
+        assert {item.disposition.value for item in week_four_at_event.items} == {"ordered"}
 
     asyncio.run(scenario())
 
@@ -138,3 +146,14 @@ def test_synthetic_grocery_activity_requires_provenance_and_rejects_future_leaka
             expected_purchase_id="purchase-week-two",
             future_purchase_ids={"purchase-week-three"},
         )
+
+
+def test_forbidden_purchase_claim_guard_preserves_explicit_negation() -> None:
+    assert _contains_unqualified_claim(
+        "the model says chicken is available",
+        "chicken is available",
+    )
+    assert not _contains_unqualified_claim(
+        "the synthetic order cannot prove chicken is available",
+        "chicken is available",
+    )

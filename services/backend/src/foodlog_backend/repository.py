@@ -267,6 +267,82 @@ def validate_purchase_list_limit(limit: int) -> None:
         raise ValueError("purchase list limit must be between 1 and 50")
 
 
+def purchase_evidence_as_of(
+    bundle: PurchaseEvidenceBundle,
+    *,
+    as_of: datetime,
+) -> PurchaseEvidenceBundle | None:
+    """Project immutable purchase revisions to the evidence available at one instant."""
+    if as_of.tzinfo is None or as_of.utcoffset() is None:
+        raise ValueError("purchase evidence cutoff requires a UTC offset")
+    documents = [document for document in bundle.documents if document.created_at <= as_of]
+    if not documents:
+        return None
+    documents.sort(key=lambda document: document.revision_number)
+    document_ids = {document.id for document in documents}
+    normalizations = [
+        item for item in bundle.normalizations if item.document_id in document_ids
+    ]
+    normalized_document_ids = {item.document_id for item in normalizations}
+    items = [item for item in bundle.items if item.document_id in document_ids]
+    charges = [item for item in bundle.charges if item.document_id in document_ids]
+    latest_confirmation = next(
+        (
+            document
+            for document in reversed(documents)
+            if document.kind == PurchaseDocumentKind.ORDER_CONFIRMATION
+        ),
+        None,
+    )
+    latest_final = next(
+        (
+            document
+            for document in reversed(documents)
+            if document.kind == PurchaseDocumentKind.FINAL_RECEIPT
+        ),
+        None,
+    )
+    projected_purchase = bundle.purchase.model_copy(
+        update={
+            "revision_count": len(documents),
+            "latest_confirmation_document_id": (
+                latest_confirmation.id if latest_confirmation is not None else None
+            ),
+            "latest_final_document_id": latest_final.id if latest_final is not None else None,
+            "updated_at": max(document.created_at for document in documents),
+        }
+    )
+    confirmation_id = (
+        latest_confirmation.id
+        if latest_confirmation is not None
+        and latest_confirmation.id in normalized_document_ids
+        else None
+    )
+    final_id = (
+        latest_final.id
+        if latest_final is not None and latest_final.id in normalized_document_ids
+        else None
+    )
+    reconciliation = None
+    if items:
+        reconciliation = reconcile_purchase_items(
+            account_id=projected_purchase.account_id,
+            purchase_id=projected_purchase.id,
+            confirmation_document_id=confirmation_id,
+            confirmation_items=[item for item in items if item.document_id == confirmation_id],
+            final_document_id=final_id,
+            final_items=[item for item in items if item.document_id == final_id],
+        ).model_copy(update={"updated_at": projected_purchase.updated_at})
+    return PurchaseEvidenceBundle(
+        purchase=projected_purchase,
+        documents=documents,
+        normalizations=normalizations,
+        items=items,
+        charges=charges,
+        reconciliation=reconciliation,
+    )
+
+
 def normalize_knowledge_topic(value: str) -> str:
     normalized = " ".join(unicode_normalize("NFKC", value).casefold().split())
     if not normalized or len(normalized) > 160:
@@ -2484,19 +2560,19 @@ class InMemoryRepository:
         async with self._lock:
             if account_id not in self._accounts:
                 raise AccountNotProvisioned
-            purchases = sorted(
-                (
-                    purchase
-                    for (scope, _), purchase in self._purchases.items()
-                    if scope == account_id and (as_of is None or purchase.updated_at <= as_of)
-                ),
-                key=lambda purchase: purchase.updated_at,
-                reverse=True,
-            )[:limit]
-            return [
-                self._purchase_evidence_unlocked(account_id, purchase.id).model_copy(deep=True)
-                for purchase in purchases
+            bundles = [
+                self._purchase_evidence_unlocked(account_id, purchase.id)
+                for (scope, _), purchase in self._purchases.items()
+                if scope == account_id
             ]
+            if as_of is not None:
+                bundles = [
+                    projected
+                    for bundle in bundles
+                    if (projected := purchase_evidence_as_of(bundle, as_of=as_of)) is not None
+                ]
+            bundles.sort(key=lambda bundle: bundle.purchase.updated_at, reverse=True)
+            return [bundle.model_copy(deep=True) for bundle in bundles[:limit]]
 
     def _purchase_evidence_unlocked(
         self,
