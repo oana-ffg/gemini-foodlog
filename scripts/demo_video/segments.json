@@ -17,7 +17,7 @@
     "key": "ambiguity",
     "kind": "shot",
     "source": "02_ambiguous_detail.png",
-    "minimum_seconds": 48,
+    "minimum_seconds": 33,
     "heading": "Best guess, evidence, and a useful question",
     "narration": "This is the actual hosted application and an immutable production Gemini run. The poor angle barely reveals the meat near the sink and air-fryer basket. A temporary synthetic note says chicken is available that week, so chicken is relevant, but availability is not visual proof. FoodLog keeps a tentative best guess, shows the literal observations, alternatives, and exact context it used, then asks one focused distinction instead of dumping the classification job back on the user."
   },
@@ -26,7 +26,7 @@
     "kind": "shot_pair",
     "source": "03_correction_history.png",
     "secondary_source": "04_knowledge.png",
-    "minimum_seconds": 38,
+    "minimum_seconds": 31,
     "heading": "Corrections append history and scoped learning",
     "narration": "When the guess is wrong, feedback does not overwrite the original inference. It appends a correction, preserves the complete rationale, and can propose a narrowly scoped household learning with provenance. Temporary context stays temporary. Repeated evidence can strengthen a belief, and later contradictions remain visible. The product can show whether a later event actually used this knowledge; one follow-up is evidence of a mechanism, not a claim of general accuracy."
   },

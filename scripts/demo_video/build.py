@@ -17,6 +17,7 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 WIDTH = 1920
 HEIGHT = 1080
 FPS = 30
+MAX_TRAILING_SILENCE_SECONDS = 5.0
 BACKGROUND = "#f3efe6"
 INK = "#17201b"
 GREEN = "#163f31"
@@ -356,7 +357,14 @@ def _render_video_segment(
     *,
     minimum_seconds: float,
 ) -> float:
-    duration = max(minimum_seconds, _audio_duration(audio_path) + 1.0)
+    narration_seconds = _audio_duration(audio_path)
+    duration = max(minimum_seconds, narration_seconds + 1.0)
+    trailing_silence = duration - narration_seconds
+    if trailing_silence > MAX_TRAILING_SILENCE_SECONDS:
+        raise RuntimeError(
+            f"segment {output.stem} would contain {trailing_silence:.3f}s of "
+            "trailing silence; shorten its minimum time or expand its narration"
+        )
     fade_out = max(0.0, duration - 0.35)
     _run(
         [

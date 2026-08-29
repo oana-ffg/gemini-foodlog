@@ -38,8 +38,9 @@ python3 scripts/demo_video/build.py \
 The script renders the architecture from the canonical Mermaid source, uses the
 reviewed synthetic ambiguous-meat fixture only for the opening card, generates
 local English narration, assembles a 1920-by-1080 H.264/AAC video, and fails if
-the result exceeds four minutes. It emits the duration, byte count, and SHA-256
-for the privacy review record.
+the result exceeds four minutes or any configured segment would leave more than
+five seconds of trailing silence. It emits the duration, byte count, and
+SHA-256 for the privacy review record.
 
 `render_cloud_proof.py` turns a local JSON readback into `07_cloud_proof.png`.
 It requires an immutable digest, 100-percent traffic, and Vertex AI enabled, so
