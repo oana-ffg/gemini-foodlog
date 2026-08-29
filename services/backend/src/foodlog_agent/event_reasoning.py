@@ -62,6 +62,15 @@ _CONTEXT_SOURCE_FIELDS = {
     ContextSourceKind.RECENT_MEAL: ("recent_meals", "event_id"),
     ContextSourceKind.USER_NOTE: ("user_notes", "note_id"),
 }
+_REQUIRED_TOOL_CALLS = {
+    "get_active_user_context",
+    "get_current_event_evidence",
+    "get_recent_meals",
+    "get_recent_purchases",
+    "get_unresolved_reviews",
+    "list_household_knowledge",
+    "load_artifacts",
+}
 
 
 @dataclass(frozen=True)
@@ -212,6 +221,22 @@ def _tool_context_source_ids(event: Event) -> dict[ContextSourceKind, set[str]]:
     return source_ids
 
 
+def _tool_call_names(event: Event) -> set[str]:
+    if event.content is None:
+        return set()
+    return {
+        part.function_call.name
+        for part in event.content.parts or []
+        if part.function_call is not None and part.function_call.name
+    }
+
+
+def _validate_required_tool_calls(tool_call_names: set[str]) -> None:
+    missing = sorted(_REQUIRED_TOOL_CALLS - tool_call_names)
+    if missing:
+        raise RuntimeError(f"ADK response skipped required tools: {', '.join(missing)}")
+
+
 def _validate_source_identities(
     inference: ActivityMealInferenceV1,
     bundle: dict[str, Any],
@@ -242,6 +267,7 @@ def _validated_response(
     capture_ids: list[str],
     bundle: dict[str, Any],
     tool_source_ids: dict[ContextSourceKind, set[str]] | None = None,
+    tool_call_names: set[str] | None = None,
 ) -> ActivityMealInferenceV1:
     try:
         if final_event is None:
@@ -251,6 +277,8 @@ def _validated_response(
             raise RuntimeError("ADK response did not preserve the supplied event identity")
         if inference.source_capture_ids != capture_ids:
             raise RuntimeError("ADK response did not preserve the supplied capture identity")
+        if tool_call_names is not None:
+            _validate_required_tool_calls(tool_call_names)
         _validate_source_identities(inference, bundle, tool_source_ids)
         return inference
     except Exception as error:
@@ -320,6 +348,7 @@ async def run_accounted_event_inference(
         thinking_tokens = 0
         total_tokens = 0
         tool_source_ids = {source_kind: set() for source_kind in ContextSourceKind}
+        tool_call_names: set[str] = set()
         try:
             identity_hash = sha256(
                 f"{event.account_id}\0{event.id}\0{invocation_key}".encode()
@@ -350,6 +379,7 @@ async def run_accounted_event_inference(
                     ),
                 ):
                     trace_capture.record_event(adk_event)
+                    tool_call_names.update(_tool_call_names(adk_event))
                     for source_kind, identifiers in _tool_context_source_ids(adk_event).items():
                         tool_source_ids[source_kind].update(identifiers)
                     if adk_event.invocation_id or adk_event.model_version:
@@ -375,6 +405,7 @@ async def run_accounted_event_inference(
                 capture_ids=capture_ids,
                 bundle=bundle,
                 tool_source_ids=tool_source_ids,
+                tool_call_names=tool_call_names,
             )
             if min(prompt_tokens, response_tokens, total_tokens) <= 0:
                 raise RuntimeError("ADK run reported incomplete aggregate token usage")

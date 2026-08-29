@@ -382,6 +382,15 @@ Expected tools include:
 
 Every tool derives or validates the account boundary independently. The agent cannot choose an arbitrary account identifier.
 
+The production acceptance boundary also enforces the required evidence plan. A
+schema-valid answer is rejected unless the ADK event stream proves that Gemini
+called the current-event evidence, artifact-loading, recent-meal, recent-purchase,
+active-context, unresolved-review, and household-knowledge index tools. Reading a
+specific household-knowledge page remains conditional on the index finding a
+relevant page. This turns the tool plan into a runtime invariant rather than a
+prompt-only request, so a superficially safe direct answer cannot silently bypass
+the context that makes longitudinal learning possible.
+
 Purchase reads are also projected to the immutable document revisions available at
 the current event's last capture timestamp. A confirmation remains visible when its
 later receipt is still in the future, while that receipt and its delivered items stay

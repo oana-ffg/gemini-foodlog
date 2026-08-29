@@ -4,6 +4,7 @@ from google.genai import types
 
 from foodlog_agent.event_reasoning import (
     InvalidModelOutputError,
+    _tool_call_names,
     _tool_context_source_ids,
     _validated_response,
     application_visible_model_request,
@@ -270,6 +271,40 @@ def test_only_an_explicit_knowledge_page_read_grants_revision_provenance() -> No
     summary_only = ActivityMealInferenceV1.model_validate(payload)
     with pytest.raises(RuntimeError, match="invented household_knowledge source ID"):
         _validate_source_identities(summary_only, bundle, source_ids)
+
+
+def test_direct_answer_without_required_tool_plan_is_rejected() -> None:
+    payload = base_payload()
+    direct = Event(
+        invocation_id="invocation-direct-answer",
+        author="food_event_reasoner",
+        content=types.Content(
+            role="model",
+            parts=[types.Part.from_text(text=ActivityMealInferenceV1(**payload).model_dump_json())],
+        ),
+    )
+    tool_call = Event(
+        invocation_id="invocation-tool-call",
+        author="food_event_reasoner",
+        content=types.Content(
+            role="model",
+            parts=[
+                types.Part.from_function_call(
+                    name="get_current_event_evidence",
+                    args={},
+                )
+            ],
+        ),
+    )
+    assert _tool_call_names(tool_call) == {"get_current_event_evidence"}
+    with pytest.raises(InvalidModelOutputError, match="skipped required tools"):
+        _validated_response(
+            final_event=direct,
+            event_id="event-001",
+            capture_ids=["capture-001"],
+            bundle=event_bundle(event_id="event-001", capture_ids=["capture-001"]),
+            tool_call_names=set(),
+        )
 
 
 def test_final_adk_json_is_revalidated_by_the_product_schema() -> None:
