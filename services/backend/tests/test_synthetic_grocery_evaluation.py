@@ -120,6 +120,7 @@ def test_synthetic_grocery_seed_is_exactly_idempotent_and_temporally_bounded() -
         assert week_three.reconciliation.unresolved_item_count == 1
         assert week_four_at_event.purchase.latest_final_document_id is None
         assert week_four_at_event.purchase.revision_count == 1
+        assert week_four_at_event.reconciliation is None
         assert {item.disposition.value for item in week_four_at_event.items} == {"ordered"}
 
     asyncio.run(scenario())

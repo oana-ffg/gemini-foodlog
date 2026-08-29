@@ -273,7 +273,7 @@ This is a deliberate debugging-phase decision, not the intended final privacy po
 
 Nemlig does not provide the required customer purchase API. The MVP therefore uses a one-time forwarding rule and a unique inbound address for each account.
 
-The expected user setup forwards final Nemlig receipts or invoices, but the ingestion contract accepts order confirmations, final receipts/invoices, or both. Each raw message is classified by document type and preserved as evidence. A final receipt is authoritative for what was delivered; an earlier order confirmation remains useful provenance for substitutions, removed items, or timing but does not override the later delivered record.
+The expected user setup forwards final Nemlig receipts or invoices, but the ingestion contract accepts order confirmations, final receipts/invoices, or both. Each raw message is classified by document type and preserved as evidence. A final receipt is authoritative for what was delivered; an earlier order confirmation remains useful provenance for substitutions, removed items, or timing but does not override the later delivered record. Until a final receipt exists, agent context exposes the confirmation as `ordered_only` and does not expose an order-versus-delivery reconciliation; absence of a later document is not evidence that ordered lines were removed.
 
 Deduplication occurs at two levels:
 

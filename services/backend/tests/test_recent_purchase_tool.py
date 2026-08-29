@@ -138,6 +138,10 @@ def test_recent_purchase_tool_prefers_delivery_and_preserves_uncertainty() -> No
             args={},
             tool_context=StateContext(account.id, datetime(2026, 8, 22, tzinfo=UTC)),
         )
+        ordered_only = await tools["get_recent_purchases"].run_async(  # type: ignore[arg-type]
+            args={},
+            tool_context=StateContext(account.id, datetime(2026, 8, 20, 12, tzinfo=UTC)),
+        )
         unavailable = await tools["get_recent_purchases"].run_async(  # type: ignore[arg-type]
             args={},
             tool_context=StateContext(foreign.id, datetime(2026, 8, 22, tzinfo=UTC)),
@@ -167,6 +171,11 @@ def test_recent_purchase_tool_prefers_delivery_and_preserves_uncertainty() -> No
             "delivered_as_ordered",
             "removed_or_unresolved",
             "added_or_unresolved_substitution",
+        }
+        assert ordered_only["purchases"][0]["evidence_status"] == "ordered_only"
+        assert ordered_only["purchases"][0]["reconciliation"] is None
+        assert {item["disposition"] for item in ordered_only["purchases"][0]["items"]} == {
+            "ordered"
         }
         serialized = repr(result)
         for internal_field in (

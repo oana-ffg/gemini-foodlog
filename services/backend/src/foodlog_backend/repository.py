@@ -324,7 +324,7 @@ def purchase_evidence_as_of(
         else None
     )
     reconciliation = None
-    if items:
+    if items and final_id is not None:
         reconciliation = reconcile_purchase_items(
             account_id=projected_purchase.account_id,
             purchase_id=projected_purchase.id,

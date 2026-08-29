@@ -318,7 +318,7 @@ def _recent_purchase_summary(bundle: PurchaseEvidenceBundle) -> RecentPurchaseSu
     )
     reconciliation = bundle.reconciliation
     reconciliation_summary = None
-    if reconciliation is not None:
+    if reconciliation is not None and evidence_status == "delivered":
         bounded_reconciliation_items = reconciliation.items[:RECENT_PURCHASE_ITEM_LIMIT]
         reconciliation_summary = PurchaseReconciliationSummary(
             confirmation_document_id=reconciliation.confirmation_document_id,
