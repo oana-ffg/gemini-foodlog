@@ -276,6 +276,16 @@ def _model[ModelT: BaseModel](snapshot: DocumentSnapshot, model_type: type[Model
     return model_type.model_validate(data)
 
 
+def _optional_document_data(snapshot: DocumentSnapshot) -> dict[str, Any]:
+    """Read an optional document without using get() for legitimately absent fields."""
+    if not snapshot.exists:
+        return {}
+    data = snapshot.to_dict()
+    if not isinstance(data, dict):
+        raise JobIdentityConflict
+    return data
+
+
 def _user_context_note_from_snapshot(snapshot: DocumentSnapshot) -> UserContextNote:
     data = snapshot.to_dict()
     if data is None:
@@ -940,6 +950,7 @@ class FirestoreRepository:
             control_ref = self._collection(account_id, "export_control").document("current")
             export_snapshot = await export_ref.get(transaction=transaction)
             control_snapshot = await control_ref.get(transaction=transaction)
+            control_data = _optional_document_data(control_snapshot)
 
             if export_snapshot.exists:
                 existing = _model(export_snapshot, AccountExport)
@@ -959,16 +970,12 @@ class FirestoreRepository:
                     raise JobIdentityConflict
                 return existing, False
 
-            active_export_id = (
-                control_snapshot.get("active_export_id") if control_snapshot.exists else None
-            )
+            active_export_id = control_data.get("active_export_id")
             if active_export_id is not None:
                 if not isinstance(active_export_id, str) or not active_export_id:
                     raise JobIdentityConflict
                 raise AccountExportAlreadyActive(active_export_id)
-            last_requested_at = (
-                control_snapshot.get("last_requested_at") if control_snapshot.exists else None
-            )
+            last_requested_at = control_data.get("last_requested_at")
             if last_requested_at is not None:
                 if not isinstance(last_requested_at, datetime):
                     raise JobIdentityConflict
@@ -1193,6 +1200,7 @@ class FirestoreRepository:
         async def complete(transaction):
             export_snapshot = await export_ref.get(transaction=transaction)
             control_snapshot = await control_ref.get(transaction=transaction)
+            control_data = _optional_document_data(control_snapshot)
             account_snapshot = await account_ref.get(transaction=transaction)
             if not account_snapshot.exists or account_snapshot.get("status") != "active":
                 return None
@@ -1237,7 +1245,7 @@ class FirestoreRepository:
                     "last_error_message": firestore.DELETE_FIELD,
                 },
             )
-            if control_snapshot.exists and control_snapshot.get("active_export_id") == export_id:
+            if control_data.get("active_export_id") == export_id:
                 transaction.update(
                     control_ref,
                     {"active_export_id": firestore.DELETE_FIELD},
@@ -1265,6 +1273,7 @@ class FirestoreRepository:
             account_snapshot = await account_ref.get(transaction=transaction)
             export_snapshot = await export_ref.get(transaction=transaction)
             control_snapshot = await control_ref.get(transaction=transaction)
+            control_data = _optional_document_data(control_snapshot)
             if not account_snapshot.exists or account_snapshot.get("status") != "active":
                 return False
             if not export_snapshot.exists:
@@ -1301,7 +1310,7 @@ class FirestoreRepository:
                     "last_error_message": firestore.DELETE_FIELD,
                 },
             )
-            if control_snapshot.exists and control_snapshot.get("active_export_id") == export_id:
+            if control_data.get("active_export_id") == export_id:
                 transaction.update(
                     control_ref,
                     {"active_export_id": firestore.DELETE_FIELD},

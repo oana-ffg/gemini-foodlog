@@ -218,6 +218,43 @@ def test_firestore_account_export_request_is_atomic_idempotent_and_scoped() -> N
         assert control_snapshot.get("active_export_id") == account_export.id
         assert "firestore-export" not in repr(export_snapshot.to_dict())
 
+        lease_id = "firestore-export-completion-lease"
+        claimed = await repository.claim_account_export(
+            account_id=account.id,
+            export_id=account_export.id,
+            lease_id=lease_id,
+            lease_owner="contract-worker",
+            lease_expires_at=utc_now() + timedelta(minutes=5),
+        )
+        assert claimed is not None
+        completed_at = utc_now()
+        completed = await repository.complete_account_export(
+            account_id=account.id,
+            export_id=account_export.id,
+            lease_id=lease_id,
+            archive_object_key=f"accounts/{account.id}/exports/{account_export.id}.zip",
+            archive_size=123,
+            archive_sha256="a" * 64,
+            manifest_sha256="b" * 64,
+            completed_at=completed_at,
+            expires_at=completed_at + timedelta(hours=24),
+        )
+        assert completed is not None
+        completed_control = await (
+            account_ref.collection("export_control").document("current").get()
+        )
+        assert completed_control.exists
+        assert "active_export_id" not in (completed_control.to_dict() or {})
+
+        next_export, next_created = await repository.create_account_export(
+            owner_user_id=account.owner_user_id,
+            idempotency_key="firestore-export-after-completion",
+            requested_at=requested_at + timedelta(hours=1, seconds=1),
+            cooldown=timedelta(hours=1),
+        )
+        assert next_created is True
+        assert next_export.id != account_export.id
+
         await client.close()
 
     asyncio.run(scenario())
