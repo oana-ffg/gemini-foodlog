@@ -15,6 +15,7 @@ from scripts.prepare_synthetic_grocery_evaluation import (
     scenario_client_version,
     scenario_idempotency_key,
     seed_synthetic_purchases,
+    selected_scenarios,
     validate_activity,
 )
 
@@ -43,6 +44,13 @@ def test_synthetic_grocery_manifest_is_hash_locked_and_longitudinal() -> None:
         scenario_capture_time(isolated_retry) - isolated_retry.captured_at
         > GroupingPolicy().reopen_window
     )
+    assert [number for number, _ in selected_scenarios(spec, None)] == [1, 2, 3, 4]
+    assert [
+        (number, scenario.key)
+        for number, scenario in selected_scenarios(spec, "ambiguous-after-order-only")
+    ] == [(4, "ambiguous-after-order-only")]
+    with pytest.raises(ValueError, match="unknown synthetic grocery scenario"):
+        selected_scenarios(spec, "does-not-exist")
 
 
 def test_synthetic_grocery_seed_is_exactly_idempotent_and_temporally_bounded() -> None:

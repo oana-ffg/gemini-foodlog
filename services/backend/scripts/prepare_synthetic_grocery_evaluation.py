@@ -323,6 +323,23 @@ def scenario_capture_time(scenario: GroceryScenarioSpec) -> datetime:
     return scenario.captured_at + timedelta(minutes=scenario.retry_offset_minutes)
 
 
+def selected_scenarios(
+    spec: GroceryEvaluationSpec,
+    only_scenario: str | None,
+) -> list[tuple[int, GroceryScenarioSpec]]:
+    selected = [
+        (sequence_number, scenario)
+        for sequence_number, scenario in enumerate(
+            sorted(spec.scenarios, key=lambda item: item.captured_at),
+            start=1,
+        )
+        if only_scenario is None or scenario.key == only_scenario
+    ]
+    if not selected:
+        raise ValueError(f"unknown synthetic grocery scenario: {only_scenario}")
+    return selected
+
+
 def validate_activity(
     activity: dict[str, object],
     *,
@@ -509,7 +526,8 @@ async def prepare(args: argparse.Namespace) -> None:
             scenario_results: list[dict[str, object]] = []
             event_ids: set[str] = set()
             ordered_scenarios = sorted(spec.scenarios, key=lambda item: item.captured_at)
-            for sequence_number, scenario in enumerate(ordered_scenarios, start=1):
+            scenario_plan = selected_scenarios(spec, args.only_scenario)
+            for sequence_number, scenario in scenario_plan:
                 current_traces = trace_ids(client)
                 if len(current_traces) > MAX_MODEL_TRACES - 2:
                     raise RuntimeError("evaluation account reached its bounded trace ceiling")
@@ -554,7 +572,7 @@ async def prepare(args: argparse.Namespace) -> None:
                     order.confirmation.recorded_at <= scenario_capture_time(scenario)
                     for order in spec.orders
                 )
-                result["prior_inferred_events"] = len(scenario_results)
+                result["prior_inferred_events"] = sequence_number - 1
                 scenario_results.append(result)
                 print(
                     json.dumps({"scenario_result": result}, sort_keys=True),
@@ -593,6 +611,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--fixture-root", required=True, type=Path)
     parser.add_argument("--timeout-seconds", type=int, default=300, choices=range(30, 601))
+    parser.add_argument("--only-scenario")
     parser.add_argument("--create-approved-identity", action="store_true")
     parser.add_argument("--confirm-production-write", action="store_true")
     return parser.parse_args()
