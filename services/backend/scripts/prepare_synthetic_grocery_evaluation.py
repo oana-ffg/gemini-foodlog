@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 from datetime import datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
@@ -34,7 +35,8 @@ from scripts.prepare_judge_dataset import firebase_identity, sign_in
 from scripts.production_smoke_support import request_json, trace_ids, wait_for_activity
 
 PARSER_VERSION = "synthetic-grocery-evaluation-v1"
-MAX_MODEL_TRACES = 12
+MAX_MODEL_TRACES = 24
+REPLAY_KEY_PATTERN = re.compile(r"^[a-z0-9-]{1,32}$")
 
 
 class GroceryItemSpec(BaseModel):
@@ -157,6 +159,92 @@ def load_dataset(path: Path, fixture_root: Path) -> GroceryEvaluationSpec:
     for scenario in spec.scenarios:
         checked_fixture(fixture_root, scenario.fixture, scenario.sha256)
     return spec
+
+
+def shifted_replay_dataset(
+    spec: GroceryEvaluationSpec,
+    *,
+    replay_key: str,
+    shift_days: int,
+) -> GroceryEvaluationSpec:
+    if REPLAY_KEY_PATTERN.fullmatch(replay_key) is None:
+        raise ValueError("replay key must contain only lowercase letters, digits, and hyphens")
+    if shift_days == 0 or not -365 <= shift_days <= 365:
+        raise ValueError("replay shift must be between -365 and 365 non-zero days")
+
+    delta = timedelta(days=shift_days)
+
+    def shifted_revision(
+        revision: PurchaseRevisionSpec,
+    ) -> PurchaseRevisionSpec:
+        return revision.model_copy(
+            update={"recorded_at": revision.recorded_at + delta},
+            deep=True,
+        )
+
+    shifted_orders: list[GroceryOrderSpec] = []
+    for order in spec.orders:
+        final = None
+        if order.final is not None:
+            final = order.final.model_copy(
+                update={
+                    "recorded_at": order.final.recorded_at + delta,
+                    "invoice_reference": f"{order.final.invoice_reference}-{replay_key}",
+                },
+                deep=True,
+            )
+        shifted_orders.append(
+            order.model_copy(
+                update={
+                    "order_reference": f"{order.order_reference}-{replay_key}",
+                    "confirmation": shifted_revision(order.confirmation),
+                    "final": final,
+                },
+                deep=True,
+            )
+        )
+
+    shifted = spec.model_copy(
+        update={
+            "dataset_id": f"{spec.dataset_id}-{replay_key}",
+            "provenance_label": (
+                f"{spec.provenance_label} Deterministic replay {replay_key} shifts "
+                f"every timestamp by {shift_days} days."
+            ),
+            "orders": shifted_orders,
+            "scenarios": [
+                scenario.model_copy(
+                    update={"captured_at": scenario.captured_at + delta},
+                    deep=True,
+                )
+                for scenario in spec.scenarios
+            ],
+        },
+        deep=True,
+    )
+    return GroceryEvaluationSpec.model_validate(shifted.model_dump(mode="python"))
+
+
+def prior_inferred_event_count(
+    activities: object,
+    *,
+    as_of: datetime,
+) -> int:
+    if not isinstance(activities, list):
+        raise RuntimeError("deployed API returned an invalid activity history")
+    count = 0
+    for activity in activities:
+        if not isinstance(activity, dict):
+            continue
+        occurred_at = activity.get("occurred_at")
+        if not isinstance(occurred_at, str):
+            continue
+        parsed = datetime.fromisoformat(occurred_at)
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise RuntimeError("deployed activity history contains a naive timestamp")
+        if parsed < as_of:
+            count += 1
+    return count
 
 
 def _document_identity(dataset_id: str, order_key: str, kind: str) -> tuple[str, str]:
@@ -417,6 +505,7 @@ def validate_activity(
         raise RuntimeError(f"{scenario.key} asserted unavailable synthetic groceries")
     return {
         "scenario": scenario.key,
+        "passed": True,
         "kind": hypothesis.get("kind"),
         "confidence": hypothesis.get("confidence"),
         "best_guess": hypothesis.get("best_guess"),
@@ -458,7 +547,19 @@ async def prepare(args: argparse.Namespace) -> None:
     if not email.endswith(".invalid") or len(password) < 20:
         raise RuntimeError("evaluation credentials do not satisfy the safety contract")
 
-    spec = load_dataset(args.manifest, args.fixture_root)
+    source_spec = load_dataset(args.manifest, args.fixture_root)
+    if (args.replay_key is None) != (args.replay_shift_days is None):
+        raise RuntimeError("--replay-key and --replay-shift-days must be supplied together")
+    spec = (
+        shifted_replay_dataset(
+            source_spec,
+            replay_key=args.replay_key,
+            shift_days=args.replay_shift_days,
+        )
+        if args.replay_key is not None and args.replay_shift_days is not None
+        else source_spec
+    )
+    manifest_sha256 = sha256(args.manifest.read_bytes()).hexdigest()
     identity = firebase_identity(
         project_id=args.project,
         email=email,
@@ -497,6 +598,7 @@ async def prepare(args: argparse.Namespace) -> None:
             account_id=account.id,
             spec=spec,
         )
+        account_purchases = await repository.list_purchases(owner_user_id, limit=50)
 
         with httpx.Client(
             base_url=args.api_url,
@@ -531,6 +633,22 @@ async def prepare(args: argparse.Namespace) -> None:
                 current_traces = trace_ids(client)
                 if len(current_traces) > MAX_MODEL_TRACES - 2:
                     raise RuntimeError("evaluation account reached its bounded trace ceiling")
+                event_time = scenario_capture_time(scenario)
+                prior_activities = request_json(
+                    client,
+                    "GET",
+                    "/v1/activities",
+                    expected_status=200,
+                )
+                prior_events = prior_inferred_event_count(
+                    prior_activities,
+                    as_of=event_time,
+                )
+                eligible_purchases = await repository.recent_purchase_evidence_for_account(
+                    account_id=account.id,
+                    as_of=event_time,
+                    limit=50,
+                )
                 fixture = checked_fixture(args.fixture_root, scenario.fixture, scenario.sha256)
                 capture_id, duplicate = upload_fixture(
                     client,
@@ -540,39 +658,75 @@ async def prepare(args: argparse.Namespace) -> None:
                     dataset_id=spec.dataset_id,
                     sequence_number=sequence_number,
                 )
-                activity, trace_id = wait_for_activity(
-                    client,
-                    account_id=account.id,
-                    capture_id=capture_id,
-                    previous_trace_ids=set() if duplicate else current_traces,
-                    timeout_seconds=args.timeout_seconds,
-                )
-                event_id = activity.get("event_id")
-                if not isinstance(event_id, str):
-                    raise RuntimeError("evaluation activity omitted its event identity")
-                event_ids.add(event_id)
-                future_purchase_ids = {
-                    purchase_ids[order.key]
-                    for order in spec.orders
-                    if order.confirmation.recorded_at > scenario_capture_time(scenario)
-                }
-                result = validate_activity(
-                    activity,
-                    scenario=scenario,
-                    expected_purchase_id=purchase_ids[scenario.expected_purchase_key],
-                    future_purchase_ids=future_purchase_ids,
-                )
-                result["trace_id"] = trace_id
+                try:
+                    activity, trace_id = wait_for_activity(
+                        client,
+                        account_id=account.id,
+                        capture_id=capture_id,
+                        previous_trace_ids=set() if duplicate else current_traces,
+                        timeout_seconds=args.timeout_seconds,
+                    )
+                    event_id = activity.get("event_id")
+                    if not isinstance(event_id, str):
+                        raise RuntimeError("evaluation activity omitted its event identity")
+                    event_ids.add(event_id)
+                    future_purchase_ids = {
+                        purchase.id
+                        for purchase in account_purchases
+                        if purchase.created_at > event_time
+                    }
+                    result = validate_activity(
+                        activity,
+                        scenario=scenario,
+                        expected_purchase_id=purchase_ids[scenario.expected_purchase_key],
+                        future_purchase_ids=future_purchase_ids,
+                    )
+                    result["trace_ids"] = [trace_id]
+                except (AssertionError, RuntimeError) as error:
+                    if not args.continue_on_evaluation_failure:
+                        raise
+                    captures = request_json(
+                        client,
+                        "GET",
+                        "/v1/captures?limit=200",
+                        expected_status=200,
+                    )
+                    if not isinstance(captures, list):
+                        raise RuntimeError(
+                            "deployed API returned an invalid capture inventory"
+                        ) from None
+                    failed_capture = next(
+                        (
+                            item
+                            for item in captures
+                            if isinstance(item, dict) and item.get("id") == capture_id
+                        ),
+                        None,
+                    )
+                    event_id = (
+                        failed_capture.get("event_id")
+                        if isinstance(failed_capture, dict)
+                        else None
+                    )
+                    if isinstance(event_id, str):
+                        event_ids.add(event_id)
+                    result = {
+                        "scenario": scenario.key,
+                        "passed": False,
+                        "failure": str(error),
+                        "trace_ids": sorted(trace_ids(client) - current_traces),
+                    }
                 result["duplicate_capture"] = duplicate
                 result["attempt"] = scenario.attempt
                 result["elapsed_simulated_days"] = (
                     scenario.captured_at - ordered_scenarios[0].captured_at
                 ).days
-                result["eligible_purchase_histories"] = sum(
+                result["eligible_purchase_histories"] = len(eligible_purchases)
+                result["dataset_purchase_histories"] = sum(
                     order.confirmation.recorded_at <= scenario_capture_time(scenario)
                     for order in spec.orders
                 )
-                result["prior_inferred_events"] = sequence_number - 1
+                result["prior_inferred_events"] = prior_events
                 scenario_results.append(result)
                 print(
                     json.dumps({"scenario_result": result}, sort_keys=True),
@@ -586,11 +740,21 @@ async def prepare(args: argparse.Namespace) -> None:
             )
             report = {
                 "dataset_id": spec.dataset_id,
+                "source_dataset_id": source_spec.dataset_id,
+                "manifest_sha256": manifest_sha256,
+                "replay_key": args.replay_key,
+                "replay_shift_days": args.replay_shift_days,
                 "simulated_days": (
                     ordered_scenarios[-1].captured_at - ordered_scenarios[0].captured_at
                 ).days,
                 "synthetic_orders": len(spec.orders),
                 "scenarios": scenario_results,
+                "passed_scenarios": sum(
+                    result.get("passed") is True for result in scenario_results
+                ),
+                "failed_scenarios": sum(
+                    result.get("passed") is False for result in scenario_results
+                ),
                 "model_usage_records": usage_count,
                 "actual_dkk_micros": actual_dkk_micros,
                 "actual_dkk": actual_dkk_micros / 1_000_000,
@@ -612,6 +776,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fixture-root", required=True, type=Path)
     parser.add_argument("--timeout-seconds", type=int, default=300, choices=range(30, 601))
     parser.add_argument("--only-scenario")
+    parser.add_argument("--replay-key")
+    parser.add_argument("--replay-shift-days", type=int)
+    parser.add_argument("--continue-on-evaluation-failure", action="store_true")
     parser.add_argument("--create-approved-identity", action="store_true")
     parser.add_argument("--confirm-production-write", action="store_true")
     return parser.parse_args()

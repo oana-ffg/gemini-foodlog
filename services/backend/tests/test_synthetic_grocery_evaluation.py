@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -11,11 +12,13 @@ from foodlog_backend.repository import InMemoryRepository
 from scripts.prepare_synthetic_grocery_evaluation import (
     _contains_unqualified_claim,
     load_dataset,
+    prior_inferred_event_count,
     scenario_capture_time,
     scenario_client_version,
     scenario_idempotency_key,
     seed_synthetic_purchases,
     selected_scenarios,
+    shifted_replay_dataset,
     validate_activity,
 )
 
@@ -124,7 +127,80 @@ def test_synthetic_grocery_seed_is_exactly_idempotent_and_temporally_bounded() -
         assert week_four_at_event.reconciliation is None
         assert {item.disposition.value for item in week_four_at_event.items} == {"ordered"}
 
+        historical_replay = shifted_replay_dataset(
+            spec,
+            replay_key="history-may",
+            shift_days=-56,
+        )
+        replay_ids = await seed_synthetic_purchases(
+            repository,
+            account_id=account.id,
+            spec=historical_replay,
+        )
+        assert set(replay_ids.values()).isdisjoint(first.values())
+        assert len(repository._purchases) == 8
+        assert len(repository._purchase_documents) == 16
+        replay_visible = await repository.recent_purchase_evidence_for_account(
+            account_id=account.id,
+            as_of=historical_replay.scenarios[-1].captured_at,
+            limit=50,
+        )
+        assert {bundle.purchase.id for bundle in replay_visible} == set(replay_ids.values())
+
     asyncio.run(scenario())
+
+
+def test_shifted_replay_is_unique_hash_bound_and_preserves_relative_time() -> None:
+    source = load_dataset(MANIFEST, FIXTURE_ROOT)
+    replay = shifted_replay_dataset(
+        source,
+        replay_key="history-may",
+        shift_days=-56,
+    )
+
+    assert replay.dataset_id == f"{source.dataset_id}-history-may"
+    assert "synthetic" in replay.provenance_label.casefold()
+    assert "not an authenticated" in replay.provenance_label.casefold()
+    assert replay.orders[0].order_reference.endswith("-history-may")
+    assert replay.orders[0].final is not None
+    assert replay.orders[0].final.invoice_reference.endswith("-history-may")
+    assert [
+        replay_order.confirmation.recorded_at - source_order.confirmation.recorded_at
+        for source_order, replay_order in zip(source.orders, replay.orders, strict=True)
+    ] == [replay.scenarios[0].captured_at - source.scenarios[0].captured_at] * 4
+    assert all(
+        replay_scenario.sha256 == source_scenario.sha256
+        for source_scenario, replay_scenario in zip(
+            source.scenarios,
+            replay.scenarios,
+            strict=True,
+        )
+    )
+
+    with pytest.raises(ValueError, match="replay key"):
+        shifted_replay_dataset(source, replay_key="May History", shift_days=-56)
+    with pytest.raises(ValueError, match="non-zero"):
+        shifted_replay_dataset(source, replay_key="history-may", shift_days=0)
+
+
+def test_prior_inferred_event_count_uses_event_time_not_insertion_time() -> None:
+    activities = [
+        {"occurred_at": "2026-05-01T18:00:00+02:00"},
+        {"occurred_at": "2026-06-01T18:00:00+02:00"},
+        {"occurred_at": "2026-07-01T18:00:00+02:00"},
+        {"occurred_at": None},
+    ]
+
+    assert prior_inferred_event_count(
+        activities,
+        as_of=datetime.fromisoformat("2026-06-15T18:00:00+02:00"),
+    ) == 2
+
+    with pytest.raises(RuntimeError, match="naive timestamp"):
+        prior_inferred_event_count(
+            [{"occurred_at": "2026-05-01T18:00:00"}],
+            as_of=datetime.fromisoformat("2026-06-15T18:00:00+02:00"),
+        )
 
 
 def test_synthetic_grocery_activity_requires_provenance_and_rejects_future_leakage() -> None:
