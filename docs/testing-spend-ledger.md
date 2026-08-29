@@ -8,8 +8,19 @@ cumulative ceiling for paid tests run on or after this authorization; it is not
 a per-test allowance.
 
 This authorization does not raise or replace the deployed **DKK 400** global
-Gemini hard cap or the gross-spend billing alerts. It does not authorize Veo,
-public promotion, purchases, or use of private images outside private testing.
+Gemini hard cap or the gross-spend billing alerts. It does not authorize Veo
+except for the separately bounded probe below, public promotion, purchases, or
+use of private images outside private testing.
+
+### Separate Veo probe authorization
+
+On 29 August 2026, Oana authorized exactly one privacy-safe eight-second Veo
+3.1 Lite 720p video-only credit-coverage probe, with a maximum possible
+out-of-pocket cost of **DKK 2.000000** and no automatic retry. This does not
+authorize the full Veo scenario set. The request was rejected before generation
+because Veo 3.1 prompt enhancement cannot be disabled; no video was produced
+and its gross generation cost was **DKK 0.000000**. A corrected request requires
+a new exact approval.
 
 Operational rules:
 
@@ -41,9 +52,11 @@ Operational rules:
 | 2026-08-28 23:45 CEST | Judge ambiguity v3 quota-project preflight | 0.000000 | 0.871630 | Firebase Admin rejected the ambient `ffutils` quota project before upload or inference. The operator seeder now supplies an explicit target-project quota credential, covered by a focused regression. No model-usage row was created. |
 | 2026-08-28 23:47 CEST | Judge ambiguity v3 idempotent resume | 0.000000 | 0.871630 | The fixed seeder resumed the immutable attempt-three activity and correctly rejected its missing context-note citation. A post-attempt usage reconciliation found zero new rows, proving no paid provider call ran. |
 | 2026-08-28 23:50 CEST | Judge ambiguity v4 semantic-guard control | 0.248385 | 1.120015 | One immutable successful `model_usage` row for event `1a9662d4-bc22-428b-8aae-6b120dea219d`: Gemini 3.6 Flash, prompt `food-event-v12`, 31,079 prompt plus 1,311 response tokens, 32,390 total, `actual_dkk_micros=248385`. The strict seeder accepted uncertain confidence, the focused candidate question, and the exact synthetic context-note citation. The judge account remains within its hard ceiling at 23 of 25 traces. |
+| 2026-08-29 10:31 CEST | Authorized Veo 3.1 Lite credit-coverage probe | 0.000000 | 1.120015 | Exactly one eight-second 720p video-only request was submitted with SDK retries disabled. Vertex AI rejected the request before generation because Veo 3.1 prompt enhancement cannot be disabled. No video was produced, so no billable generation occurred. This separately authorized Veo probe does not consume the Gemini testing envelope. |
 
 ## Current balance
 
 - Authorized ceiling: **DKK 200.000000**
 - Recorded spend since authorization: **DKK 1.120015**
 - Remaining authorized testing budget: **DKK 198.879985**
+- Separately authorized Veo probe gross spend: **DKK 0.000000** of **DKK 2.000000**
