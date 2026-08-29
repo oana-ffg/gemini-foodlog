@@ -12,6 +12,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from foodlog_backend.account_exports import (
+    EXPORT_LEASE,
+    EXPORT_PLATFORM_REQUEST_ENVELOPE,
     AccountExportService,
     AccountExportSnapshot,
     ExportJsonFile,
@@ -50,6 +52,26 @@ class FailOnceSnapshotReader(StaticSnapshotReader):
         if self.calls == 1:
             raise RuntimeError("simulated snapshot outage")
         return await super().read(account_export)
+
+
+class CancellingSourceStore(InMemoryObjectStore):
+    async def download_to_file(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        raise asyncio.CancelledError
+
+
+class TrackingExportStore(InMemoryObjectStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.upload_started = False
+        self.abort_called = False
+
+    async def start_streaming_put(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        self.upload_started = True
+        return await super().start_streaming_put(*args, **kwargs)
+
+    async def abort_streaming_put(self, upload) -> None:  # type: ignore[no-untyped-def]
+        self.abort_called = True
+        await super().abort_streaming_put(upload)
 
 
 def push_envelope(payload: dict, *, delivery_attempt: int = 1) -> dict:
@@ -295,6 +317,35 @@ def test_transient_failure_is_immediately_claimable_on_pubsub_redelivery() -> No
     asyncio.run(scenario())
 
 
+def test_export_lease_outlives_the_platform_request_envelope() -> None:
+    assert EXPORT_LEASE > EXPORT_PLATFORM_REQUEST_ENVELOPE
+
+
+def test_export_cancellation_aborts_open_streaming_upload() -> None:
+    async def scenario() -> None:
+        repository, account_export, stores, snapshot = await prepared_export()
+        stores["media"] = CancellingSourceStore()
+        export_store = TrackingExportStore()
+        service = AccountExportService(
+            repository=repository,
+            snapshot_reader=StaticSnapshotReader(snapshot),
+            source_stores=stores,
+            export_store=export_store,
+        )
+        with pytest.raises(asyncio.CancelledError):
+            await service.process(
+                account_id=account_export.account_id,
+                export_id=account_export.id,
+                worker_id="cancelled-worker",
+                delivery_attempt=1,
+            )
+        assert export_store.upload_started is True
+        assert export_store.abort_called is True
+        assert export_store._objects == {}
+
+    asyncio.run(scenario())
+
+
 def test_export_worker_accepts_pubsub_event_and_deduplicates_redelivery() -> None:
     repository, account_export, stores, snapshot = asyncio.run(prepared_export())
     export_store = InMemoryObjectStore()
@@ -327,6 +378,74 @@ def test_export_worker_accepts_pubsub_event_and_deduplicates_redelivery() -> Non
             "/internal/pubsub/account-export-requested",
             json=push_envelope(payload),
         ).status_code == 204
+    assert len(export_store._objects) == 1
+
+
+def test_export_worker_retries_active_lease_and_recovers_after_expiry() -> None:
+    repository, account_export, stores, snapshot = asyncio.run(prepared_export())
+    claimed = asyncio.run(
+        repository.claim_account_export(
+            account_id=account_export.account_id,
+            export_id=account_export.id,
+            lease_id="interrupted-worker-lease",
+            lease_owner="interrupted-worker",
+            lease_expires_at=datetime.now(UTC) + timedelta(minutes=15),
+        )
+    )
+    assert claimed is not None
+    export_store = InMemoryObjectStore()
+    app = create_export_worker_app(
+        ExportWorkerSettings(
+            environment="test",
+            gcp_project_id="test-project",
+            media_bucket="test-media",
+            raw_mail_bucket="test-mail",
+            trace_bucket="test-traces",
+            export_bucket="test-exports",
+        ),
+        repository=repository,
+        snapshot_reader=StaticSnapshotReader(snapshot),
+        source_stores=stores,
+        export_store=export_store,
+    )
+    payload = {
+        "schema_version": 1,
+        "kind": "account_export_requested",
+        "account_id": account_export.account_id,
+        "export_id": account_export.id,
+    }
+
+    with TestClient(app) as client:
+        active_lease = client.post(
+            "/internal/pubsub/account-export-requested",
+            json=push_envelope(payload, delivery_attempt=2),
+        )
+        assert active_lease.status_code == 503
+        still_building = asyncio.run(
+            repository.account_export_for_owner(
+                owner_user_id="export-owner",
+                export_id=account_export.id,
+            )
+        )
+        assert still_building.status == AccountExportStatus.BUILDING
+        job_key = (account_export.account_id, account_export.job_id)
+        assert repository._jobs[job_key].status.value == "leased"
+        repository._jobs[job_key] = repository._jobs[job_key].model_copy(
+            update={"lease_expires_at": datetime.now(UTC) - timedelta(seconds=1)}
+        )
+        recovered = client.post(
+            "/internal/pubsub/account-export-requested",
+            json=push_envelope(payload, delivery_attempt=3),
+        )
+
+    assert recovered.status_code == 204
+    stored = asyncio.run(
+        repository.account_export_for_owner(
+            owner_user_id="export-owner",
+            export_id=account_export.id,
+        )
+    )
+    assert stored.status == AccountExportStatus.COMPLETED
     assert len(export_store._objects) == 1
 
 

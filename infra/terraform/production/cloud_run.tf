@@ -912,7 +912,9 @@ resource "google_cloud_run_v2_service" "export_worker" {
 
     scaling {
       min_instance_count = 0
-      max_instance_count = 1
+      # Archive creation streams to GCS, and separate instances prevent one
+      # large tenant export from monopolizing every account's export queue.
+      max_instance_count = 5
     }
 
     containers {

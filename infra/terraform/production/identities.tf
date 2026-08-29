@@ -68,6 +68,32 @@ resource "google_project_iam_member" "datastore_runtime" {
   member  = "serviceAccount:${google_service_account.runtime[each.value].email}"
 }
 
+# Revocation-aware Firebase ID-token verification performs an exact user lookup.
+# Keep that authority on the public API identity only; workers and mail paths do
+# not authenticate Firebase bearer tokens.
+resource "google_project_iam_custom_role" "firebase_token_revocation_reader" {
+  project     = var.project_id
+  role_id     = "foodlogFirebaseTokenRevocationReader"
+  title       = "FoodLog Firebase token revocation reader"
+  description = "Read Firebase user status so the API can reject revoked or disabled sessions."
+  permissions = ["firebaseauth.users.get"]
+  stage       = "GA"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [
+    google_project_service.required["identitytoolkit.googleapis.com"],
+  ]
+}
+
+resource "google_project_iam_member" "api_firebase_token_revocation_reader" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.firebase_token_revocation_reader.name
+  member  = "serviceAccount:${google_service_account.runtime["api"].email}"
+}
+
 # Foundation-model generation requires only prediction. A project custom role
 # avoids the model/dataset administration permissions bundled into
 # roles/aiplatform.user and is granted only to the image/agent worker.

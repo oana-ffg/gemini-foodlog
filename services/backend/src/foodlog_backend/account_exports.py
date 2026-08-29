@@ -16,7 +16,12 @@ from .storage import ObjectStore, file_sha256
 EXPORT_FORMAT_VERSION = "foodlog-account-export-v1"
 EXPORT_CONTENT_TYPE = "application/zip"
 EXPORT_EXPIRY = timedelta(hours=24)
-EXPORT_LEASE = timedelta(minutes=15)
+# Cloud Run and Pub/Sub both allow the request 600 seconds. Keep the durable lease
+# beyond that hard envelope: synchronous ZIP compression and resumable-upload writes
+# cannot be cooperatively cancelled, so an early application timeout would permit an
+# overlapping retry while the original writer was still alive.
+EXPORT_PLATFORM_REQUEST_ENVELOPE = timedelta(minutes=10)
+EXPORT_LEASE = timedelta(minutes=12)
 EXPORT_MAX_DELIVERY_ATTEMPTS = 5
 
 
@@ -241,9 +246,15 @@ class AccountExportService:
     ) -> ExportArchiveResult:
         completed_at = datetime.now(UTC)
         entries: list[ExportManifestEntry] = []
-        with TemporaryFile("w+b") as archive:
+        object_key = export_archive_object_key(account_export.account_id, account_export.id)
+        upload = await self._export_store.start_streaming_put(
+            account_export.account_id,
+            object_key,
+            EXPORT_CONTENT_TYPE,
+        )
+        try:
             with ZipFile(
-                archive,
+                upload.writer,  # type: ignore[arg-type]
                 mode="w",
                 compression=ZIP_DEFLATED,
                 compresslevel=6,
@@ -312,19 +323,12 @@ class AccountExportService:
                     _zip_info("manifest.json", snapshot.snapshot_at),
                     manifest_content,
                 )
-
-            archive.seek(0, 2)
-            archive_size = archive.tell()
-            archive.seek(0)
-            archive_sha256 = file_sha256(archive)
-            object_key = export_archive_object_key(account_export.account_id, account_export.id)
-            await self._export_store.put_file(
-                account_export.account_id,
-                object_key,
-                archive,
-                EXPORT_CONTENT_TYPE,
-                archive_sha256,
-            )
+            archive_size = upload.size
+            archive_sha256 = upload.content_sha256
+            await self._export_store.finish_streaming_put(upload)
+        except BaseException:
+            await self._export_store.abort_streaming_put(upload)
+            raise
         return ExportArchiveResult(
             object_key=object_key,
             archive_size=archive_size,

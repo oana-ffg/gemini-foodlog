@@ -5,6 +5,7 @@ from hashlib import sha256
 from typing import Any
 
 from google.cloud import firestore
+from google.cloud.firestore_v1.field_path import FieldPath
 
 from .account_exports import (
     AccountExportSnapshot,
@@ -44,6 +45,14 @@ EXPORT_COLLECTIONS = (
     "traces",
     "user_context_notes",
 )
+
+# Firestore allows large account histories, but the public export worker has a
+# fixed memory envelope. Bound metadata before retaining it; retained binary
+# objects are streamed separately and do not count toward this JSON allowance.
+MAX_EXPORT_JSON_FILE_BYTES = 10_000_000
+MAX_EXPORT_JSON_TOTAL_BYTES = 64_000_000
+MAX_EXPORT_COLLECTION_DOCUMENTS = 50_000
+MAX_EXPORT_SOURCE_OBJECTS = 10_000
 
 # These fields are operational secrets or implementation-only handles. Object keys
 # are consumed separately by the worker and must never appear in exported JSON.
@@ -157,9 +166,6 @@ class FirestoreAccountExportSnapshotReader:
     def __init__(self, client: firestore.AsyncClient) -> None:
         self._client = client
 
-    async def _documents(self, query: Any, *, read_time: datetime) -> list[Any]:
-        return [snapshot async for snapshot in query.stream(read_time=read_time)]
-
     @staticmethod
     def _checked_data(
         *,
@@ -186,6 +192,7 @@ class FirestoreAccountExportSnapshotReader:
         )
         if account_data.get("owner_user_id") != account_export.requested_by_user_id:
             raise CrossAccountAccess
+
         entitlement_snapshot = await (
             account_ref.collection("entitlements")
             .document("current")
@@ -198,24 +205,35 @@ class FirestoreAccountExportSnapshotReader:
             snapshot=entitlement_snapshot,
             require_account_id=False,
         )
-        json_files = [
-            ExportJsonFile(
-                path="data/account.json",
-                content=canonical_json(
-                    {
-                        "schema_version": 1,
-                        "account": export_document(
-                            document_id=account_snapshot.id,
-                            data=account_data,
-                        ),
-                        "entitlement": export_document(
-                            document_id=entitlement_snapshot.id,
-                            data=entitlement_data,
-                        ),
-                    }
+
+        json_files: list[ExportJsonFile] = []
+        json_total_bytes = 0
+
+        def add_json_file(path: str, payload: dict[str, object]) -> None:
+            nonlocal json_total_bytes
+            content = canonical_json(payload)
+            if len(content) > MAX_EXPORT_JSON_FILE_BYTES:
+                raise ValueError("account export JSON entry exceeds its size limit")
+            if json_total_bytes + len(content) > MAX_EXPORT_JSON_TOTAL_BYTES:
+                raise ValueError("account export JSON exceeds its aggregate size limit")
+            json_files.append(ExportJsonFile(path=path, content=content))
+            json_total_bytes += len(content)
+
+        add_json_file(
+            "data/account.json",
+            {
+                "schema_version": 1,
+                "account": export_document(
+                    document_id=account_snapshot.id,
+                    data=account_data,
                 ),
-            )
-        ]
+                "entitlement": export_document(
+                    document_id=entitlement_snapshot.id,
+                    data=entitlement_data,
+                ),
+            },
+        )
+
         identity_snapshot = await (
             self._client.collection("identities")
             .document(account_export.requested_by_user_id)
@@ -243,40 +261,45 @@ class FirestoreAccountExportSnapshotReader:
             if waitlist_snapshot.exists
             else None
         )
-        json_files.append(
-            ExportJsonFile(
-                path="data/admission.json",
-                content=canonical_json(
-                    {
-                        "schema_version": 1,
-                        "identity": export_document(
-                            document_id=identity_snapshot.id,
-                            data=self._checked_data(
-                                account_id=account_export.account_id,
-                                snapshot=identity_snapshot,
-                            ),
-                        ),
-                        "waitlist": waitlist_data,
-                    }
+        add_json_file(
+            "data/admission.json",
+            {
+                "schema_version": 1,
+                "identity": export_document(
+                    document_id=identity_snapshot.id,
+                    data=self._checked_data(
+                        account_id=account_export.account_id,
+                        snapshot=identity_snapshot,
+                    ),
                 ),
-            )
+                "waitlist": waitlist_data,
+            },
         )
+
         source_objects: list[ExportSourceObject] = []
-        collection_snapshots: dict[str, list[Any]] = {}
         for collection in EXPORT_COLLECTIONS:
-            snapshots = await self._documents(
-                account_ref.collection(collection),
-                read_time=account_export.snapshot_at,
-            )
-            snapshots.sort(key=lambda snapshot: snapshot.id)
-            collection_snapshots[collection] = snapshots
             documents: list[dict[str, object]] = []
-            for snapshot in snapshots:
+            documents_bytes = 0
+            revisions: list[dict[str, object]] | None = (
+                [] if collection in {"knowledge", "meals"} else None
+            )
+            revisions_bytes = 0
+            query = account_ref.collection(collection).order_by(
+                FieldPath.document_id()
+            )
+            async for snapshot in query.stream(read_time=account_export.snapshot_at):
+                if len(documents) >= MAX_EXPORT_COLLECTION_DOCUMENTS:
+                    raise ValueError("account export collection document limit exceeded")
                 data = self._checked_data(
                     account_id=account_export.account_id,
                     snapshot=snapshot,
                 )
-                documents.append(export_document(document_id=snapshot.id, data=data))
+                document = export_document(document_id=snapshot.id, data=data)
+                documents_bytes += len(canonical_json(document))
+                if documents_bytes > MAX_EXPORT_JSON_FILE_BYTES:
+                    raise ValueError("account export JSON entry exceeds its size limit")
+                documents.append(document)
+
                 retained = source_object(
                     account_id=account_export.account_id,
                     collection=collection,
@@ -284,51 +307,56 @@ class FirestoreAccountExportSnapshotReader:
                     data=data,
                 )
                 if retained is not None:
+                    if len(source_objects) >= MAX_EXPORT_SOURCE_OBJECTS:
+                        raise ValueError("account export source-object limit exceeded")
                     source_objects.append(retained)
-            json_files.append(
-                ExportJsonFile(
-                    path=f"data/{collection}.json",
-                    content=canonical_json(
-                        {
-                            "schema_version": 1,
-                            "collection": collection,
-                            "documents": documents,
-                        }
-                    ),
-                )
-            )
 
-        for parent_collection in ("knowledge", "meals"):
-            revisions: list[dict[str, object]] = []
-            for parent in collection_snapshots[parent_collection]:
-                revision_snapshots = await self._documents(
-                    parent.reference.collection("revisions"),
-                    read_time=account_export.snapshot_at,
-                )
-                revision_snapshots.sort(key=lambda snapshot: snapshot.id)
-                for snapshot in revision_snapshots:
-                    data = self._checked_data(
-                        account_id=account_export.account_id,
-                        snapshot=snapshot,
+                if revisions is not None:
+                    revision_query = snapshot.reference.collection("revisions").order_by(
+                        FieldPath.document_id()
                     )
-                    revisions.append(
-                        {
-                            "parent_document_id": parent.id,
-                            **export_document(document_id=snapshot.id, data=data),
+                    async for revision_snapshot in revision_query.stream(
+                        read_time=account_export.snapshot_at
+                    ):
+                        if len(revisions) >= MAX_EXPORT_COLLECTION_DOCUMENTS:
+                            raise ValueError(
+                                "account export revision document limit exceeded"
+                            )
+                        revision_data = self._checked_data(
+                            account_id=account_export.account_id,
+                            snapshot=revision_snapshot,
+                        )
+                        revision = {
+                            "parent_document_id": snapshot.id,
+                            **export_document(
+                                document_id=revision_snapshot.id,
+                                data=revision_data,
+                            ),
                         }
-                    )
-            json_files.append(
-                ExportJsonFile(
-                    path=f"data/{parent_collection}_revisions.json",
-                    content=canonical_json(
-                        {
-                            "schema_version": 1,
-                            "collection": f"{parent_collection}/revisions",
-                            "documents": revisions,
-                        }
-                    ),
-                )
+                        revisions_bytes += len(canonical_json(revision))
+                        if revisions_bytes > MAX_EXPORT_JSON_FILE_BYTES:
+                            raise ValueError(
+                                "account export revision JSON exceeds its size limit"
+                            )
+                        revisions.append(revision)
+
+            add_json_file(
+                f"data/{collection}.json",
+                {
+                    "schema_version": 1,
+                    "collection": collection,
+                    "documents": documents,
+                },
             )
+            if revisions is not None:
+                add_json_file(
+                    f"data/{collection}_revisions.json",
+                    {
+                        "schema_version": 1,
+                        "collection": f"{collection}/revisions",
+                        "documents": revisions,
+                    },
+                )
 
         return AccountExportSnapshot(
             account_id=account_export.account_id,

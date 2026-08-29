@@ -73,6 +73,7 @@ class FirebaseIdentityTokenVerifier:
                 firebase_auth.verify_id_token,
                 token,
                 self._app,
+                check_revoked=True,
             )
         except (ValueError, FirebaseError) as error:
             raise InvalidAuthenticationToken from error

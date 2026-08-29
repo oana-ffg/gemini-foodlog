@@ -235,10 +235,15 @@ def test_firebase_cors_allows_bearer_tokens_but_not_local_identity_headers() -> 
 def test_firebase_verifier_returns_verified_uid_and_normalized_email(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[tuple[str, object]] = []
+    calls: list[tuple[str, object, bool]] = []
 
-    def verify_id_token(token: str, app: object) -> dict[str, object]:
-        calls.append((token, app))
+    def verify_id_token(
+        token: str,
+        app: object,
+        *,
+        check_revoked: bool,
+    ) -> dict[str, object]:
+        calls.append((token, app, check_revoked))
         return {
             "uid": "verified-user",
             "email": "  Mixed.Case@Example.Test  ",
@@ -259,7 +264,7 @@ def test_firebase_verifier_returns_verified_uid_and_normalized_email(
         email="mixed.case@example.test",
         authenticated_at=datetime.fromtimestamp(1_777_000_000, UTC),
     )
-    assert calls == [("signed-token", fake_app)]
+    assert calls == [("signed-token", fake_app, True)]
 
 
 @pytest.mark.parametrize(
@@ -274,7 +279,13 @@ def test_firebase_sdk_rejections_fail_closed(
     monkeypatch: pytest.MonkeyPatch,
     firebase_error: Exception,
 ) -> None:
-    def reject_token(_token: str, _app: object) -> dict[str, object]:
+    def reject_token(
+        _token: str,
+        _app: object,
+        *,
+        check_revoked: bool,
+    ) -> dict[str, object]:
+        assert check_revoked is True
         raise firebase_error
 
     monkeypatch.setattr(firebase_auth, "verify_id_token", reject_token)
@@ -288,6 +299,47 @@ def test_firebase_sdk_rejections_fail_closed(
 
 
 @pytest.mark.parametrize(
+    "firebase_error",
+    [
+        firebase_auth.RevokedIdTokenError("revoked token"),
+        firebase_auth.UserDisabledError("disabled user"),
+    ],
+)
+def test_revoked_or_disabled_firebase_identity_cannot_use_private_routes_or_issue_camera(
+    monkeypatch: pytest.MonkeyPatch,
+    firebase_error: Exception,
+) -> None:
+    def reject_token(
+        _token: str,
+        _app: object,
+        *,
+        check_revoked: bool,
+    ) -> dict[str, object]:
+        assert check_revoked is True
+        raise firebase_error
+
+    monkeypatch.setattr(firebase_auth, "verify_id_token", reject_token)
+    verifier = FirebaseIdentityTokenVerifier(
+        "test-firebase-project",
+        firebase_app=cast(App, object()),
+    )
+    headers = {"Authorization": "Bearer revoked-or-disabled-token"}
+
+    with firebase_test_client(verifier) as client:
+        private_read = client.get("/v1/journal", headers=headers)
+        credential_issue = client.post(
+            "/v1/device-cameras",
+            headers=headers,
+            json={"name": "Must not be issued"},
+        )
+        repository = client.app.state.container.repository
+
+    assert private_read.status_code == 401
+    assert credential_issue.status_code == 401
+    assert repository._device_credentials == {}
+
+
+@pytest.mark.parametrize(
     "claims",
     [{}, {"uid": ""}, {"uid": 123}, {"uid": "x" * 129}],
 )
@@ -296,8 +348,10 @@ def test_firebase_verifier_rejects_invalid_uid_claims(
     claims: dict[str, object],
 ) -> None:
     verifier_call = cast(
-        Callable[[str, object], dict[str, object]],
-        lambda _token, _app: claims,
+        Callable[..., dict[str, object]],
+        lambda _token, _app, *, check_revoked: (
+            claims if check_revoked is True else pytest.fail("revocation check disabled")
+        ),
     )
     monkeypatch.setattr(firebase_auth, "verify_id_token", verifier_call)
     verifier = FirebaseIdentityTokenVerifier(

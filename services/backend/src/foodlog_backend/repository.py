@@ -14,6 +14,7 @@ from .errors import (
     AccountCapacityReached,
     AccountCapacityStateConflict,
     AccountExportAlreadyActive,
+    AccountExportLeaseActive,
     AccountExportNotFound,
     AccountExportRateLimited,
     AccountNotProvisioned,
@@ -1861,7 +1862,7 @@ class InMemoryRepository:
             if job.status == JobStatus.LEASED and (
                 job.lease_expires_at is None or job.lease_expires_at > now
             ):
-                return None
+                raise AccountExportLeaseActive
             if job.status not in {JobStatus.PENDING, JobStatus.LEASED}:
                 return None
             if job.status == JobStatus.PENDING and job.available_at > now:

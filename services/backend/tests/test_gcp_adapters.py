@@ -1,6 +1,7 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
+from threading import Event
 
 import pytest
 from google.api_core.exceptions import PreconditionFailed
@@ -15,7 +16,7 @@ from foodlog_backend.firestore_repository import (
 )
 from foodlog_backend.models import ActivityEvent, EntitlementMode, utc_now
 from foodlog_backend.settings import Settings
-from foodlog_backend.storage import GCSObjectStore, InMemoryObjectStore
+from foodlog_backend.storage import GCSObjectStore, InMemoryObjectStore, _finish_thread_call
 
 
 class FakeDocument:
@@ -74,9 +75,41 @@ class FakeBlob:
     def download_as_bytes(self) -> bytes:
         return self.objects[self.key][0]
 
-    def open(self, mode: str):
-        assert mode == "rb"
-        return BytesIO(self.objects[self.key][0])
+    def exists(self) -> bool:
+        return self.key in self.objects
+
+    def open(self, mode: str, **kwargs):
+        if mode == "rb":
+            assert not kwargs
+            return BytesIO(self.objects[self.key][0])
+        assert mode == "wb"
+        assert kwargs["if_generation_match"] == 0
+        assert kwargs["ignore_flush"] is True
+        assert kwargs["chunk_size"] == 8 * 1024 * 1024
+        return FakeBlobWriter(
+            blob=self,
+            content_type=kwargs["content_type"],
+        )
+
+
+class FakeBlobWriter(BytesIO):
+    def __init__(self, *, blob: FakeBlob, content_type: str) -> None:
+        super().__init__()
+        self._blob = blob
+        self._content_type = content_type
+
+    def close(self) -> None:
+        if not self.closed:
+            if self._blob.key in self._blob.objects:
+                raise PreconditionFailed("object already exists")
+            self._blob.objects[self._blob.key] = (self.getvalue(), self._content_type)
+        super().close()
+
+    def flush(self) -> None:
+        return None
+
+    def terminate(self) -> None:
+        BytesIO.close(self)
 
 
 class FakeBucket:
@@ -256,6 +289,61 @@ def test_gcs_adapter_writes_once_and_round_trips_private_bytes() -> None:
     assert metadata.generation == 7
     assert metadata.crc32c == "fake-crc32c"
     assert client.bucket_instance.objects[key][1] == "image/jpeg"
+
+
+def test_gcs_adapter_streams_create_only_objects_and_verifies_deterministic_retry() -> None:
+    async def scenario() -> None:
+        client = FakeStorageClient()
+        store = GCSObjectStore(
+            project_id="test-project",
+            bucket_name="private-exports",
+            client=client,  # type: ignore[arg-type]
+        )
+        key = "accounts/account-a/exports/export-a.zip"
+        content = b"streamed-archive-content"
+
+        first = await store.start_streaming_put("account-a", key, "application/zip")
+        assert first.writer.seekable() is False
+        first.writer.write(content[:8])
+        first.writer.write(content[8:])
+        assert await store.finish_streaming_put(first) is True
+        assert first.size == len(content)
+
+        duplicate = await store.start_streaming_put("account-a", key, "application/zip")
+        duplicate.writer.write(content)
+        assert await store.finish_streaming_put(duplicate) is False
+        assert duplicate.content_sha256 == first.content_sha256
+
+        mismatch = await store.start_streaming_put("account-a", key, "application/zip")
+        with pytest.raises(ValueError, match="different content"):
+            mismatch.writer.write(b"different")
+        await store.abort_streaming_put(mismatch)
+
+    asyncio.run(scenario())
+
+
+def test_blocking_upload_finalizer_settles_before_cancellation_propagates() -> None:
+    async def scenario() -> None:
+        started = Event()
+        release = Event()
+        completed = Event()
+
+        def finalize() -> None:
+            started.set()
+            release.wait()
+            completed.set()
+
+        task = asyncio.create_task(_finish_thread_call(finalize))
+        await asyncio.to_thread(started.wait)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert task.done() is False
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert completed.is_set()
+
+    asyncio.run(scenario())
 
 
 def test_gcs_adapter_streams_only_the_requested_private_byte_range() -> None:

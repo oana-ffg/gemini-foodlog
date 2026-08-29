@@ -28,6 +28,10 @@ class AccountExportNotFound(FoodLogError):
     pass
 
 
+class AccountExportLeaseActive(FoodLogError):
+    pass
+
+
 class AccountExportRateLimited(FoodLogError):
     def __init__(self, retry_after_seconds: int) -> None:
         super().__init__(retry_after_seconds)
