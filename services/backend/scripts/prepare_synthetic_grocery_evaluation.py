@@ -84,6 +84,7 @@ class GroceryScenarioSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     key: str = Field(pattern=r"^[a-z0-9-]+$")
+    attempt: int = Field(default=1, ge=1, le=20)
     fixture: Path
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     captured_at: datetime
@@ -272,7 +273,7 @@ def upload_fixture(
         width, height = image.size
     response = client.post(
         "/v1/captures",
-        headers={"Idempotency-Key": f"{dataset_id}-{scenario.key}-v1"},
+        headers={"Idempotency-Key": scenario_idempotency_key(dataset_id, scenario)},
         files={
             "metadata": (
                 None,
@@ -282,7 +283,7 @@ def upload_fixture(
                         "camera_id": camera_id,
                         "captured_at": scenario.captured_at.isoformat(),
                         "client_kind": "browser",
-                        "client_version": dataset_id,
+                        "client_version": scenario_client_version(dataset_id, scenario),
                         "sequence_id": dataset_id,
                         "sequence_number": sequence_number,
                         "width": width,
@@ -300,6 +301,19 @@ def upload_fixture(
         raise RuntimeError("synthetic grocery fixture upload failed")
     payload = response.json()
     return payload["capture_id"], bool(payload["duplicate"])
+
+
+def scenario_client_version(dataset_id: str, scenario: GroceryScenarioSpec) -> str:
+    if scenario.attempt == 1:
+        return dataset_id
+    return f"{dataset_id}-retry-{scenario.attempt}"
+
+
+def scenario_idempotency_key(dataset_id: str, scenario: GroceryScenarioSpec) -> str:
+    base = f"{dataset_id}-{scenario.key}"
+    if scenario.attempt == 1:
+        return f"{base}-v1"
+    return f"{base}-retry-{scenario.attempt}"
 
 
 def validate_activity(
@@ -510,7 +524,20 @@ async def prepare(args: argparse.Namespace) -> None:
                 )
                 result["trace_id"] = trace_id
                 result["duplicate_capture"] = duplicate
+                result["attempt"] = scenario.attempt
+                result["elapsed_simulated_days"] = (
+                    scenario.captured_at - ordered_scenarios[0].captured_at
+                ).days
+                result["eligible_purchase_histories"] = sum(
+                    order.confirmation.recorded_at <= scenario.captured_at
+                    for order in spec.orders
+                )
+                result["prior_inferred_events"] = len(scenario_results)
                 scenario_results.append(result)
+                print(
+                    json.dumps({"scenario_result": result}, sort_keys=True),
+                    flush=True,
+                )
 
             usage_count, actual_dkk_micros = await _usage_for_events(
                 repository,

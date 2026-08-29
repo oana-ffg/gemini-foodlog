@@ -108,6 +108,7 @@
     },
     {
       "key": "pale-after-duck-substitution",
+      "attempt": 2,
       "fixture": "images/adversarial/synthetic-distant-pale-meat-pack.png",
       "sha256": "64d25cdef45a5b23c308c76bd582a4bde76bee957014b063d25af8d6189de369",
       "captured_at": "2026-07-16T18:00:00+02:00",
