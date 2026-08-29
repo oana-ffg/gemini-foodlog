@@ -1,0 +1,65 @@
+[
+  {
+    "key": "opening",
+    "kind": "opening",
+    "minimum_seconds": 24,
+    "heading": "A food journal without the performance",
+    "narration": "Food and symptom diaries are useful only if people keep them. Most trackers still ask you to stage a photo, scan something, or type what you ate. Gemini FoodLog observes ordinary kitchen activity instead. It builds an evidence-linked food timeline, preserves uncertainty, and learns from corrections, without pretending to diagnose a condition or prove what caused a symptom."
+  },
+  {
+    "key": "architecture",
+    "kind": "architecture",
+    "minimum_seconds": 22,
+    "heading": "A durable agentic pipeline",
+    "narration": "A phone, Python camera, or future microcontroller sends images through one authenticated Cloud Run API. Pub Sub separates durable grouping from inference. A Google ADK agent runs Gemini 3.6 Flash on Vertex AI, with bounded tools for this account's notes, purchases, knowledge, and prior feedback. Firestore and private Cloud Storage hold the tenant-scoped record."
+  },
+  {
+    "key": "ambiguity",
+    "kind": "shot",
+    "source": "02_ambiguous_detail.png",
+    "minimum_seconds": 48,
+    "heading": "Best guess, evidence, and a useful question",
+    "narration": "This is the actual hosted application and an immutable production Gemini run. The poor angle barely reveals the meat near the sink and air-fryer basket. A temporary synthetic note says chicken is available that week, so chicken is relevant, but availability is not visual proof. FoodLog keeps a tentative best guess, shows the literal observations, alternatives, and exact context it used, then asks one focused distinction instead of dumping the classification job back on the user."
+  },
+  {
+    "key": "feedback",
+    "kind": "shot_pair",
+    "source": "03_correction_history.png",
+    "secondary_source": "04_knowledge.png",
+    "minimum_seconds": 38,
+    "heading": "Corrections append history and scoped learning",
+    "narration": "When the guess is wrong, feedback does not overwrite the original inference. It appends a correction, preserves the complete rationale, and can propose a narrowly scoped household learning with provenance. Temporary context stays temporary. Repeated evidence can strengthen a belief, and later contradictions remain visible. The product can show whether a later event actually used this knowledge; one follow-up is evidence of a mechanism, not a claim of general accuracy."
+  },
+  {
+    "key": "negative_control",
+    "kind": "shot",
+    "source": "05_cat_discarded.png",
+    "minimum_seconds": 22,
+    "heading": "Not every kitchen motion is cooking",
+    "narration": "The cat is a deliberate negative control. FoodLog can classify likely non-cooking activity or let the user discard it. The event leaves the food timeline, but its image, rationale, and revision history remain available. A genuinely unknown event cannot be confirmed with a meaningless looks-right button."
+  },
+  {
+    "key": "patterns",
+    "kind": "shot",
+    "source": "06_patterns.png",
+    "minimum_seconds": 22,
+    "heading": "Patterns are hypotheses, not facts",
+    "narration": "Across dated history, FoodLog can surface a pattern worth checking, with supporting examples, counterexamples, uncertainty, and narrow confirm or correct actions. Event-specific ambiguity stays on its own timeline entry. This feed is for longitudinal hypotheses, such as a recurring Thursday meal, and the system must keep exceptions rather than invent a rigid habit."
+  },
+  {
+    "key": "cloud",
+    "kind": "shot",
+    "source": "07_cloud_proof.png",
+    "minimum_seconds": 28,
+    "heading": "Running on Google Cloud",
+    "narration": "This is the production release on Google Cloud: Cloud Run, Pub Sub, Firestore, private Storage, Google ADK, and Gemini 3.6 Flash on Vertex AI. Services scale to zero, accounts and trials are capped, and every model run reserves against an application-level spend ceiling before the provider call. Structured traces and immutable usage records make the agent's work auditable without exposing one household to another."
+  },
+  {
+    "key": "closing",
+    "kind": "closing",
+    "source": "01_timeline.png",
+    "minimum_seconds": 12,
+    "heading": "Useful uncertainty. Less human effort.",
+    "narration": "The goal is not certainty theatre. It is a useful food record with less human effort, clear provenance, and fewer repeated questions as FoodLog learns the household."
+  }
+]
