@@ -1,6 +1,87 @@
 {
-  "generatedAt": null,
+  "generatedAt": "2026-08-30T18:40:10.300157+00:00",
   "model": "gemini-3.1-flash-tts-preview",
   "voice": "Sulafat",
-  "entries": {}
+  "entries": {
+    "health-patterns": {
+      "hash": "c4242693779608699cc5769c6185db55a3bbced3c951ff599a52464ac7938ee7",
+      "file": "generated/tts/health-patterns-c42426937796.wav",
+      "durationSeconds": 7.36,
+      "characters": 101,
+      "inputTokens": 162,
+      "outputTokens": 184
+    },
+    "daily-friction": {
+      "hash": "769d8b657709862602699ae200b96f17323ece4154959b1fa6a390b1528038e6",
+      "file": "generated/tts/daily-friction-769d8b657709.wav",
+      "durationSeconds": 8.84,
+      "characters": 88,
+      "inputTokens": 164,
+      "outputTokens": 221
+    },
+    "logo-reveal": {
+      "hash": "cf8bbb388c12b69b83db461f4465a99eb49ddd5d359fff24568b6a03f27cf744",
+      "file": "generated/tts/logo-reveal-cf8bbb388c12.wav",
+      "durationSeconds": 6.36,
+      "characters": 71,
+      "inputTokens": 162,
+      "outputTokens": 159
+    },
+    "agentic-pipeline": {
+      "hash": "8db71a637dd036f3fb4de0075e1769273ede016e3491067eeaa425c778857ae1",
+      "file": "generated/tts/agentic-pipeline-8db71a637dd0.wav",
+      "durationSeconds": 23.68,
+      "characters": 305,
+      "inputTokens": 213,
+      "outputTokens": 592
+    },
+    "useful-uncertainty": {
+      "hash": "d43838cc70699cab8c95de796bc49eb68b00383cbaefb45f169c3940ea896a9e",
+      "file": "generated/tts/useful-uncertainty-d43838cc7069.wav",
+      "durationSeconds": 27.28,
+      "characters": 327,
+      "inputTokens": 210,
+      "outputTokens": 682
+    },
+    "correction-learning": {
+      "hash": "606e34aa0a1b1f0c015b0d022d436c94e7f541fb2f4a5a61602fcc4fdd5c875f",
+      "file": "generated/tts/correction-learning-606e34aa0a1b.wav",
+      "durationSeconds": 25.08,
+      "characters": 316,
+      "inputTokens": 200,
+      "outputTokens": 627
+    },
+    "negative-control": {
+      "hash": "cd180b4fd80f6b4b3904505d1cb84947409e0546227bdbef5d0eadf448ce6e3b",
+      "file": "generated/tts/negative-control-cd180b4fd80f.wav",
+      "durationSeconds": 14.64,
+      "characters": 186,
+      "inputTokens": 182,
+      "outputTokens": 366
+    },
+    "longitudinal-patterns": {
+      "hash": "e1ab3b99c9b62b98075e329050bee4589829b641de661268f5316d9cb8ab273d",
+      "file": "generated/tts/longitudinal-patterns-e1ab3b99c9b6.wav",
+      "durationSeconds": 23.44,
+      "characters": 299,
+      "inputTokens": 195,
+      "outputTokens": 586
+    },
+    "cloud-proof": {
+      "hash": "4062be5d009ad2826908c0dbc66e8a8879b9cb43802316ffa1beedbcacec599c",
+      "file": "generated/tts/cloud-proof-4062be5d009a.wav",
+      "durationSeconds": 23.88,
+      "characters": 282,
+      "inputTokens": 208,
+      "outputTokens": 597
+    },
+    "closing": {
+      "hash": "bf17a8bc5e380a72892893aa0c37cd73c299cec73ae0e2bc4ee6b91d595e042c",
+      "file": "generated/tts/closing-bf17a8bc5e38.wav",
+      "durationSeconds": 14.32,
+      "characters": 165,
+      "inputTokens": 179,
+      "outputTokens": 358
+    }
+  }
 }

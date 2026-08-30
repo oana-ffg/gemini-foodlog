@@ -169,7 +169,8 @@ const CinematicScene = ({scene}: {scene: Scene}) => {
           src={staticFile(scene.video)}
           muted
           loop
-          style={{width: "100%", height: "100%", objectFit: "cover"}}
+          objectFit="cover"
+          style={{width: "100%", height: "100%"}}
         />
       ) : fallbackImage ? (
         <Img

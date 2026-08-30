@@ -35,12 +35,28 @@ causality.
 - The project uses the warm `Sulafat` voice through Vertex AI and stores each
   scene separately under a content hash so unchanged narration is reused.
 - The FoodLog end card discloses that the narration is AI-generated.
+- The ten final scene files total 174.880 seconds, 1,875 input tokens, and
+  4,372 output audio tokens. Their gross list price is DKK 0.573402 at the
+  recorded USD/DKK rate of 6.42; promotional-credit settlement remains pending
+  the Cloud Billing export.
+
+## Veo opening shots
+
+- Both opening shots use Vertex AI model `veo-3.1-lite-generate-001`, one
+  eight-second 720p, 16:9, video-only request each, with SDK retries disabled.
+- The two exact prompts, safety boundaries, and acceptance criteria are in
+  `apps/demo-video/veo-scenes.md`.
+- The two completed generations cost DKK 3.081600 gross list price in total.
+  The second reads clearly as exhausted exasperation but uses a sharp phone
+  put-down and collapse rather than the requested literal face-down slam; no
+  retry was authorized or made.
 
 ## Remotion
 
 - [Remotion documentation](https://www.remotion.dev/docs/) documents React-based
   programmatic MP4 creation and local Studio editing.
 - This project pins Remotion `4.0.518`. The private first pass rendered ten
-  modular scenes at 1920×1080, 30 fps, and three minutes; the final verification
-  gate rejects a duration over four minutes, black gaps, the wrong codecs or
-  dimensions, and audio silences of at least five seconds.
+  modular scenes at 1920×1080 and 30 fps. The complete narrated cut is 191.787
+  seconds; the final verification gate rejects a duration over four minutes,
+  black gaps, the wrong codecs or dimensions, and audio silences of at least
+  five seconds.

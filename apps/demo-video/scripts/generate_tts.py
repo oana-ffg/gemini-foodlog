@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import hashlib
 import json
 import subprocess
@@ -13,6 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from google import genai
+from google.genai import types
 
 
 MODEL = "gemini-3.1-flash-tts-preview"
@@ -136,31 +136,39 @@ def main() -> None:
             f"<transcript>{scene['narration']}</transcript>"
         )
         print(f"Generating narration: {scene['id']}", flush=True)
-        interaction = client.interactions.create(
+        response = client.models.generate_content(
             model=MODEL,
-            input=prompt,
-            response_format={"type": "audio"},
-            generation_config={"speech_config": [{"voice": VOICE}]},
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_modalities=["AUDIO"],
+                speech_config=types.SpeechConfig(
+                    voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=VOICE)
+                    )
+                ),
+            ),
         )
-        if not interaction.output_audio or not interaction.output_audio.data:
+        parts = response.candidates[0].content.parts if response.candidates else []
+        audio = next((part.inline_data for part in parts if part.inline_data), None)
+        if not audio or not audio.data:
             raise RuntimeError(f"Gemini returned no audio for {scene['id']}")
         destination = VIDEO_ROOT / "public" / spec["file"]
-        pcm = base64.b64decode(interaction.output_audio.data)
+        pcm = audio.data
         write_wave(
             destination,
             pcm,
-            channels=interaction.output_audio.channels or 1,
-            sample_rate=interaction.output_audio.sample_rate or 24_000,
+            channels=1,
+            sample_rate=24_000,
         )
         duration = measured_duration(destination)
-        usage = interaction.usage
+        usage = response.usage_metadata
         entries[scene["id"]] = {
             "hash": spec["hash"],
             "file": spec["file"],
             "durationSeconds": duration,
             "characters": len(scene["narration"]),
-            "inputTokens": usage.total_input_tokens if usage else None,
-            "outputTokens": usage.total_output_tokens if usage else None,
+            "inputTokens": usage.prompt_token_count if usage else None,
+            "outputTokens": usage.candidates_token_count if usage else None,
         }
 
     MANIFEST_PATH.write_text(
