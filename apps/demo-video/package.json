@@ -9,7 +9,9 @@
     "render": "remotion render src/index.ts FoodLogDemo ../../artifacts/demo-video/foodlog-demo-remotion.mp4",
     "studio": "remotion studio src/index.ts",
     "tts": "node scripts/generate-tts.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify": "node scripts/verify-render.mjs ../../artifacts/demo-video/foodlog-demo-remotion.mp4",
+    "verify:draft": "node scripts/verify-render.mjs ../../artifacts/demo-video/foodlog-demo-remotion.mp4 --allow-silent"
   },
   "dependencies": {
     "@remotion/media": "4.0.518",
