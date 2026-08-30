@@ -42,3 +42,12 @@ into the Remotion public directory by `npm run demo:assets`.
 - exactly one request, SDK attempts set to one, no automatic resubmission
 - maximum gross list price: USD 0.08 / DKK 0.513600 at USD/DKK 6.42
 - any alternate or retry requires new approval
+
+## Generated result
+
+- duration: 179.774625 seconds
+- format: MP3, 44.1 kHz, stereo, 192 kbps
+- size: 4,322,259 bytes
+- SHA-256: `8706bec04894d72a4b7ff07d0679bc826086c18fccf92cf4990debdd064313a9`
+- private path: `artifacts/demo-video/lyria/foodlog-score.mp3`
+- request count: one successful request; no retry

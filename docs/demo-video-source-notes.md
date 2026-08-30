@@ -51,6 +51,19 @@ causality.
   put-down and collapse rather than the requested literal face-down slam; no
   retry was authorized or made.
 
+## Lyria soundtrack
+
+- [Google's Lyria 3 documentation](https://ai.google.dev/gemini-api/docs/music-generation)
+  documents full-length Lyria 3 Pro generation, prompt-controlled structure,
+  instrumental output, SynthID watermarking, and single-turn generation.
+- One `lyria-3-pro-preview` request through Vertex AI produced a 179.774625-
+  second, 44.1 kHz stereo MP3. Its exact timed prompt is preserved in
+  `apps/demo-video/lyria-score.md`.
+- The request cost DKK 0.513600 gross list price at the official USD 0.08 per
+  successful generation and the recorded USD/DKK rate of 6.42. The Remotion
+  mix keeps it at eight percent volume under narration, fades in for two
+  seconds, and fades out over its final six seconds.
+
 ## Remotion
 
 - [Remotion documentation](https://www.remotion.dev/docs/) documents React-based

@@ -28,7 +28,7 @@ type NarrationEntries = Record<string, NarrationEntry>;
 const transitionFrames = 18;
 const narrationTailSeconds = 1.4;
 const scoreFile = "generated/music/foodlog-score.mp3";
-const scoreDurationSeconds = 184;
+const scoreDurationSeconds = 179.774625;
 const scoreVolume = 0.08;
 
 export const sceneDurationInFrames = (

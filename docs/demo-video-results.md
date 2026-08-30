@@ -37,6 +37,30 @@ authorized Veo calls cost DKK 3.081600 gross list price. Both are recorded in
 `docs/testing-spend-ledger.md`; promotional-credit settlement remains pending
 Cloud Billing.
 
+## Lyria comparison cut
+
+One explicitly authorized `lyria-3-pro-preview` request produced an optional
+179.774625-second instrumental score through the Vertex AI global Interactions
+API. The exact timed prompt and generation boundary are preserved in
+`apps/demo-video/lyria-score.md`; the private MP3 is Git-ignored and has SHA-256
+`8706bec04894d72a4b7ff07d0679bc826086c18fccf92cf4990debdd064313a9`.
+
+The score is mixed at eight percent beneath the narration with a two-second
+fade-in and six-second fade-out. A comparison cut is available at
+`artifacts/demo-video/foodlog-demo-remotion-lyria-preview-mastered.mp4`:
+
+- duration: 191.8 seconds
+- size: 41,148,457 bytes
+- SHA-256: `dfebaf19b82f3334f85816183e04a53a9f1bad6eac0c4f0810b64ce60915bb75`
+- video: unchanged H.264 source stream, 1920 by 1080, 30 frames per second
+- audio: remixed AAC LC, 48 kHz, stereo, mastered to -15.8 LUFS and -1.5 dBTP
+
+The comparison passed the same duration, stream, black-gap, and five-second
+silence gates as the music-free cut. It still requires a human listening pass
+for musical fit, narration intelligibility, and confirmation that the generated
+audio contains no unwanted vocal-like content. The music-free original remains
+untouched so the comparison is reversible.
+
 ## Automated verification
 
 - all seven source captures are at least 1920 by 1080
@@ -56,6 +80,6 @@ Cloud Billing.
 ## Remaining human gate
 
 This is a private cut, not publication authorization. Oana still needs to watch
-it with sound and complete REL-011's frame-by-frame privacy and intellectual-
-property review. Any requested edit must be rerendered and reverified before a
-public upload.
+both versions with sound, choose the soundtrack treatment, and complete
+REL-011's frame-by-frame privacy and intellectual-property review. Any requested
+edit must be rerendered and reverified before a public upload.
