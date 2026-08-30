@@ -410,8 +410,9 @@ const ClosingScene = ({scene}: {scene: Scene}) => {
           <div style={{color: palette.cream, fontSize: 88, lineHeight: 1, fontWeight: 880, maxWidth: 1420}}>{scene.title}</div>
           <div style={{color: palette.mist, fontSize: 31, lineHeight: 1.4, marginTop: 36, maxWidth: 1300}}>{scene.caption}</div>
         </div>
-        <div style={{display: "flex", justifyContent: "space-between", alignItems: "flex-end", color: "rgba(255,253,247,.68)", fontSize: 18}}>
+        <div style={{display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 40, color: "rgba(255,253,247,.68)", fontSize: 18}}>
           <div>Created for Google's 2026 All Things Agentic Hackathon</div>
+          <div style={{textAlign: "center"}}>FoodLog does not diagnose conditions or establish causality.</div>
           <div style={{textAlign: "right"}}>Narration uses an AI-generated OpenAI voice.</div>
         </div>
       </div>
