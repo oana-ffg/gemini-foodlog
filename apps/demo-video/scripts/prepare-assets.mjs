@@ -13,10 +13,8 @@ const generatedRoot = path.join(videoRoot, "public", "generated");
 const screenshotTarget = path.join(generatedRoot, "screenshots");
 const brandTarget = path.join(generatedRoot, "brand");
 const videoTarget = path.join(generatedRoot, "video");
-const musicTarget = path.join(generatedRoot, "music");
 const privateShots = path.join(repositoryRoot, "artifacts", "demo-video", "private-shots");
 const optionalVideoRoot = path.join(repositoryRoot, "artifacts", "demo-video", "veo");
-const optionalMusic = path.join(repositoryRoot, "artifacts", "demo-video", "lyria", "foodlog-score.mp3");
 
 const screenshots = [
   "01_timeline.png",
@@ -55,7 +53,6 @@ const dimensions = async (filePath) => {
 await mkdir(screenshotTarget, {recursive: true});
 await mkdir(brandTarget, {recursive: true});
 await mkdir(videoTarget, {recursive: true});
-await mkdir(musicTarget, {recursive: true});
 
 for (const name of screenshots) {
   const source = path.join(privateShots, name);
@@ -85,13 +82,5 @@ for (const name of ["intro-cooking.mp4", "intro-chaos.mp4"]) {
   }
 }
 
-const scoreTarget = path.join(musicTarget, "foodlog-score.mp3");
-if (await exists(optionalMusic)) {
-  await copyFile(optionalMusic, scoreTarget);
-} else {
-  await rm(scoreTarget, {force: true});
-}
-
 console.log(`Prepared ${screenshots.length} reviewed production screenshots and the canonical brand mark.`);
 console.log(`Optional Veo clips: ${optionalVideoRoot}`);
-console.log(`Optional Lyria score: ${optionalMusic}`);

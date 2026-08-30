@@ -16,10 +16,13 @@ change without regenerating the rest.
 4. Run `npm run demo:studio` for the interactive editor or
    `npm run demo:render` for the private MP4.
 
-The optional Lyria score lives at
-`artifacts/demo-video/lyria/foodlog-score.mp3`. Its exact prompt and bounded
-generation contract are in `lyria-score.md`. If absent, Remotion renders the
-narrated film without music; narration never needs regeneration.
+Remotion always renders a narration-first master. Approved Lyria experiments
+live under `artifacts/demo-video/lyria/experiments/`; their exact prompts live
+under `scripts/lyria-prompts/`. Generate one named variant with
+`generate_lyria.py --variant NAME`, then use `mix_lyria_variant.py --variant
+NAME` to create a comparison without rerendering or regenerating narration. The
+mixer keeps music low, removes competing vocal frequencies, ducks it while the
+narrator speaks, and masters the combined audio consistently.
 
 The final end card clearly discloses that the narrator is an AI-generated
 Gemini voice.

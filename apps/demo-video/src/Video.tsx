@@ -27,10 +27,6 @@ type NarrationEntries = Record<string, NarrationEntry>;
 
 const transitionFrames = 18;
 const narrationTailSeconds = 1.4;
-const scoreFile = "generated/music/foodlog-score.mp3";
-const scoreDurationSeconds = 179.774625;
-const scoreVolume = 0.08;
-
 export const sceneDurationInFrames = (
   scene: Scene,
   entries: NarrationEntries,
@@ -446,22 +442,9 @@ const renderScene = (scene: Scene) => {
 
 export const FoodLogDemo = () => {
   const entries = ttsManifest.entries as NarrationEntries;
-  const staticFiles = new Set(getStaticFiles().map((file) => file.name));
-  const hasScore = staticFiles.has(scoreFile);
   let offset = 0;
   return (
     <AbsoluteFill style={{background: palette.forest}}>
-      {hasScore ? (
-        <Audio
-          src={staticFile(scoreFile)}
-          volume={(frame) => interpolate(
-            frame,
-            [0, content.fps * 2, content.fps * (scoreDurationSeconds - 6), content.fps * scoreDurationSeconds],
-            [0, scoreVolume, scoreVolume, 0],
-            {extrapolateLeft: "clamp", extrapolateRight: "clamp"},
-          )}
-        />
-      ) : null}
       {content.scenes.map((scene) => {
         const duration = sceneDurationInFrames(scene, entries, content.fps);
         const from = offset;
