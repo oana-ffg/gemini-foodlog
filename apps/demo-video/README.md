@@ -16,6 +16,11 @@ change without regenerating the rest.
 4. Run `npm run demo:studio` for the interactive editor or
    `npm run demo:render` for the private MP4.
 
+The optional Lyria score lives at
+`artifacts/demo-video/lyria/foodlog-score.mp3`. Its exact prompt and bounded
+generation contract are in `lyria-score.md`. If absent, Remotion renders the
+narrated film without music; narration never needs regeneration.
+
 The final end card clearly discloses that the narrator is an AI-generated
 Gemini voice.
 
