@@ -28,6 +28,7 @@ import {
 import MealFeedbackControls, { CorrectionSummary } from "./MealFeedbackControls";
 import PatternQuestionCard from "./PatternQuestionCard";
 import { SessionControls, useAuth } from "./auth";
+import BrandLockup from "./BrandLockup";
 import { CapacityWaitlist, LaunchMailConsentControls } from "./ConsentControls";
 import {
   clearSignupLaunchMailIntent,
@@ -282,7 +283,10 @@ function App() {
     <main className="app-shell">
       <header className="hero">
         <SessionControls />
-        <p className="eyebrow">All Things Agentic Hackathon 2026</p>
+        <div className="hero__brand">
+          <BrandLockup />
+          <p className="eyebrow">All Things Agentic Hackathon 2026</p>
+        </div>
         <h1>Your food journal,<br />without the diary ritual.</h1>
         <p className="hero__copy">
           Gemini FoodLog watches ordinary kitchen activity, explains what it

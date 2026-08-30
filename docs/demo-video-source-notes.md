@@ -24,22 +24,17 @@ The video deliberately says “spot patterns,” not “identify the cause,” a
 end card states that FoodLog does not diagnose conditions or establish
 causality.
 
-## OpenAI narration
+## Gemini narration
 
-- [OpenAI text-to-speech guide](https://developers.openai.com/api/docs/guides/text-to-speech)
-  identifies `gpt-4o-mini-tts` as its newest reliable speech model, supports
-  instructions for emotional range, intonation, speed, and tone, and recommends
-  `marin` or `cedar` for best quality.
-- The same guide requires clear disclosure that the listener is hearing an
-  AI-generated rather than human voice. The FoodLog end card includes this
-  disclosure.
-- The project pins snapshot `gpt-4o-mini-tts-2025-12-15`, uses the `marin` voice,
-  and stores each scene separately under a content hash so unchanged narration
-  is reused.
-
-The ChatGPT subscription does not fund API requests. The existing gopass key is
-currently valid but its organization returned `credit_balance_exhausted`; no
-audio was generated and no TTS cost was incurred by that failed request.
+- [Gemini text-to-speech guidance](https://ai.google.dev/gemini-api/docs/speech-generation)
+  documents steerable tone, pace, style, single-speaker voices, and the
+  `gemini-3.1-flash-tts-preview` model used here.
+- [Official Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing)
+  lists standard paid-tier pricing at USD 1 per million input text tokens and
+  USD 20 per million output audio tokens, with 25 audio tokens per second.
+- The project uses the warm `Sulafat` voice through Vertex AI and stores each
+  scene separately under a content hash so unchanged narration is reused.
+- The FoodLog end card discloses that the narration is AI-generated.
 
 ## Remotion
 

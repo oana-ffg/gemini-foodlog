@@ -24,6 +24,14 @@ only that unsupported option and retained the same DKK 2 ceiling and disabled
 retries. It produced eight generated seconds at a gross list-price cost of **DKK
 1.540800**. This does not authorize the full Veo scenario set.
 
+### Final-video Veo authorization
+
+On 30 August 2026, Oana authorized the two exact final-video shots documented
+in `apps/demo-video/veo-scenes.md`: one eight-second Veo 3.1 Lite 720p,
+video-only generation for each shot, with SDK retries disabled and a gross
+list-price ceiling of **DKK 3.081600** total. Each shot gets only one attempt;
+any retry requires new exact approval.
+
 Operational rules:
 
 - Record the measured incremental cost and new cumulative total after every

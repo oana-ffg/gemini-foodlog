@@ -25,6 +25,7 @@ import {
   minimumPasswordLength,
 } from "./passwordPolicy";
 import PrototypeDataNotice from "./PrototypeDataNotice";
+import BrandLockup from "./BrandLockup";
 import { saveSignupLaunchMailIntent } from "./signupIntent";
 
 interface AuthContextValue {
@@ -185,7 +186,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   return (
     <main className="auth-shell">
       <section className="auth-card" aria-labelledby="auth-title">
-        <p className="eyebrow">Gemini FoodLog</p>
+        <BrandLockup compact />
         <h1 id="auth-title">{mode === "sign-in" ? "Welcome back." : "Create your account."}</h1>
         <p>Your kitchen images and journal stay private to your account.</p>
         <form onSubmit={submit} className="auth-form">

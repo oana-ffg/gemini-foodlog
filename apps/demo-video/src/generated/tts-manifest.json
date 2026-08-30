@@ -1,6 +1,6 @@
 {
   "generatedAt": null,
-  "model": "gpt-4o-mini-tts-2025-12-15",
-  "voice": "marin",
+  "model": "gemini-3.1-flash-tts-preview",
+  "voice": "Sulafat",
   "entries": {}
 }

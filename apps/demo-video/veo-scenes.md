@@ -48,7 +48,10 @@ the final frustrated phone slam; the beat reads as relatable exasperation, not
 violence, injury, or a migraine diagnosis; the phone screen contains no legible
 content.
 
-## Approved generation shape (pending explicit yes)
+## Approved generation shape
+
+Oana explicitly approved both exact generations on 30 August 2026 with the
+total kept below DKK 4.
 
 - Vertex AI model: `veo-3.1-lite-generate-001` in `us-central1`
 - two clips, one generated video per request

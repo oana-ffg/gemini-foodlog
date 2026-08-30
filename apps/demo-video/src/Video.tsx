@@ -413,7 +413,7 @@ const ClosingScene = ({scene}: {scene: Scene}) => {
         <div style={{display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 40, color: "rgba(255,253,247,.68)", fontSize: 18}}>
           <div>Created for Google's 2026 All Things Agentic Hackathon</div>
           <div style={{textAlign: "center"}}>FoodLog does not diagnose conditions or establish causality.</div>
-          <div style={{textAlign: "right"}}>Narration uses an AI-generated OpenAI voice.</div>
+          <div style={{textAlign: "right"}}>Narration uses an AI-generated Gemini voice.</div>
         </div>
       </div>
       <Grain />

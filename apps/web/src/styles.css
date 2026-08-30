@@ -27,6 +27,18 @@ button { font: inherit; }
 
 .auth-card h1 { font-size: clamp(2.5rem, 8vw, 4rem); }
 .auth-card > p:not(.eyebrow) { color: #555d57; line-height: 1.6; }
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  color: #1f2521;
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+}
+.brand-lockup img { width: 54px; height: 54px; }
+.brand-lockup--compact { margin-bottom: 24px; }
+.brand-lockup--compact img { width: 46px; height: 46px; }
 .auth-form, .reauth-form { display: grid; gap: 16px; margin: 28px 0 18px; }
 .verification-actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 28px 0 18px; }
 .auth-form label, .reauth-form label { display: grid; gap: 8px; font-size: 0.88rem; font-weight: 700; }
@@ -98,7 +110,9 @@ button { font: inherit; }
   text-transform: uppercase;
 }
 
-.hero .eyebrow, .hero h1 { grid-column: 1; }
+.hero__brand, .hero h1 { grid-column: 1; }
+.hero__brand { display: grid; gap: 20px; justify-items: start; }
+.hero__brand .eyebrow { margin: 0; }
 h1, h2, h3 { font-family: inherit; }
 h1 {
   margin: 0;

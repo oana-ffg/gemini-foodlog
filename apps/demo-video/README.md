@@ -11,13 +11,13 @@ change without regenerating the rest.
    privacy-reviewed production screenshots and canonical logo into the ignored
    Remotion public directory. If approved Veo clips exist, it copies those too.
 3. Run `npm run demo:tts`. The script hashes each scene's model, voice, text, and
-   direction, then regenerates only changed narration. It reads
-   `openai/api-key` directly from gopass and never writes the key to disk or logs.
+   direction, then regenerates only changed narration. It uses ambient Google
+   credentials with Vertex AI; no API key is stored in the project.
 4. Run `npm run demo:studio` for the interactive editor or
    `npm run demo:render` for the private MP4.
 
-OpenAI's current speech guidance requires disclosure that the narrator is an
-AI-generated voice. The final end card includes that disclosure.
+The final end card clearly discloses that the narrator is an AI-generated
+Gemini voice.
 
 ## Private assets
 
