@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="foodlog-mark-title">
+  <title id="foodlog-mark-title">Gemini FoodLog camera aperture and bowl mark</title>
+  <defs>
+    <mask id="aperture-cutouts">
+      <rect width="512" height="512" fill="white" />
+      <circle cx="256" cy="256" r="126" fill="black" />
+      <g stroke="black" stroke-width="18" stroke-linecap="round">
+        <path d="M256 34v96" />
+        <path d="m448 145-83 48" />
+        <path d="m448 367-83-48" />
+        <path d="M256 478v-96" />
+        <path d="m64 367 83-48" />
+        <path d="m64 145 83 48" />
+      </g>
+    </mask>
+  </defs>
+  <circle cx="256" cy="256" r="224" fill="#163f31" mask="url(#aperture-cutouts)" />
+  <path d="M379 69a224 224 0 0 1 89 101l-114 46a112 112 0 0 0-45-51z" fill="#f05a35" />
+  <circle cx="256" cy="256" r="112" fill="#fffdf7" />
+  <path d="M166 270h180c-4 74-40 112-90 112s-86-38-90-112z" fill="#163f31" />
+  <ellipse cx="256" cy="270" rx="90" ry="30" fill="#f05a35" />
+  <path d="M316 164 288 225" fill="none" stroke="#f05a35" stroke-width="20" stroke-linecap="round" />
+</svg>

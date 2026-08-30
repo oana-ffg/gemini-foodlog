@@ -3,10 +3,16 @@
   "private": true,
   "license": "Apache-2.0",
   "workspaces": [
-    "apps/web"
+    "apps/web",
+    "apps/demo-video"
   ],
   "scripts": {
     "build": "npm run build --workspace @foodlog/web",
+    "demo:assets": "npm run assets --workspace @foodlog/demo-video",
+    "demo:render": "npm run render --workspace @foodlog/demo-video",
+    "demo:studio": "npm run studio --workspace @foodlog/demo-video",
+    "demo:tts": "npm run tts --workspace @foodlog/demo-video",
+    "demo:typecheck": "npm run typecheck --workspace @foodlog/demo-video",
     "deploy:indexes": "npx --yes firebase-tools@15.28.1 deploy --only firestore:indexes --project gemini-foodlog-2026",
     "deploy:rules": "npx --yes firebase-tools@15.28.1 deploy --only firestore:rules --project gemini-foodlog-2026",
     "deploy:web": "npm run build && npx --yes firebase-tools@15.28.1 deploy --only hosting --project gemini-foodlog-2026",

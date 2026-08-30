@@ -1,0 +1,119 @@
+{
+  "title": "Gemini FoodLog — a food journal without the performance",
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "scenes": [
+    {
+      "id": "health-patterns",
+      "kind": "cinematic",
+      "eyebrow": "WHY THIS MATTERS",
+      "title": "Patterns are hard to see when the record is incomplete.",
+      "caption": "Food + symptoms, over time",
+      "narration": "A food and symptom journal can help people spot patterns around migraine, eczema, and other symptoms.",
+      "voiceDirection": "Warm and sincere. Begin quietly, with grounded empathy. Do not sound clinical, dramatic, or like an advertisement.",
+      "minimumSeconds": 8,
+      "video": "generated/video/intro-cooking.mp4",
+      "fallbackImage": "generated/screenshots/01_timeline.png"
+    },
+    {
+      "id": "daily-friction",
+      "kind": "cinematic",
+      "eyebrow": "THE PROBLEM",
+      "title": "Life does not pause for data entry.",
+      "caption": "Write down every meal? Mission impossible.",
+      "narration": "But when life is already chaotic, stopping to write down every meal? Mission impossible.",
+      "voiceDirection": "Relatable and lightly exasperated. Let the question breathe, then deliver 'Mission impossible' with dry, affectionate humor rather than melodrama.",
+      "minimumSeconds": 8,
+      "video": "generated/video/intro-chaos.mp4",
+      "fallbackImage": "generated/screenshots/02_ambiguous_detail.png"
+    },
+    {
+      "id": "logo-reveal",
+      "kind": "logo",
+      "eyebrow": "GEMINI FOODLOG",
+      "title": "What if the journal wrote itself?",
+      "caption": "Any cheap camera. Ordinary habits. A useful record.",
+      "narration": "What if AI could use any cheap camera you have around to do it for you?",
+      "voiceDirection": "Shift from frustration to curious possibility. Intimate, hopeful, and genuinely excited, with a soft upward lift on the question.",
+      "minimumSeconds": 9
+    },
+    {
+      "id": "agentic-pipeline",
+      "kind": "architecture",
+      "eyebrow": "A REAL AGENTIC PIPELINE",
+      "title": "Observation first. Context second. Reasoning you can inspect.",
+      "caption": "Cloud Run · Pub/Sub · Google ADK · Gemini 3.6 Flash · Firestore · private Storage",
+      "narration": "A phone, webcam, or physical camera sends ordinary kitchen images through one authenticated Cloud Run API. A Google ADK agent first describes only what it can see. Then Gemini can retrieve this household's relevant notes, purchases, prior events, and feedback before making a bounded, auditable deduction.",
+      "voiceDirection": "Confident and clear, slightly quicker than the opening. Explain the architecture like a thoughtful engineer, not a hype narrator. Emphasize 'first' and 'then'.",
+      "minimumSeconds": 23
+    },
+    {
+      "id": "useful-uncertainty",
+      "kind": "screenshot",
+      "eyebrow": "THE REAL HOSTED APP",
+      "title": "A best guess — without pretending certainty",
+      "caption": "Literal observations, alternatives, context used, and why the guess was made",
+      "narration": "Here, a poor angle barely reveals meat beside the sink and air-fryer basket. FoodLog keeps a concrete tentative guess, shows the literal visual evidence, the alternatives, and the exact household context it used. When the distinction matters, it asks one focused question instead of asking the user to classify the whole scene.",
+      "voiceDirection": "Engaged, precise, and reassuring. Slow down slightly on the evidence list. Stress that uncertainty is useful, not a failure.",
+      "minimumSeconds": 28,
+      "image": "generated/screenshots/02_ambiguous_detail.png"
+    },
+    {
+      "id": "correction-learning",
+      "kind": "split-screenshot",
+      "eyebrow": "FEEDBACK THAT ACTUALLY TEACHES",
+      "title": "Corrections append history. Learning stays scoped.",
+      "caption": "Original inference → correction → versioned household knowledge",
+      "narration": "If the guess is wrong, the correction never erases what happened. FoodLog preserves the original reasoning, appends the answer, and can propose a narrowly scoped household learning with provenance. Temporary context stays temporary. Repeated evidence can strengthen a belief, and later contradictions remain visible.",
+      "voiceDirection": "Warm, trustworthy, and deliberate. Make 'never erases' and 'remain visible' feel important. Avoid sounding defensive.",
+      "minimumSeconds": 27,
+      "image": "generated/screenshots/03_correction_history.png",
+      "secondaryImage": "generated/screenshots/04_knowledge.png"
+    },
+    {
+      "id": "negative-control",
+      "kind": "screenshot",
+      "eyebrow": "NOT EVERYTHING IS DINNER",
+      "title": "The cat is a feature test.",
+      "caption": "Discard as not cooking — without deleting the evidence",
+      "narration": "And not every kitchen motion is cooking. This cat is a deliberate negative control. The event can leave the food timeline while its image, rationale, and revision history stay available.",
+      "voiceDirection": "Give the cat line a small smile. Stay crisp and factual after it; this is a clever product detail, not a comedy sketch.",
+      "minimumSeconds": 17,
+      "image": "generated/screenshots/05_cat_discarded.png"
+    },
+    {
+      "id": "longitudinal-patterns",
+      "kind": "screenshot",
+      "eyebrow": "LEARNING OVER TIME",
+      "title": "Patterns surface as hypotheses, not facts.",
+      "caption": "Evidence, counterexamples, uncertainty, confirm or correct",
+      "narration": "Across dated history, the agent can surface a pattern worth checking: perhaps steak often appears on Thursdays, or weekday breakfasts differ from weekends. It shows supporting examples, counterexamples, and uncertainty, then lets the user confirm or correct the hypothesis without losing exceptions.",
+      "voiceDirection": "Curious and observant, with gentle momentum. The examples should feel human and concrete. Land firmly on 'without losing exceptions'.",
+      "minimumSeconds": 23,
+      "image": "generated/screenshots/06_patterns.png"
+    },
+    {
+      "id": "cloud-proof",
+      "kind": "screenshot",
+      "eyebrow": "BUILT FOR THE ALL THINGS AGENTIC HACKATHON",
+      "title": "It is running on Google Cloud — not mocked for the video.",
+      "caption": "Tenant isolation · private images · spend ceilings · immutable model traces",
+      "narration": "This is the deployed release on Google Cloud: Cloud Run, Pub Sub, Firestore, private Storage, Google ADK, and Gemini 3.6 Flash on Vertex AI. Accounts are isolated, images remain private, model spend is bounded before every call, and immutable traces keep the agent's work auditable.",
+      "voiceDirection": "Proud but restrained. This is proof, not a victory speech. Give each system name clean diction and finish with calm confidence.",
+      "minimumSeconds": 23,
+      "image": "generated/screenshots/07_cloud_proof.png"
+    },
+    {
+      "id": "closing",
+      "kind": "closing",
+      "eyebrow": "GEMINI FOODLOG",
+      "title": "Useful uncertainty. Less human effort.",
+      "caption": "A food record that learns the household — without asking life to slow down.",
+      "narration": "The goal is not certainty theatre. It is a useful food record with less human effort, clear provenance, and fewer repeated questions as FoodLog learns the household.",
+      "voiceDirection": "Heartfelt, calm, and quietly optimistic. Slow down. Let the final phrase resolve naturally, with no salesy call to action.",
+      "minimumSeconds": 14,
+      "image": "generated/screenshots/01_timeline.png"
+    }
+  ]
+}

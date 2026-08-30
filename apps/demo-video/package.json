@@ -1,0 +1,27 @@
+{
+  "name": "@foodlog/demo-video",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "assets": "node scripts/prepare-assets.mjs",
+    "render": "remotion render src/index.ts FoodLogDemo ../../artifacts/demo-video/foodlog-demo-remotion.mp4",
+    "studio": "remotion studio src/index.ts",
+    "tts": "node scripts/generate-tts.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/media": "4.0.518",
+    "@remotion/transitions": "4.0.518",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "remotion": "4.0.518"
+  },
+  "devDependencies": {
+    "@remotion/cli": "4.0.518",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "typescript": "7.0.2"
+  }
+}

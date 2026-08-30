@@ -30,3 +30,4 @@ terraform.tfvars
 .foodlog/
 coverage/
 artifacts/demo-video/
+apps/demo-video/public/generated/
