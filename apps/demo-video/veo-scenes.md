@@ -6,8 +6,9 @@ generation cost. Generate video only: no dialogue, music, or sound effects.
 
 ## `intro-cooking.mp4`
 
-**Purpose:** Support the opening line about food-and-symptom journals without
-making the person stage ingredients or photograph a plate.
+**Purpose:** Support the opening line about the value of a detailed food record
+without implying that the MVP collects symptoms, or making the person stage
+ingredients or photograph a plate.
 
 **Prompt:**
 

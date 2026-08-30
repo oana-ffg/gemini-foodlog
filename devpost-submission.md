@@ -201,7 +201,8 @@ reasoning as a product claim.
   The official requirements make a hosted URL optional but strongly encouraged
   and accept the public demo plus repository as deployment proof if the app is
   offline during judging.
-- The product supports exploratory food/symptom journaling; it is not a medical
+- The MVP records food, not symptoms. Its longitudinal food record can support
+  later comparison with symptom information kept elsewhere; it is not a medical
   device and does not make diagnostic or causal claims.
 
 ## Testing Instructions

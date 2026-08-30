@@ -8,8 +8,8 @@ not diagnose a condition or establish that a food caused a symptom.
 
 The narration says:
 
-> A food and symptom journal can help people spot patterns around migraine,
-> eczema, and other symptoms.
+> Keeping a detailed food journal can help people look for possible links
+> between what they eat and symptoms such as migraines or eczema.
 
 Supporting sources:
 
@@ -20,9 +20,10 @@ Supporting sources:
   professional or dietitian, when investigating whether foods may worsen eczema
   symptoms.
 
-The video deliberately says “spot patterns,” not “identify the cause,” and the
+The video deliberately says “possible links,” not “identify the cause,” and the
 end card states that FoodLog does not diagnose conditions or establish
-causality.
+causality. The narration describes the value of the food record; the hackathon
+MVP does not collect symptoms or perform food-and-symptom association analysis.
 
 ## Gemini narration
 
@@ -35,10 +36,12 @@ causality.
 - The project uses the warm `Sulafat` voice through Vertex AI and stores each
   scene separately under a content hash so unchanged narration is reused.
 - The FoodLog end card discloses that the narration is AI-generated.
-- The ten final scene files total 174.880 seconds, 1,875 input tokens, and
-  4,372 output audio tokens. Their gross list price is DKK 0.573402 at the
-  recorded USD/DKK rate of 6.42; promotional-credit settlement remains pending
-  the Cloud Billing export.
+- After the opening-line correction, the ten selected scene files total 176.840
+  seconds, 1,917 input tokens, and 4,421 output audio tokens. Their selected-file
+  gross list price is DKK 0.579964 at the recorded USD/DKK rate of 6.42. The
+  superseded opening file was also billed; the complete request spend remains
+  in `docs/testing-spend-ledger.md`. Promotional-credit settlement remains
+  pending the Cloud Billing export.
 
 ## Veo opening shots
 

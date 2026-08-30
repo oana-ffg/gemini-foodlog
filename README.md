@@ -20,7 +20,7 @@ A fixed microcontroller camera observes the stove or counter through periodic im
 
 It can ground its evolving hypothesis using authorized context such as recent grocery or recipe emails, earlier meals, known household patterns, and previous corrections. When an ambiguity materially affects the journal, it asks a focused question. The answer improves the current record and the household-specific knowledge used next time.
 
-The output is a structured food timeline with evidence, uncertainty, and corrections intact. A person can separately record symptoms, allowing the system to surface cautious possible associations without pretending to diagnose a condition or prove causality.
+The output is a structured food timeline with evidence, uncertainty, and corrections intact. The hackathon MVP does not collect symptoms or analyze food-and-symptom associations. Its food record can later be compared carefully with symptom information recorded elsewhere, without pretending to diagnose a condition or prove causality.
 
 ```text
 ordinary kitchen activity
@@ -38,10 +38,10 @@ evolving food-event hypothesis <--- authorized household context
 uncertainty-aware food journal
           |
           v
-cautious exploration of possible symptom patterns
+future comparison with separately kept symptom information
 ```
 
-Calories and macronutrients may eventually be estimated from the same evidence, but they are secondary. The main product is a low-effort food-and-symptom journal.
+Calories and macronutrients may eventually be estimated from the same evidence, but they are secondary. The main product is a low-effort food journal for later symptom investigation.
 
 ## What makes this agentic
 
@@ -56,7 +56,7 @@ The intended system must therefore:
 - manage uncertainty and decide when a question is worth asking;
 - learn household-specific patterns from corrections;
 - persist a useful journal as an actual product action;
-- compare later symptoms with the longitudinal record carefully.
+- preserve a longitudinal record that can later be compared carefully with symptom information kept elsewhere.
 
 That is a continuous observation, memory, decision, and action loop—not a chat interface wrapped around image recognition.
 
@@ -67,7 +67,7 @@ That is a continuous observation, memory, decision, and action loop—not a chat
 - **Learning must pay rent:** repeated household patterns should require fewer repeated questions.
 - **Evidence over certainty theater:** preserve provenance, confidence, ambiguity, and corrections.
 - **Health humility:** identify possible associations, never diagnoses or causal claims.
-- **Privacy by design:** minimize collection and retention of household imagery, emails, and health data.
+- **Privacy by design:** minimize collection and retention of household imagery and emails; health data is outside the MVP boundary.
 - **Measurable usefulness:** evaluate both reconstruction quality and the human effort required to obtain it.
 
 ## Hackathon fit

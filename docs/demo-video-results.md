@@ -61,6 +61,23 @@ for musical fit, narration intelligibility, and confirmation that the generated
 audio contains no unwanted vocal-like content. The music-free original remains
 untouched so the comparison is reversible.
 
+## Pending opening-narration correction
+
+Human review found that the original opening voice inserted a confusing prosodic
+break after “around.” The selected source now accurately says that a detailed
+food journal can help someone look for possible links between food and symptoms;
+it no longer calls the MVP a food-and-symptom journal. One replacement
+`health-patterns` file was generated with explicit continuous-flow direction:
+
+- duration: 9.32 seconds
+- format: 24 kHz mono PCM WAV
+- SHA-256: `4000fec9dbf7e7a6b5c3edb1009d43d84573422463436379d0805a37d924ab1d`
+- internal detected gaps: 0.1245 and 0.163 seconds
+
+This isolated replacement needs Oana's listening approval before the full film
+is rerendered. The currently verified MP4 files still contain the superseded
+opening narration; their evidence above therefore remains accurate.
+
 ## Automated verification
 
 - all seven source captures are at least 1920 by 1080

@@ -1,15 +1,15 @@
 {
-  "generatedAt": "2026-08-30T18:40:10.300157+00:00",
+  "generatedAt": "2026-08-30T19:43:35.546566+00:00",
   "model": "gemini-3.1-flash-tts-preview",
   "voice": "Sulafat",
   "entries": {
     "health-patterns": {
-      "hash": "c4242693779608699cc5769c6185db55a3bbced3c951ff599a52464ac7938ee7",
-      "file": "generated/tts/health-patterns-c42426937796.wav",
-      "durationSeconds": 7.36,
-      "characters": 101,
-      "inputTokens": 162,
-      "outputTokens": 184
+      "hash": "4b890d6b7622f394dbcebd0b088fd2d5e82ca2d3169676fa42465bb1580fa363",
+      "file": "generated/tts/health-patterns-4b890d6b7622.wav",
+      "durationSeconds": 9.32,
+      "characters": 135,
+      "inputTokens": 204,
+      "outputTokens": 233
     },
     "daily-friction": {
       "hash": "769d8b657709862602699ae200b96f17323ece4154959b1fa6a390b1528038e6",

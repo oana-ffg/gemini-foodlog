@@ -51,3 +51,7 @@ into the Remotion public directory by `npm run demo:assets`.
 - SHA-256: `8706bec04894d72a4b7ff07d0679bc826086c18fccf92cf4990debdd064313a9`
 - private path: `artifacts/demo-video/lyria/foodlog-score.mp3`
 - request count: one successful request; no retry
+- human disposition: not accepted for the final cut; the first listening pass
+  found the composition weird. The section-by-section instrumentation and mood
+  changes are the leading explanation, so any future attempt should begin from
+  a substantially simpler brief rather than iterating on this prompt.

@@ -9,9 +9,9 @@
       "kind": "cinematic",
       "eyebrow": "WHY THIS MATTERS",
       "title": "Patterns are hard to see when the record is incomplete.",
-      "caption": "Food + symptoms, over time",
-      "narration": "A food and symptom journal can help people spot patterns around migraine, eczema, and other symptoms.",
-      "voiceDirection": "Warm and sincere. Begin quietly, with grounded empathy. Do not sound clinical, dramatic, or like an advertisement.",
+      "caption": "Food evidence, over time",
+      "narration": "Keeping a detailed food journal can help people look for possible links between what they eat and symptoms such as migraines or eczema.",
+      "voiceDirection": "Warm and sincere. Begin quietly, with grounded empathy. Read the sentence with a gentle, continuous flow: do not insert a pause after 'links', 'eat', or 'symptoms'. Give 'migraines or eczema' equal weight. Do not sound clinical, dramatic, or like an advertisement.",
       "minimumSeconds": 8,
       "video": "generated/video/intro-cooking.mp4",
       "fallbackImage": "generated/screenshots/01_timeline.png"
