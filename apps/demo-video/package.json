@@ -7,6 +7,7 @@
   "scripts": {
     "assets": "node scripts/prepare-assets.mjs",
     "render": "remotion render src/index.ts FoodLogDemo ../../artifacts/demo-video/foodlog-demo-remotion.mp4",
+    "render:corrected": "remotion render src/index.ts FoodLogDemo ../../artifacts/demo-video/foodlog-demo-remotion-corrected.mp4",
     "studio": "remotion studio src/index.ts",
     "tts": "uv run --project ../../services/backend python scripts/generate_tts.py",
     "typecheck": "tsc --noEmit",

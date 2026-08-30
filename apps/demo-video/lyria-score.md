@@ -55,3 +55,20 @@ into the Remotion public directory by `npm run demo:assets`.
   found the composition weird. The section-by-section instrumentation and mood
   changes are the leading explanation, so any future attempt should begin from
   a substantially simpler brief rather than iterating on this prompt.
+
+## Follow-up comparison set
+
+Oana authorized exactly three one-shot follow-up experiments. Their exact
+prompts are source-controlled under `scripts/lyria-prompts/`:
+
+- `uplifting-techno`: one restrained coherent groove, explicitly excluding club
+  dynamics, drops, and sudden loudness changes
+- `ai-product-ad`: polished ambient electronica for a credible AI product ad
+- `human-tech-trailer`: one shared motif across a coherent multi-instrument
+  human-meets-technology arrangement
+
+All three prohibit vocals and prioritize narration. They are compared through
+the same post-render mixer rather than embedded at a fixed level in Remotion.
+The mixer lowers the music, removes competing vocal frequencies, sidechain-
+ducks it under speech, extends it with a crossfade instead of a hard loop, and
+masters every comparison identically.

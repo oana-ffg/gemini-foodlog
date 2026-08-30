@@ -10,6 +10,7 @@
     "build": "npm run build --workspace @foodlog/web",
     "demo:assets": "npm run assets --workspace @foodlog/demo-video",
     "demo:render": "npm run render --workspace @foodlog/demo-video",
+    "demo:render:corrected": "npm run render:corrected --workspace @foodlog/demo-video",
     "demo:studio": "npm run studio --workspace @foodlog/demo-video",
     "demo:tts": "npm run tts --workspace @foodlog/demo-video",
     "demo:typecheck": "npm run typecheck --workspace @foodlog/demo-video",

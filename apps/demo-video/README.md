@@ -24,6 +24,10 @@ NAME` to create a comparison without rerendering or regenerating narration. The
 mixer keeps music low, removes competing vocal frequencies, ducks it while the
 narrator speaks, and masters the combined audio consistently.
 
+For a human-review comparison cycle, `npm run demo:render:corrected` preserves
+the previous verified cut and produces the narration master expected by the
+mixer.
+
 The final end card clearly discloses that the narrator is an AI-generated
 Gemini voice.
 

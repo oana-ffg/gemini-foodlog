@@ -78,6 +78,33 @@ This isolated replacement needs Oana's listening approval before the full film
 is rerendered. The currently verified MP4 files still contain the superseded
 opening narration; their evidence above therefore remains accurate.
 
+## Corrected master and three soundtrack comparisons
+
+The corrected narration-first Remotion master preserves the earlier cut and
+incorporates the revised opening:
+
+- output: `artifacts/demo-video/foodlog-demo-remotion-corrected.mp4`
+- duration: 193.749333 seconds
+- size: 43,210,470 bytes
+- SHA-256: `56a224a3d08f6c12f40725633d06927dbeba35de91881c5ef6b226804f72dcfb`
+
+Three one-request Lyria experiments were mixed from that single master. To
+prevent another loudness-biased comparison, every score receives the same
+six-decibel-lower base level, five-decibel vocal-midrange notch, narration-led
+sidechain ducking, crossfaded duration extension, final ten-second fade, and
+mastering target:
+
+| Variant | Comparison SHA-256 | Bytes | Integrated loudness | True peak |
+| --- | --- | ---: | ---: | ---: |
+| Uplifting techno | `0eded8981420b8739b31add7418a1d89477bb4e5727a904ff6fe4977c73ccd32` | 40,202,786 | -15.1 LUFS | -1.0 dBFS |
+| AI product ad | `75bfacff909e3ef20021497317e58621652a06a36a2a637eadc2f5ffc4aa0a67` | 40,201,409 | -15.1 LUFS | -1.0 dBFS |
+| Human-tech trailer | `7e43601d449390e80e306f2e8e83fcef3538df048d274f8ea7245a4a58c85a61` | 40,205,923 | -15.1 LUFS | -1.1 dBFS |
+
+Each comparison is 193.8 seconds with unchanged H.264 1920-by-1080 30 fps
+video and AAC 48 kHz stereo audio. All three passed duration, stream,
+black-gap, five-second-silence, and independent-hash verification. Human review
+must choose one, request a mix-only adjustment, or reject all three.
+
 ## Automated verification
 
 - all seven source captures are at least 1920 by 1080
