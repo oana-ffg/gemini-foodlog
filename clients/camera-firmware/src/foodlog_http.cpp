@@ -9,7 +9,7 @@ namespace foodlog {
 namespace {
 
 constexpr char kApiHost[] = "foodlog-api-sptvo5nsga-ew.a.run.app";
-constexpr char kFirmwareVersion[] = "foodlog-fnk0085-0.1.0";
+constexpr char kFirmwareVersion[] = "foodlog-fnk0085-0.1.1";
 constexpr char kBoundary[] = "----foodlog-fnk0085-capture-v1";
 constexpr std::uint32_t kHttpTimeoutMilliseconds = 30'000;
 
@@ -97,21 +97,32 @@ std::uint8_t* allocate_payload(const std::size_t length) {
 
 }  // namespace
 
-bool FoodLogHttpClient::check_device_status() {
+DeviceStatusResult FoodLogHttpClient::check_device_status() {
   WiFiClientSecure client;
   HTTPClient http;
   if (!connect_https(client)) {
-    return false;
+    return DeviceStatusResult::kTransportFailure;
   }
   configure_http(http);
   if (!http.begin(client, kApiHost, 443, "/v1/device/status", true)) {
-    return false;
+    return DeviceStatusResult::kTransportFailure;
   }
   http.addHeader("Authorization", "FoodLogCamera " + config_.credential);
   const int status_code = http.GET();
   Serial.printf("DEVICE_STATUS_HTTP code=%d\n", status_code);
   http.end();
-  return status_code == HTTP_CODE_OK;
+  if (status_code == HTTP_CODE_OK) {
+    return DeviceStatusResult::kReady;
+  }
+  if (status_code == HTTP_CODE_UNAUTHORIZED ||
+      status_code == HTTP_CODE_FORBIDDEN) {
+    return DeviceStatusResult::kAuthenticationFailure;
+  }
+  if (status_code <= 0 || status_code == HTTP_CODE_REQUEST_TIMEOUT ||
+      status_code >= 500) {
+    return DeviceStatusResult::kTransportFailure;
+  }
+  return DeviceStatusResult::kPermanentFailure;
 }
 
 bool FoodLogHttpClient::poll_snapshot_request(String& request_id) {

@@ -12,13 +12,14 @@
 
 namespace {
 
-constexpr char kFirmwareVersion[] = "foodlog-fnk0085-0.1.0";
+constexpr char kFirmwareVersion[] = "foodlog-fnk0085-0.1.1";
 constexpr std::uint32_t kSerialBaud = 115200;
 constexpr std::uint32_t kMotionFrameIntervalMilliseconds = 200;
 constexpr std::uint32_t kSnapshotPollIntervalMilliseconds = 2'000;
 constexpr std::uint32_t kWifiRetryIntervalMilliseconds = 10'000;
 constexpr std::uint32_t kStatusRetryIntervalMilliseconds = 30'000;
 constexpr int kRequiredMotionFrames = 2;
+constexpr int kTransportFailuresBeforeWifiReconnect = 2;
 
 // Freenove ESP32-S3 WROOM camera wiring (FNK0085), verified on this board.
 constexpr int kCameraPinPowerDown = -1;
@@ -55,6 +56,7 @@ std::uint64_t last_snapshot_poll_at = 0;
 std::uint64_t last_wifi_retry_at = 0;
 std::uint64_t last_status_retry_at = 0;
 bool status_check_started = false;
+int consecutive_transport_failures = 0;
 String boot_sequence_id;
 
 std::uint64_t uptime_milliseconds() {
@@ -103,7 +105,9 @@ camera_config_t camera_configuration() {
   config.ledc_timer = LEDC_TIMER_0;
   config.ledc_channel = LEDC_CHANNEL_0;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.frame_size = FRAMESIZE_VGA;
+  // JPEG buffers are sized during initialization. Allocate for the largest
+  // snapshot resolution, then downshift the sensor to VGA for motion analysis.
+  config.frame_size = psramFound() ? FRAMESIZE_UXGA : FRAMESIZE_VGA;
   config.jpeg_quality = 12;
   config.fb_count = psramFound() ? 2 : 1;
   config.grab_mode = psramFound() ? CAMERA_GRAB_LATEST
@@ -125,6 +129,8 @@ void begin_wifi() {
   last_wifi_retry_at = uptime_milliseconds();
   api_ready = false;
   time_ready = false;
+  status_check_started = false;
+  consecutive_transport_failures = 0;
 }
 
 void maintain_wifi(const std::uint64_t now) {
@@ -132,12 +138,8 @@ void maintain_wifi(const std::uint64_t now) {
       now - last_wifi_retry_at < kWifiRetryIntervalMilliseconds) {
     return;
   }
-  last_wifi_retry_at = now;
   WiFi.disconnect(false, false);
-  WiFi.begin(device_config.wifi_ssid.c_str(),
-             device_config.wifi_password.c_str());
-  api_ready = false;
-  time_ready = false;
+  begin_wifi();
 }
 
 void maintain_trusted_time_and_api(const std::uint64_t now) {
@@ -167,9 +169,21 @@ void maintain_trusted_time_and_api(const std::uint64_t now) {
   status_check_started = true;
   last_status_retry_at = now;
   foodlog::FoodLogHttpClient client(device_config);
-  api_ready = client.check_device_status();
+  const foodlog::DeviceStatusResult status_result = client.check_device_status();
+  api_ready = status_result == foodlog::DeviceStatusResult::kReady;
+  if (status_result == foodlog::DeviceStatusResult::kTransportFailure) {
+    ++consecutive_transport_failures;
+  } else {
+    consecutive_transport_failures = 0;
+  }
   Serial.printf("API_STATUS status=%s ip=%s\n", api_ready ? "ready" : "failed",
                 WiFi.localIP().toString().c_str());
+  if (consecutive_transport_failures >=
+      kTransportFailuresBeforeWifiReconnect) {
+    Serial.println("WIFI_RECOVERY reason=consecutive_transport_failures");
+    WiFi.disconnect(false, false);
+    begin_wifi();
+  }
 }
 
 void restore_motion_frame_size() {
@@ -323,6 +337,9 @@ void setup() {
   configured = config_store.load(device_config);
   camera_config_t camera_config = camera_configuration();
   camera_ready = esp_camera_init(&camera_config) == ESP_OK;
+  if (camera_ready && psramFound()) {
+    restore_motion_frame_size();
+  }
   boot_sequence_id = make_boot_sequence_id();
   Serial.printf(
       "FOODLOG_CAMERA_READY firmware=%s configured=%s camera=%s psram=%s\n",

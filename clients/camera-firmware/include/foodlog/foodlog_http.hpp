@@ -15,6 +15,13 @@ enum class UploadResult {
   kPermanentFailure,
 };
 
+enum class DeviceStatusResult {
+  kReady,
+  kTransportFailure,
+  kAuthenticationFailure,
+  kPermanentFailure,
+};
+
 struct CaptureMetadata {
   String captured_at;
   String sequence_id;
@@ -31,7 +38,7 @@ class FoodLogHttpClient {
  public:
   explicit FoodLogHttpClient(const DeviceConfig& config) : config_(config) {}
 
-  [[nodiscard]] bool check_device_status();
+  [[nodiscard]] DeviceStatusResult check_device_status();
   [[nodiscard]] bool poll_snapshot_request(String& request_id);
   [[nodiscard]] UploadResult upload_jpeg(const std::uint8_t* jpeg,
                                          std::size_t jpeg_length,
