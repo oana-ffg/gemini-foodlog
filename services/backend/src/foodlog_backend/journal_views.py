@@ -1,9 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from .models import ActivityEvent, CaptureRecord, DurableJob, JobStatus
+from .models import ActivityEvent, CaptureRecord, DurableJob, JobStatus, utc_now
 
 JournalEventState = Literal["processing", "error_processing"]
 
@@ -23,6 +23,7 @@ def journal_event_view(
     captures: list[CaptureRecord],
     *,
     inference_job: DurableJob | None,
+    now: datetime | None = None,
 ) -> JournalEventView:
     if not captures or len(captures) != event.capture_count:
         raise ValueError("Journal event evidence is incomplete")
@@ -31,7 +32,9 @@ def journal_event_view(
     if any(capture.event_id != event.id for capture in captures):
         raise ValueError("Journal event evidence escaped its event scope")
 
-    failed = inference_job is None or inference_job.status in {
+    current_time = now or utc_now()
+    exceeded_processing_window = current_time - event.first_capture_at >= timedelta(days=1)
+    failed = exceeded_processing_window or inference_job is None or inference_job.status in {
         JobStatus.FAILED,
         JobStatus.COMPLETED,
     }
@@ -43,6 +46,11 @@ def journal_event_view(
         capture_ids=[capture.id for capture in captures],
         state="error_processing" if failed else "processing",
         latest_failure_code=(
-            inference_job.last_error_code if inference_job is not None and failed else None
+            "ProcessingDeadlineExceeded"
+            if exceeded_processing_window
+            and (inference_job is None or inference_job.status != JobStatus.FAILED)
+            else inference_job.last_error_code
+            if inference_job is not None and failed
+            else None
         ),
     )
