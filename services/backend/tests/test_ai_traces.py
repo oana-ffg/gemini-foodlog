@@ -310,10 +310,15 @@ def test_trace_audit_accepts_failed_attempt_without_a_tool_round_trip() -> None:
     }
     with pytest.raises(AiTraceIntegrityError, match="error evidence"):
         audit_application_visible_trace({**failed, "error": None})
-    with pytest.raises(AiTraceIntegrityError, match="successful AI trace omitted"):
-        audit_application_visible_trace(
-            {**failed, "usage": {"outcome": "succeeded"}, "error": None}
-        )
+    assert audit_application_visible_trace(
+        {**failed, "usage": {"outcome": "succeeded"}, "error": None}
+    ) == {
+        "event_count": 1,
+        "tool_call_count": 0,
+        "tool_response_count": 0,
+        "binary_reference_count": 0,
+        "redaction_verified": True,
+    }
 
 
 def test_trace_integrity_and_repair_lineage_fail_closed() -> None:

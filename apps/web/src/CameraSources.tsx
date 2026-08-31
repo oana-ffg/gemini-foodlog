@@ -7,7 +7,6 @@ import {
   requestDeviceSnapshot,
   revokeCamera,
   type Account,
-  type BrowserCamera,
   type Camera,
   type DeviceCameraCredentialIssue,
 } from "./api";
@@ -15,7 +14,6 @@ import {
 interface CameraSourcesProps {
   account: Account | undefined;
   currentBrowserCameraId: string | undefined;
-  onRegisterBrowser: (name: string) => Promise<BrowserCamera>;
   onCurrentBrowserRevoked: () => void;
 }
 
@@ -38,11 +36,9 @@ function deviceConfiguration(issue: DeviceCameraCredentialIssue) {
 export default function CameraSources({
   account,
   currentBrowserCameraId,
-  onRegisterBrowser,
   onCurrentBrowserRevoked,
 }: CameraSourcesProps) {
   const [cameras, setCameras] = useState<Camera[]>([]);
-  const [browserName, setBrowserName] = useState("");
   const [deviceName, setDeviceName] = useState("");
   const [issued, setIssued] = useState<DeviceCameraCredentialIssue>();
   const [busyAction, setBusyAction] = useState<string>();
@@ -65,24 +61,6 @@ export default function CameraSources({
       snapshotRunRef.current += 1;
     };
   }, [refresh]);
-
-  const registerBrowser = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const name = browserName.trim();
-    if (!name) return;
-    setBusyAction("browser");
-    setMessage("Registering this browser…");
-    try {
-      await onRegisterBrowser(name);
-      setBrowserName("");
-      await refresh();
-      setMessage("This browser is ready for camera capture.");
-    } catch (error: unknown) {
-      setMessage(error instanceof Error ? error.message : "Browser registration failed.");
-    } finally {
-      setBusyAction(undefined);
-    }
-  };
 
   const registerDevice = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -188,22 +166,14 @@ export default function CameraSources({
       </div>
 
       <div className="camera-source-forms">
-        <form onSubmit={registerBrowser}>
+        <div>
           <h3>Use this phone or browser</h3>
-          <label>
-            Source name
-            <input
-              value={browserName}
-              onChange={(event) => setBrowserName(event.target.value)}
-              maxLength={80}
-              required
-              autoComplete="off"
-            />
-          </label>
-          <button type="submit" disabled={busyAction !== undefined || !browserName.trim()}>
-            {busyAction === "browser" ? "Registering…" : "Register this browser"}
-          </button>
-        </form>
+          <p>
+            {currentBrowserCameraId
+              ? "Connected automatically on this browser."
+              : "Connecting this browser automatically…"}
+          </p>
+        </div>
 
         <form onSubmit={registerDevice}>
           <h3>Add a physical camera</h3>

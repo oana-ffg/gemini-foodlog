@@ -23,14 +23,16 @@ describe("camera source management", () => {
           trial_image_limit: 200,
           accepted_image_count: 4,
         }}
-        currentBrowserCameraId={undefined}
-        onRegisterBrowser={vi.fn()}
+        currentBrowserCameraId="browser-camera-1"
         onCurrentBrowserRevoked={vi.fn()}
       />,
     );
 
     expect(html).toContain("Camera sources");
     expect(html).toContain("Use this phone or browser");
+    expect(html).toContain("Connected automatically on this browser.");
+    expect(html.match(/Source name/g)).toHaveLength(1);
+    expect(html).not.toContain("Register this browser");
     expect(html).toContain("Add a physical camera");
     expect(html).toContain("Freenove FNK0085 ESP32-S3 WROOM camera");
     expect(html).toContain("Download the FoodLog camera setup utility");

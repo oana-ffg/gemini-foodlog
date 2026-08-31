@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   createBrowserCamera,
@@ -9,6 +9,7 @@ import {
 } from "./api";
 import { SessionControls, useAuth } from "./auth";
 import {
+  browserCameraDisplayName,
   browserCameraInstanceId,
   replaceBrowserCameraInstanceId,
 } from "./browserCameraIdentity";
@@ -46,7 +47,7 @@ export default function CameraPage() {
   const [running, setRunning] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(
-    "Register this phone or browser before starting its camera.",
+    "Connecting this phone or browser automatically…",
   );
   const wakeLockStatus = useCaptureWakeLock(running);
 
@@ -83,27 +84,37 @@ export default function CameraPage() {
     && !motion.blockedReason
     && !entitlementExhausted;
 
-  useEffect(() => {
-    void provisionAccount()
-      .then(setAccount)
-      .catch((error: unknown) => {
-        setMessage(error instanceof Error ? error.message : "Could not load image entitlement.");
-      });
-    return () => stopStream(streamRef.current);
-  }, [user?.uid]);
-
-  const registerBrowserCamera = async (name: string): Promise<BrowserCamera> => {
-    const currentAccount = await provisionAccount();
-    let nextCamera = await createBrowserCamera(name, cameraInstanceIdRef.current);
-    if (nextCamera.status === "revoked") {
-      cameraInstanceIdRef.current = replaceBrowserCameraInstanceId();
-      nextCamera = await createBrowserCamera(name, cameraInstanceIdRef.current);
+  const connectBrowserCamera = useCallback(async (): Promise<void> => {
+    setBusy(true);
+    setMessage("Connecting this browser securely…");
+    try {
+      const currentAccount = await provisionAccount();
+      const cameraName = browserCameraDisplayName(cameraInstanceIdRef.current);
+      let nextCamera = await createBrowserCamera(
+        cameraName,
+        cameraInstanceIdRef.current,
+      );
+      if (nextCamera.status === "revoked") {
+        cameraInstanceIdRef.current = replaceBrowserCameraInstanceId();
+        nextCamera = await createBrowserCamera(
+          browserCameraDisplayName(cameraInstanceIdRef.current),
+          cameraInstanceIdRef.current,
+        );
+      }
+      setAccount(currentAccount);
+      setCamera(nextCamera);
+      setMessage("This browser is connected. Start the camera when you are ready.");
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : "Could not connect this browser.");
+    } finally {
+      setBusy(false);
     }
-    setAccount(currentAccount);
-    setCamera(nextCamera);
-    setMessage("Camera registered. Start it when it points at the cooking area.");
-    return nextCamera;
-  };
+  }, []);
+
+  useEffect(() => {
+    void connectBrowserCamera();
+    return () => stopStream(streamRef.current);
+  }, [connectBrowserCamera, user?.uid]);
 
   const startCamera = async () => {
     if (entitlementExhausted) {
@@ -178,7 +189,7 @@ export default function CameraPage() {
     pauseCamera();
     setCamera(undefined);
     cameraInstanceIdRef.current = replaceBrowserCameraInstanceId();
-    setMessage("This browser source was revoked. Register it again to create a new credential.");
+    setMessage("This browser source was revoked. Reconnect it when you want to use it again.");
   };
 
   const sendSnapshot = async () => {
@@ -235,7 +246,6 @@ export default function CameraPage() {
       <CameraSources
         account={account}
         currentBrowserCameraId={camera?.id}
-        onRegisterBrowser={registerBrowserCamera}
         onCurrentBrowserRevoked={handleCurrentBrowserRevoked}
       />
 
@@ -301,6 +311,11 @@ export default function CameraPage() {
             </dl>
           ) : null}
           <div className="button-row">
+            {!camera ? (
+              <button type="button" onClick={() => void connectBrowserCamera()} disabled={busy}>
+                {busy ? "Connecting…" : "Reconnect this browser"}
+              </button>
+            ) : null}
             {!running ? (
               <button
                 type="button"

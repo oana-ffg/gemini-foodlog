@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  browserCameraDisplayName,
   browserCameraInstanceId,
   replaceBrowserCameraInstanceId,
 } from "./browserCameraIdentity";
@@ -73,5 +74,12 @@ describe("browserCameraInstanceId", () => {
 
     expect(replacement).not.toBe(original);
     expect(browserCameraInstanceId(storage)).toBe(replacement);
+  });
+
+  it("derives a stable non-blocking label from the opaque browser identity", () => {
+    expect(browserCameraDisplayName(
+      "browser-88888888-8888-4888-8888-123456789abc",
+    )).toBe("Browser camera 56789abc");
+    expect(browserCameraDisplayName("invalid")).toBe("Browser camera");
   });
 });

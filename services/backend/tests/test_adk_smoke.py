@@ -1,10 +1,14 @@
+import asyncio
+from hashlib import sha256
+
 import pytest
 from google.adk.events import Event
 from google.genai import types
 
 from foodlog_agent.event_reasoning import (
     InvalidModelOutputError,
-    _tool_call_names,
+    OrderedModelImage,
+    _load_ordered_model_images,
     _tool_context_source_ids,
     _validated_response,
     application_visible_model_request,
@@ -19,6 +23,8 @@ from foodlog_agent.smoke import (
     smoke_event_bundle,
 )
 from foodlog_backend.inference_schema import ActivityMealInferenceV1, ContextSourceKind
+from foodlog_backend.models import CaptureRecord
+from foodlog_backend.storage import InMemoryObjectStore
 from tests.inference_fixtures import base_payload
 
 
@@ -34,6 +40,13 @@ def test_trace_request_includes_the_application_owned_prompt_tools_and_schema() 
     bundle = smoke_event_bundle()
     request = application_visible_model_request(
         bundle=bundle,
+        ordered_images=[
+            OrderedModelImage(
+                capture_id="adk-smoke-capture-v1",
+                content_type="image/jpeg",
+                content=b"private-smoke-image",
+            )
+        ],
         purpose="deployment_smoke",
         event_revision=7,
     )
@@ -41,15 +54,18 @@ def test_trace_request_includes_the_application_owned_prompt_tools_and_schema() 
     assert request["model"] == "gemini-3.6-flash"
     assert request["system_instruction"] == INSTRUCTION
     assert request["user_content"] == bundle
+    assert request["ordered_images"][0] == {
+        "capture_id": "adk-smoke-capture-v1",
+        "content_type": "image/jpeg",
+        "content": b"private-smoke-image",
+    }
     assert request["tools"] == [
-        "get_current_event_evidence",
         "get_recent_meals",
         "get_recent_purchases",
         "get_active_user_context",
         "get_unresolved_reviews",
         "list_household_knowledge",
         "read_household_knowledge_page",
-        "load_artifacts",
     ]
     assert "title" not in request["response_schema"]
     assert "allowed_actions" not in request["response_schema"]["properties"]
@@ -67,19 +83,18 @@ def test_trace_request_includes_the_application_owned_prompt_tools_and_schema() 
 
 
 def test_prompt_explicitly_couples_questions_to_uncertain_confidence() -> None:
-    assert PROMPT_VERSION == "food-event-v14"
-    assert "Follow this exact bounded tool-turn plan" in INSTRUCTION
-    assert "Never call more than four tools in one turn" in INSTRUCTION
+    normalized_instruction = " ".join(INSTRUCTION.split())
+    assert PROMPT_VERSION == "food-event-v15"
+    assert "attaches the current event's private images directly" in INSTRUCTION
+    assert "Do not call a tool merely to prove that you used tools" in normalized_instruction
+    assert "When the pixels already support a useful answer" in INSTRUCTION
+    assert "Optional account-scoped tools" in INSTRUCTION
     assert "select at most two relevant pages" in INSTRUCTION
-    first_turn = INSTRUCTION.split("On the second tool", 1)[0]
-    assert first_turn.count("get_") == 4
-    assert "call get_current_event_evidence" in INSTRUCTION
-    assert "get_recent_meals" in INSTRUCTION
-    assert "get_recent_purchases" in INSTRUCTION
-    assert "get_active_user_context" in INSTRUCTION
-    assert "get_unresolved_reviews" in INSTRUCTION
-    assert "list_household_knowledge" in INSTRUCTION
-    assert "read_household_knowledge_page" in INSTRUCTION
+    assert "recent meals" in INSTRUCTION
+    assert "recent purchases" in INSTRUCTION
+    assert "active user context" in INSTRUCTION
+    assert "unresolved reviews" in INSTRUCTION
+    assert "household-knowledge index" in INSTRUCTION
     assert "summary is a selection aid, not evidence" in INSTRUCTION
     assert "question field MUST" in INSTRUCTION
     assert 'null when confidence is "likely" or "confident"' in INSTRUCTION
@@ -273,8 +288,13 @@ def test_only_an_explicit_knowledge_page_read_grants_revision_provenance() -> No
         _validate_source_identities(summary_only, bundle, source_ids)
 
 
-def test_direct_answer_without_required_tool_plan_is_rejected() -> None:
+def test_direct_visual_answer_without_optional_context_tools_is_accepted() -> None:
     payload = base_payload()
+    payload["contextual_evidence"] = []
+    payload["assumptions"] = []
+    payload["components"][0]["evidence_ids"] = ["obs_meat", "ded_meat"]
+    payload["deductions"][0]["evidence_ids"] = ["obs_meat"]
+    payload["question"]["evidence_ids"] = ["obs_meat"]
     direct = Event(
         invocation_id="invocation-direct-answer",
         author="food_event_reasoner",
@@ -283,28 +303,58 @@ def test_direct_answer_without_required_tool_plan_is_rejected() -> None:
             parts=[types.Part.from_text(text=ActivityMealInferenceV1(**payload).model_dump_json())],
         ),
     )
-    tool_call = Event(
-        invocation_id="invocation-tool-call",
-        author="food_event_reasoner",
-        content=types.Content(
-            role="model",
-            parts=[
-                types.Part.from_function_call(
-                    name="get_current_event_evidence",
-                    args={},
-                )
-            ],
-        ),
+    inference = _validated_response(
+        final_event=direct,
+        event_id="event-001",
+        capture_ids=["capture-001"],
+        bundle=event_bundle(event_id="event-001", capture_ids=["capture-001"]),
     )
-    assert _tool_call_names(tool_call) == {"get_current_event_evidence"}
-    with pytest.raises(InvalidModelOutputError, match="skipped required tools"):
-        _validated_response(
-            final_event=direct,
-            event_id="event-001",
-            capture_ids=["capture-001"],
-            bundle=event_bundle(event_id="event-001", capture_ids=["capture-001"]),
-            tool_call_names=set(),
-        )
+    assert inference.best_guess == "Air-fried steak"
+
+
+def test_model_images_are_loaded_in_capture_order_and_digest_checked() -> None:
+    async def scenario() -> None:
+        store = InMemoryObjectStore()
+        account_id = "account-images"
+        first = b"first-private-image"
+        second = b"second-private-image"
+        captures = [
+            CaptureRecord(
+                id="capture-1",
+                account_id=account_id,
+                camera_id="camera-1",
+                idempotency_key="image-load-1",
+                content_type="image/jpeg",
+                content_sha256=sha256(first).hexdigest(),
+                object_key=f"accounts/{account_id}/captures/capture-1.jpg",
+                event_id="event-1",
+            ),
+            CaptureRecord(
+                id="capture-2",
+                account_id=account_id,
+                camera_id="camera-1",
+                idempotency_key="image-load-2",
+                content_type="image/png",
+                content_sha256=sha256(second).hexdigest(),
+                object_key=f"accounts/{account_id}/captures/capture-2.png",
+                event_id="event-1",
+            ),
+        ]
+        await store.put(account_id, captures[0].object_key, first, "image/jpeg")
+        await store.put(account_id, captures[1].object_key, second, "image/png")
+
+        images = await _load_ordered_model_images(captures, image_store=store)
+        assert [image.capture_id for image in images] == ["capture-1", "capture-2"]
+        assert [image.content for image in images] == [first, second]
+
+        tampered = captures[1].model_copy(update={"content_sha256": "0" * 64})
+        with pytest.raises(ValueError, match="immutable digest"):
+            await _load_ordered_model_images(
+                [captures[0], tampered],
+                image_store=store,
+            )
+
+    asyncio.run(scenario())
 
 
 def test_final_adk_json_is_revalidated_by_the_product_schema() -> None:

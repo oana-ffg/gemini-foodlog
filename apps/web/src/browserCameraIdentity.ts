@@ -35,3 +35,8 @@ export function replaceBrowserCameraInstanceId(
   }
   return generated;
 }
+
+export function browserCameraDisplayName(instanceId: string): string {
+  if (!INSTANCE_PATTERN.test(instanceId)) return "Browser camera";
+  return `Browser camera ${instanceId.slice(-8)}`;
+}

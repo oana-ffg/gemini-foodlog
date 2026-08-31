@@ -204,10 +204,6 @@ def audit_application_visible_trace(payload: Mapping[str, Any]) -> dict[str, int
     if outcome == "succeeded":
         if not events:
             raise AiTraceIntegrityError("successful AI trace contains no ADK events")
-        if tool_calls < 1 or tool_responses < 1:
-            raise AiTraceIntegrityError(
-                "successful AI trace omitted its tool call or returned context"
-            )
     elif outcome == "failed":
         error = payload.get("error")
         if not isinstance(error, Mapping) or not error.get("code"):
