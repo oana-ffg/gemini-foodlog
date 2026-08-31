@@ -68,8 +68,8 @@ the operational gate rounds that down to DKK 30.
 | Current bounded-cadence estimate | DKK 115 | DKK 10 | DKK 581.65 | **DKK 599** |
 | Same usage at January 2027 Gemini rates | DKK 225 | DKK 10 | DKK 1,086.24 | **DKK 1,099** |
 
-At DKK 199, the current 2026 cost structure yields only about 24% contribution
-margin; at the published January 2027 rates it loses about DKK 62 per household
+At DKK 199, the current 2026 cost structure yields only about 18% contribution
+margin; at the published January 2027 rates it loses about DKK 82 per household
 per month before fixed company costs. Increasing the consumer price cannot rescue
 the proposition plausibly; the event-processing cost must fall first.
 
