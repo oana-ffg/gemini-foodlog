@@ -5,7 +5,7 @@
 - **Hosted application:** <https://gemini-foodlog-2026.web.app>
 - **Repository:** <https://github.com/oana-ffg/gemini-foodlog>
 - **Language:** English
-- **Last reconciled with live Devpost requirements:** 2026-08-29
+- **Last reconciled with live Devpost requirements:** 2026-08-31
 
 This file is the source-controlled submission copy. It deliberately contains no
 password, private inbound-mail address, camera token, or private household data.
@@ -99,8 +99,8 @@ product record. Its core action is maintaining the journal over time.
 - **User surface:** React, TypeScript, Vite, Firebase Hosting, and Firebase
   Authentication.
 - **Capture clients:** protected browser manual/motion capture, a locked Python
-  client for fixtures or webcams, and a portable C++20 physical-camera capture
-  core targeting the M5Stack Unit CamS3-5MP.
+  client for fixtures or webcams, and deployed firmware 0.2.0 for the Freenove
+  FNK0085 ESP32-S3 camera board.
 - **Delivery and operations:** Terraform, keyless GitHub Workload Identity
   Federation, immutable container digests, protected deployment approval,
   bounded model-spend reservation, and source-controlled operational runbooks.
@@ -121,9 +121,12 @@ most one focused question. Deterministic application guards reject unsupported
 certainty and preserve the original result plus every correction as immutable
 history.
 
-Veo 3.1 Lite produced one private synthetic evaluation probe. That probe is test
-data, not a product feature, and FoodLog does not currently claim Veo as a
-successfully integrated application model.
+Gemini 3.1 Flash TTS Preview produced the modular English narration for the
+submission video. Two bounded Veo 3.1 Lite generations provide the opening
+visuals, and Lyria 3 Pro Preview provides its instrumental score. These models
+are integrated into the reproducible demonstration-media pipeline rather than
+the production food-inference path; their prompts, exact costs, hashes, and
+verification evidence are source-controlled.
 
 ## How We Used Codex
 
@@ -180,9 +183,10 @@ reasoning as a product claim.
 
 ## Known Limitations
 
-- The physical-camera package contains a tested portable capture, motion,
-  pacing, and retry core, but final board integration requires the selected
-  hardware and real-device endurance testing.
+- Firmware 0.2.0 runs on the real Freenove ESP32-S3 board. A hand-wave produced
+  authenticated motion captures, and an encrypted queued JPEG survived a forced
+  reboot and uploaded afterward. Multi-day ordinary-kitchen endurance testing
+  remains outstanding.
 - Manual phone capture works in the hosted app. Motion mode and offline queue
   recovery still require the planned multi-hour real-phone test.
 - The live model path has passed bounded synthetic production smoke tests, but
@@ -254,9 +258,9 @@ the same prepared evidence remains useful to every reviewer:
    testing export, request it once, wait for completion, download the private
    archive, and sign out before sharing the browser.
 9. Optional write test: open **Open the phone camera page** for one manual,
-   non-private snapshot. Grant camera permission, register a browser camera,
-   start it, use **Send snapshot**, pause it, then return to the journal and
-   refresh. This adds a durable event to the shared judge account, so the
+   non-private snapshot. Grant camera permission, start the automatically reused
+   browser camera, use **Send snapshot**, pause it, then return to the journal
+   and refresh. This adds a durable event to the shared judge account, so the
    prepared read-only workflow above is preferred. Do not start an unattended
    motion test during a short judge session.
 
@@ -276,9 +280,13 @@ steps above; the account and dataset already exist.
 
 ## Demo Video
 
-The verified private draft is 198.033 seconds and remains pending Oana's final
-viewing, frame-by-frame privacy/IP approval, and public YouTube or Vimeo upload.
-No public video URL exists yet.
+The final selected cut is 219.2 seconds (3 minutes 39.2 seconds), 1920 by 1080,
+and uses the uplifting-techno Lyria score. It includes the real ESP32-S3 camera,
+the deployed application, evidence-linked inference and corrections, the cat
+negative control, a longitudinal pattern, and sanitized Google Cloud execution
+proof. It passed automated codec, duration, black-gap, silence, loudness, and
+contact-sheet checks. Oana approved this exact cut for submission on 31 August
+2026. A public YouTube or Vimeo URL is the remaining video step.
 
 The rehearsed outline is: state the logging friction and value; show the
 production architecture; run one continuous production capture-to-journal
@@ -308,8 +316,8 @@ and permitted claims live in
 | Hosted URL optional but strongly encouraged; clear Google Cloud deployment proof required | Hosted Firebase URL plus judge account; the public demo and repository remain proof if billing-safe shutdown is chosen | Complete the consolidated human login and make the separate pre-expiry funding or shutdown decision. |
 | English description covering features, technologies, data sources, findings, and learnings | This document | Fresh-reader and final-form review. |
 | Repository URL and spin-up instructions | Public repository above; logged-out access plus clean-checkout README/deployment rehearsal passed | Recheck the exact submitted commit and public URL. |
-| Architecture diagram | `docs/architecture-diagram.md` is implementation-audited and render-verified | Complete REL-017's committed upload-ready file and inspect it at submission scale. |
-| Public demonstration video, no longer than four minutes, showing Google Cloud execution | REL-009 and REL-010 | Record, privacy-review, publish, and add the final URL. |
+| Architecture diagram | `docs/architecture-diagram.png` is rendered from source-controlled Mermaid and visually inspected at 2400 by 700 | Upload the PNG to Devpost's required architecture field. |
+| Public demonstration video, no longer than four minutes, showing Google Cloud execution | The approved 219.2-second cut includes app action, physical hardware, and sanitized Cloud proof | Publish the exact cut and add its public URL. |
 | English application and submission materials | English UI, documentation, test plan, and planned narration | Oana completes the final human language review. |
 | Privacy and IP-safe media | Synthetic judge data and explicit media review tickets | REL-011 remains Oana's frame-by-frame publication gate. |
 
@@ -336,13 +344,14 @@ The authoritative requirements are the [official hackathon rules](https://allthi
   uses the Google Gen AI SDK.
 - **Google Cloud service dropdown:** Cloud Run. The description additionally
   documents Pub/Sub, Firestore, Cloud Storage, App Engine, and other services.
-- **Architecture diagram upload:** pending REL-017's upload-ready render.
+- **Architecture diagram upload:** `docs/architecture-diagram.png`, 2400 by 700,
+  SHA-256 `9e50a67dde92db953b85d9ac98399699d928eebbc970c010f3aec85ce3a2a6c4`.
 - **Startup Excellence opt-in:** Oana must decide whether this is an eligible
   organization entry and, if so, provide the truthful incorporated name and
   corporate email in the private form.
-- **Google AI models:** Gemini 3.6 Flash. Disclose the private Veo 3.1 Lite
-  evaluation probe separately; do not claim it as a completed product
-  integration unless that changes before submission.
+- **Google AI models:** Gemini 3.6 Flash, Gemini 3.1 Flash TTS Preview, Veo 3.1
+  Lite, and Lyria 3 Pro Preview. The description distinguishes production food
+  inference from the demonstration-media pipeline.
 - **Bonus content URL:** not available until REL-013 is approved and published.
 - **Bonus social URL:** not available until REL-014 is approved and published.
-- **Public video URL:** not available until REL-011 and REL-012 are complete.
+- **Public video URL:** pending upload of the approved exact cut.

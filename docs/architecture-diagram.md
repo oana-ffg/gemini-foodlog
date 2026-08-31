@@ -7,92 +7,11 @@ Cloud Run API accepts internet transport, but every application route except
 `FoodLogCamera` credential. Browser clients never receive direct Firestore or
 Cloud Storage access.
 
-```mermaid
-flowchart TB
-    subgraph Clients["User and external systems"]
-        Web["React web app<br/>phone manual + motion camera"]
-        Device["Python camera client<br/>future microcontroller firmware"]
-        Nemlig["Nemlig purchase email"]
-        Pushover["Oana's Pushover"]
-    end
+![FoodLog production architecture](architecture-diagram.png)
 
-    subgraph Public["Public ingress boundary"]
-        Hosting["Firebase Hosting"]
-        Auth["Firebase Authentication"]
-        API["Cloud Run API<br/>application-authenticated routes"]
-        Mail["App Engine inbound-mail gateway<br/>opaque per-account address"]
-    end
-
-    subgraph Events["Private asynchronous boundary"]
-        ImageTopic["Pub/Sub image topic"]
-        Grouping["Cloud Run grouping worker"]
-        Inference["Cloud Run inference worker"]
-        MailTopic["Pub/Sub mail topic"]
-        MailWorker["Cloud Run purchase-mail worker"]
-        ExportTopic["Pub/Sub export topic"]
-        ExportWorker["Cloud Run export worker"]
-        NotifyTopic["Pub/Sub notification topic"]
-        NotifyWorker["Cloud Run notification worker"]
-    end
-
-    subgraph Agent["Agentic inference"]
-        ADK["Google ADK agent + bounded tools"]
-        Gemini["Gemini 3.6 Flash<br/>Vertex AI EU endpoint"]
-    end
-
-    subgraph Data["Private tenant-scoped persistence"]
-        Firestore[("Cloud Firestore<br/>accounts, events, meals, knowledge, purchases")]
-        Media[("Cloud Storage<br/>retained kitchen images")]
-        RawMail[("Cloud Storage<br/>retained raw MIME")]
-        Traces[("Cloud Storage<br/>private AI traces")]
-        Exports[("Cloud Storage<br/>24-hour account exports")]
-    end
-
-    Ops["Cloud Logging + Monitoring<br/>dashboards, alerts, budget"]
-
-    Hosting -->|serves| Web
-    Web -->|sign in| Auth
-    Web -->|Firebase ID token| API
-    Device -->|FoodLogCamera credential| API
-
-    Nemlig -->|one-time mailbox forwarding rule| Mail
-    Mail -->|raw message| RawMail
-    Mail -->|transport metadata| Firestore
-    Mail -->|stored-mail event| MailTopic
-
-    API -->|capture metadata + all private UI data| Firestore
-    API -->|immutable image| Media
-    API -->|capture stored| ImageTopic
-    API -->|account created| NotifyTopic
-    API -->|export requested| ExportTopic
-    API -->|authenticated reads| Exports
-
-    ImageTopic -->|grouping subscription + OIDC| Grouping
-    ImageTopic -->|independent inference subscription + OIDC| Inference
-    Grouping -->|revisioned event grouping| Firestore
-    Inference -->|ordered images| Media
-    Inference -->|context + inference revisions| Firestore
-    Inference -->|run agent| ADK
-    ADK -->|structured multimodal request| Gemini
-    ADK -->|bounded account tools| Firestore
-    Inference -->|redacted private trace| Traces
-
-    MailTopic -->|OIDC push| MailWorker
-    MailWorker -->|verified MIME| RawMail
-    MailWorker -->|normalized purchase revisions| Firestore
-
-    ExportTopic -->|OIDC push| ExportWorker
-    ExportWorker -->|read account records| Firestore
-    ExportWorker -->|read owned evidence| Media
-    ExportWorker -->|read owned evidence| RawMail
-    ExportWorker -->|read owned evidence| Traces
-    ExportWorker -->|write temporary archive| Exports
-
-    NotifyTopic -->|OIDC push| NotifyWorker
-    NotifyWorker -->|new-account alert| Pushover
-
-    API & Mail & Grouping & Inference & MailWorker & ExportWorker & NotifyWorker -. logs and metrics .-> Ops
-```
+The upload-ready PNG is rendered from the source-controlled
+[`architecture-diagram.mmd`](architecture-diagram.mmd) file. Regenerate it with
+`npm run render:architecture` before submission whenever the source changes.
 
 ## Trust and isolation invariants
 

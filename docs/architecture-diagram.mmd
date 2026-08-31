@@ -1,0 +1,56 @@
+flowchart LR
+    subgraph Clients["Capture and context"]
+        Web["React web app<br/>phone camera + review UI"]
+        Device["ESP32-S3 firmware<br/>or Python camera"]
+        Retailer["Verified Nemlig<br/>order and invoice email"]
+    end
+
+    subgraph Ingress["Authenticated ingress"]
+        Hosting["Firebase Hosting"]
+        Auth["Firebase Authentication"]
+        API["Cloud Run API"]
+        Mail["App Engine<br/>mail gateway"]
+    end
+
+    subgraph Async["Durable asynchronous workflow"]
+        Events["Pub/Sub topics<br/>retries + dead letters"]
+        Workers["Cloud Run workers<br/>group · infer · mail · export · notify"]
+    end
+
+    subgraph Agent["Agentic inference"]
+        ADK["Google ADK agent<br/>bounded account tools"]
+        Gemini["Gemini 3.6 Flash<br/>Vertex AI EU"]
+    end
+
+    subgraph Data["Private tenant-scoped data"]
+        Firestore[("Cloud Firestore<br/>events · meals · knowledge · purchases")]
+        Storage[("Cloud Storage<br/>images · mail · traces · exports")]
+    end
+
+    Ops["Cloud Logging + Monitoring<br/>alerts · spend ceilings · audit"]
+
+    Web --> Hosting --> API
+    Web --> Auth --> API
+    Device -->|revocable camera credential| API
+    Retailer --> Mail --> Events
+    API -->|capture and work events| Events
+    Events --> Workers
+    Workers -->|group and persist| Firestore
+    Workers -->|private evidence| Storage
+    Workers -->|run inference| ADK
+    ADK -->|structured multimodal request| Gemini
+    ADK -->|bounded context retrieval| Firestore
+    API <-->|owner-scoped reads and writes| Firestore
+    API <-->|private media streaming| Storage
+    API --> Web
+
+    API -.-> Ops
+    Mail -.-> Ops
+    Workers -.-> Ops
+
+    classDef primary fill:#1f3b2f,color:#fffdf7,stroke:#1f3b2f,stroke-width:2px;
+    classDef accent fill:#f4b942,color:#17231d,stroke:#d99c25,stroke-width:2px;
+    classDef data fill:#f7f3e9,color:#17231d,stroke:#6d7f74,stroke-width:2px;
+    class API,ADK primary;
+    class Gemini accent;
+    class Firestore,Storage data;

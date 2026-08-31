@@ -18,6 +18,7 @@
     "deploy:rules": "npx --yes firebase-tools@15.28.1 deploy --only firestore:rules --project gemini-foodlog-2026",
     "deploy:web": "npm run build && npx --yes firebase-tools@15.28.1 deploy --only hosting --project gemini-foodlog-2026",
     "dev:web": "npm run dev --workspace @foodlog/web",
+    "render:architecture": "node tools/render_architecture_diagram.mjs",
     "test:hosting-config": "node --test infra/firebase/hosting-security.test.mjs",
     "test:firestore-rules": "npx --yes firebase-tools@15.28.1 emulators:exec --only firestore --project gemini-foodlog-rules-test \"node --test infra/firestore/firestore.rules.test.mjs\"",
     "typecheck": "npm run typecheck --workspace @foodlog/web"
@@ -26,6 +27,7 @@
     "node": ">=24"
   },
   "devDependencies": {
-    "@firebase/rules-unit-testing": "5.0.2"
+    "@firebase/rules-unit-testing": "5.0.2",
+    "mermaid": "11.17.2"
   }
 }
