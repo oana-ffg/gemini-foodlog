@@ -334,6 +334,91 @@ const ArchitectureScene = ({scene}: {scene: Scene}) => {
   );
 };
 
+const HardwareScene = ({scene}: {scene: Scene}) => {
+  const frame = useCurrentFrame();
+  const {fps, durationInFrames} = useVideoConfig();
+  const enter = spring({frame, fps, config: {damping: 18, stiffness: 82}});
+  const drift = interpolate(frame, [0, durationInFrames], [1.01, 1.045]);
+  const proofs = [
+    ["Motion", "A real hand-wave produced authenticated captures"],
+    ["Offline", "Unsent JPEGs stay encrypted on microSD"],
+    ["Recovery", "A queued image survived reboot and uploaded"],
+  ] as const;
+
+  return (
+    <AbsoluteFill style={{background: palette.forest, fontFamily, padding: "64px 76px", boxSizing: "border-box"}}>
+      <div style={{display: "grid", gridTemplateColumns: "820px 1fr", gap: 72, height: "100%", alignItems: "center"}}>
+        <div
+          style={{
+            height: 940,
+            borderRadius: 38,
+            overflow: "hidden",
+            border: "1px solid rgba(255,255,255,.18)",
+            boxShadow: "0 38px 90px rgba(4,20,14,.42)",
+            background: "#101713",
+            opacity: enter,
+            transform: `translateX(${(1 - enter) * -42}px)`,
+          }}
+        >
+          {scene.image ? (
+            <Img
+              src={staticFile(scene.image)}
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                objectPosition: "50% 48%",
+                transform: `scale(${drift})`,
+                filter: "saturate(.9) contrast(1.02)",
+              }}
+            />
+          ) : null}
+        </div>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 28,
+            opacity: enter,
+            transform: `translateY(${(1 - enter) * 44}px)`,
+          }}
+        >
+          <Eyebrow light>{scene.eyebrow}</Eyebrow>
+          <div style={{color: palette.cream, fontSize: 78, lineHeight: 1.02, fontWeight: 870}}>{scene.title}</div>
+          <CaptionPill dark>{scene.caption}</CaptionPill>
+          <div style={{display: "flex", flexDirection: "column", gap: 16, marginTop: 16}}>
+            {proofs.map(([label, detail], index) => {
+              const proofEnter = spring({frame: frame - 16 - index * 10, fps, config: {damping: 17, stiffness: 100}});
+              return (
+                <div
+                  key={label}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "122px 1fr",
+                    gap: 20,
+                    alignItems: "center",
+                    borderTop: "1px solid rgba(255,255,255,.16)",
+                    paddingTop: 17,
+                    opacity: proofEnter,
+                    transform: `translateX(${(1 - proofEnter) * 28}px)`,
+                  }}
+                >
+                  <div style={{color: palette.amber, fontSize: 20, fontWeight: 850, textTransform: "uppercase", letterSpacing: 2}}>{label}</div>
+                  <div style={{color: palette.mist, fontSize: 25, lineHeight: 1.28}}>{detail}</div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{color: "rgba(255,253,247,.58)", fontSize: 18, marginTop: 4}}>
+            Freenove ESP32-S3 · FoodLog firmware 0.2.0 · real prototype photo
+          </div>
+        </div>
+      </div>
+      <Grain />
+    </AbsoluteFill>
+  );
+};
+
 const ScreenshotScene = ({scene, split = false}: {scene: Scene; split?: boolean}) => {
   const frame = useCurrentFrame();
   const {durationInFrames} = useVideoConfig();
@@ -429,6 +514,8 @@ const renderScene = (scene: Scene) => {
       return <LogoScene scene={scene} />;
     case "architecture":
       return <ArchitectureScene scene={scene} />;
+    case "hardware":
+      return <HardwareScene scene={scene} />;
     case "split-screenshot":
       return <ScreenshotScene scene={scene} split />;
     case "screenshot":

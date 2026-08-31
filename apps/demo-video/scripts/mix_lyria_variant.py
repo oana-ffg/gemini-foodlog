@@ -23,6 +23,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--variant", required=True, choices=VARIANTS)
     parser.add_argument("--base", type=Path, default=DEFAULT_BASE)
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="Optional comparison path; defaults to the stable variant filename.",
+    )
     parser.add_argument("--force", action="store_true")
     return parser.parse_args()
 
@@ -53,7 +58,11 @@ def main() -> None:
     args = parse_args()
     base = args.base.resolve()
     score = SCORE_DIRECTORY / f"{args.variant}.mp3"
-    output = OUTPUT_DIRECTORY / f"foodlog-demo-{args.variant}.mp4"
+    output = (
+        args.output.resolve()
+        if args.output is not None
+        else OUTPUT_DIRECTORY / f"foodlog-demo-{args.variant}.mp4"
+    )
     for required in (base, score):
         if not required.is_file():
             raise FileNotFoundError(required)
@@ -66,7 +75,7 @@ def main() -> None:
     if first_end <= 10.0:
         raise RuntimeError(f"Score is too short to extend cleanly: {score_duration}")
     fade_start = base_duration - 10.0
-    OUTPUT_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(f"{output.stem}.tmp.mp4")
     temporary.unlink(missing_ok=True)
 

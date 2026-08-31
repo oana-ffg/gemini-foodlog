@@ -132,3 +132,48 @@ This is a private cut, not publication authorization. Oana still needs to watch
 both versions with sound, choose the soundtrack treatment, and complete
 REL-011's frame-by-frame privacy and intellectual-property review. Any requested
 edit must be rerendered and reverified before a public upload.
+
+## Real physical-camera addition
+
+On 31 August 2026, the editable Remotion source gained an eleventh scene showing
+Oana's real Freenove FNK0085 ESP32-S3 WROOM N8R8 camera board. The local photo
+was re-encoded without metadata, remains private and Git-ignored, and has
+SHA-256 `9a4f85ca44e1749fd8e569b2753b24937e7e8e930a91472dc65a88c8abb830bc`.
+
+The scene makes only bench-proven firmware 0.2.0 claims: local
+brightness-compensated motion detection, authenticated strict-TLS uploads, an
+AES-256-GCM encrypted 100-image microSD retry queue, a real hand-wave capture,
+and successful queued-image recovery through an externally forced reboot. It
+also describes the self-service flasher/provisioner without displaying a
+credential or Wi-Fi secret.
+
+One new content-addressed `gemini-3.1-flash-tts-preview` Sulafat request generated
+the 24.0-second narration. It used 243 input tokens and 600 output audio tokens,
+cost DKK 0.078600 gross list price, and produced WAV SHA-256
+`b9dc49a9077f42101121517b5b5d786032ddb2f4a2597a8cbf0b30820fb057fa`.
+The other ten selected narration files were reused without regeneration.
+
+The new narration-first master is:
+
+- output: `artifacts/demo-video/foodlog-demo-remotion-hardware.mp4`
+- duration: 219.157333 seconds (3 minutes 39.157 seconds)
+- size: 52,545,832 bytes
+- SHA-256: `deed9ee799602165c6ace9c198aaa164d5c969f31c55e31c7155c388d75f376a`
+
+The selected uplifting-techno score was then remixed from that master without
+overwriting the prior human-reviewed comparison:
+
+- output: `artifacts/demo-video/lyria-comparisons/foodlog-demo-uplifting-techno-hardware.mp4`
+- duration: 219.2 seconds
+- size: 49,143,715 bytes
+- SHA-256: `92e2b1bee99cf87b725effb23fae9a867d0d1d5114a28d8a92b6b7af476409ce`
+- loudness: -15.5 LUFS integrated, -1.2 dBFS true peak
+
+Both new cuts passed the 1080p/30 fps H.264, AAC, duration, black-gap, and
+five-second-silence gates. A twelve-frame contact sheet was visually inspected;
+the hardware scene, application evidence, Cloud proof, and closing card are
+readable with no unintended blank segment. The prior selected soundtrack cut
+still has its original SHA-256
+`0eded8981420b8739b31add7418a1d89477bb4e5727a904ff6fe4977c73ccd32`.
+The new private cut still requires Oana's complete playback and publication
+review.

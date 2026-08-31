@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-30T19:43:35.546566+00:00",
+  "generatedAt": "2026-08-31T13:57:35.238585+00:00",
   "model": "gemini-3.1-flash-tts-preview",
   "voice": "Sulafat",
   "entries": {
@@ -82,6 +82,14 @@
       "characters": 165,
       "inputTokens": 179,
       "outputTokens": 358
+    },
+    "physical-camera": {
+      "hash": "fe6ebe56b58c23c6b3dc163801d6f6cf7351b82549136d8d6acbef125c3141c8",
+      "file": "generated/tts/physical-camera-fe6ebe56b58c.wav",
+      "durationSeconds": 24.0,
+      "characters": 329,
+      "inputTokens": 243,
+      "outputTokens": 600
     }
   }
 }

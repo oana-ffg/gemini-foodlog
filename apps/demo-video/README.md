@@ -24,6 +24,9 @@ NAME` to create a comparison without rerendering or regenerating narration. The
 mixer keeps music low, removes competing vocal frequencies, ducks it while the
 narrator speaks, and masters the combined audio consistently.
 
+Pass `--base` and `--output` to create a new comparison cut without overwriting
+an earlier human-reviewed master or soundtrack choice.
+
 For a human-review comparison cycle, `npm run demo:render:corrected` preserves
 the previous verified cut and produces the narration master expected by the
 mixer.
@@ -40,6 +43,11 @@ The optional clip source names are:
 
 - `artifacts/demo-video/veo/intro-cooking.mp4`
 - `artifacts/demo-video/veo/intro-chaos.mp4`
+
+The physical-prototype scene uses the privacy-reviewed real photo at
+`artifacts/demo-video/private-shots/08_controller_hardware.jpg`. Keep it local
+and metadata-free; `demo:assets` verifies its dimensions before copying it into
+the ignored Remotion asset directory.
 
 If a clip is absent, the composition renders an intentional still-image fallback
 instead of failing or fabricating a generated clip.

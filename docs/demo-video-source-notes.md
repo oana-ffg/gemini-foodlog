@@ -36,9 +36,10 @@ MVP does not collect symptoms or perform food-and-symptom association analysis.
 - The project uses the warm `Sulafat` voice through Vertex AI and stores each
   scene separately under a content hash so unchanged narration is reused.
 - The FoodLog end card discloses that the narration is AI-generated.
-- After the opening-line correction, the ten selected scene files total 176.840
-  seconds, 1,917 input tokens, and 4,421 output audio tokens. Their selected-file
-  gross list price is DKK 0.579964 at the recorded USD/DKK rate of 6.42. The
+- After the opening-line correction and physical-camera addition, the eleven
+  selected scene files total 200.840 seconds, 2,160 input tokens, and 5,021
+  output audio tokens. Their selected-file gross list price is DKK 0.658564 at
+  the recorded USD/DKK rate of 6.42. The
   superseded opening file was also billed; the complete request spend remains
   in `docs/testing-spend-ledger.md`. Promotional-credit settlement remains
   pending the Cloud Billing export.
@@ -76,3 +77,17 @@ MVP does not collect symptoms or perform food-and-symptom association analysis.
   seconds; the final verification gate rejects a duration over four minutes,
   black gaps, the wrong codecs or dimensions, and audio silences of at least
   five seconds.
+
+## Physical camera prototype
+
+- The added hardware scene uses Oana's real photograph of the Freenove FNK0085
+  ESP32-S3 WROOM N8R8 camera board. Its local private copy has all metadata
+  removed and remains ignored by Git.
+- Firmware 0.2.0 performs brightness-compensated motion detection on-device,
+  uploads accepted frames through authenticated strict TLS, and keeps up to 100
+  unsent JPEGs in an AES-256-GCM encrypted microSD retry queue.
+- A real five-second hand-wave produced authenticated captures. A separate
+  forced-reboot test preserved one queued private JPEG and uploaded it after
+  recovery. These are observed bench results, not simulated claims.
+- The self-service setup package flashes and provisions the board without
+  printing or embedding the user's Wi-Fi password in its report.

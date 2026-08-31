@@ -13,6 +13,7 @@ const generatedRoot = path.join(videoRoot, "public", "generated");
 const screenshotTarget = path.join(generatedRoot, "screenshots");
 const brandTarget = path.join(generatedRoot, "brand");
 const videoTarget = path.join(generatedRoot, "video");
+const hardwareTarget = path.join(generatedRoot, "hardware");
 const privateShots = path.join(repositoryRoot, "artifacts", "demo-video", "private-shots");
 const optionalVideoRoot = path.join(repositoryRoot, "artifacts", "demo-video", "veo");
 
@@ -53,6 +54,7 @@ const dimensions = async (filePath) => {
 await mkdir(screenshotTarget, {recursive: true});
 await mkdir(brandTarget, {recursive: true});
 await mkdir(videoTarget, {recursive: true});
+await mkdir(hardwareTarget, {recursive: true});
 
 for (const name of screenshots) {
   const source = path.join(privateShots, name);
@@ -72,6 +74,17 @@ await copyFile(
   path.join(brandTarget, "foodlog-mark.svg"),
 );
 
+const hardwareSource = path.join(privateShots, "08_controller_hardware.jpg");
+if (!(await exists(hardwareSource))) {
+  throw new Error(`Missing reviewed physical-camera photo: ${hardwareSource}`);
+}
+const hardwareSize = await dimensions(hardwareSource);
+const [hardwareWidth, hardwareHeight] = hardwareSize.split("x").map(Number);
+if (hardwareWidth < 1920 || hardwareHeight < 1080) {
+  throw new Error(`Expected controller photo to be at least 1920x1080, received ${hardwareSize}`);
+}
+await copyFile(hardwareSource, path.join(hardwareTarget, "controller-hardware.jpg"));
+
 for (const name of ["intro-cooking.mp4", "intro-chaos.mp4"]) {
   const source = path.join(optionalVideoRoot, name);
   const target = path.join(videoTarget, name);
@@ -82,5 +95,5 @@ for (const name of ["intro-cooking.mp4", "intro-chaos.mp4"]) {
   }
 }
 
-console.log(`Prepared ${screenshots.length} reviewed production screenshots and the canonical brand mark.`);
+console.log(`Prepared ${screenshots.length} reviewed production screenshots, one real hardware photo, and the canonical brand mark.`);
 console.log(`Optional Veo clips: ${optionalVideoRoot}`);

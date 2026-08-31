@@ -39,6 +39,17 @@
       "minimumSeconds": 9
     },
     {
+      "id": "physical-camera",
+      "kind": "hardware",
+      "eyebrow": "A REAL PHYSICAL PROTOTYPE",
+      "title": "The camera is real, too.",
+      "caption": "Local motion · authenticated TLS · encrypted offline queue",
+      "narration": "The camera is real too. This ESP32-S3 runs FoodLog firmware that detects motion locally, sends accepted frames through the same private authenticated path, and keeps unsent images encrypted on its microSD through outages and reboots. A self-service setup tool flashes and provisions the board without printing the Wi-Fi password.",
+      "voiceDirection": "Proud, warm, and concrete, with the delighted energy of showing a real prototype that just worked. Keep the technical list crisp and accessible. Stress 'real', 'locally', 'encrypted', and 'without printing the Wi-Fi password', but do not sound like a hardware commercial.",
+      "minimumSeconds": 19,
+      "image": "generated/hardware/controller-hardware.jpg"
+    },
+    {
       "id": "agentic-pipeline",
       "kind": "architecture",
       "eyebrow": "A REAL AGENTIC PIPELINE",
