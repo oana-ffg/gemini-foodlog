@@ -8,7 +8,7 @@ export type MealStatus =
   | "contradicted"
   | "not_cooking";
 export type MealFeedbackKind = "confirm" | "correct" | "not_cooking";
-export type MealRevisionSource = "inference" | "user_feedback";
+export type MealRevisionSource = "inference" | "user_feedback" | "user_classification";
 
 export interface Account {
   id: string;
@@ -231,6 +231,7 @@ export interface MealRevision {
   inference: MealInferenceSummary;
   activity_hypothesis: ActivityMealInference | null;
   feedback_id: string | null;
+  classification_id: string | null;
   base_revision_number: number | null;
   correction: MealCorrection | null;
   created_at: string;
@@ -512,6 +513,39 @@ export interface CaptureProcessing {
   attempt_count: number;
   retry_at: string | null;
   latest_failure_code: string | null;
+}
+
+export interface JournalEvent {
+  event_id: string;
+  event_revision: number;
+  captured_at: string;
+  camera_ids: string[];
+  capture_ids: string[];
+  state: "processing" | "error_processing";
+  latest_failure_code: string | null;
+}
+
+export interface EventClassificationInput {
+  kind: "meal" | "not_cooking";
+  meal_title?: string;
+  explanation?: string;
+  expected_event_revision: number;
+}
+
+export interface EventClassification {
+  id: string;
+  event_id: string;
+  meal_id: string;
+  kind: "meal" | "not_cooking";
+  meal_title: string | null;
+  explanation: string | null;
+  expected_event_revision: number;
+  created_at: string;
+}
+
+export interface EventClassificationResult {
+  classification: EventClassification;
+  meal: MealEntry;
 }
 
 export interface CaptureInventory {
@@ -858,6 +892,28 @@ export function getDeviceSnapshotRequest(
 
 export function listJournal(): Promise<MealEntry[]> {
   return apiRequest<MealEntry[]>("/v1/journal");
+}
+
+export function listJournalEvents(limit = 50): Promise<JournalEvent[]> {
+  return apiRequest<JournalEvent[]>(`/v1/journal-events?limit=${limit}`);
+}
+
+export function classifyEvent(
+  eventId: string,
+  input: EventClassificationInput,
+  idempotencyKey: string,
+): Promise<EventClassificationResult> {
+  return apiRequest<EventClassificationResult>(
+    `/v1/events/${encodeURIComponent(eventId)}/classification`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify(input),
+    },
+  );
 }
 
 export function listActivities(status?: MealStatus): Promise<MealEntry[]> {

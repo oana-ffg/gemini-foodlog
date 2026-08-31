@@ -34,6 +34,7 @@ from .errors import (
     AccountExportNotFound,
     AccountExportRateLimited,
     AccountNotProvisioned,
+    ActivityEventNotFound,
     CameraNotFound,
     CaptureNotFound,
     CrossAccountAccess,
@@ -43,6 +44,7 @@ from .errors import (
     InboundAddressGenerationFailed,
     InboundAddressStateConflict,
     InvalidDeviceCredential,
+    InvalidEventClassificationTransition,
     InvalidKnowledgeProvenance,
     InvalidKnowledgeTransition,
     InvalidMealCorrectionTarget,
@@ -75,11 +77,13 @@ from .image_events import (
     PubSubCaptureEventPublisher,
 )
 from .inbound_mail import InboundMailAddressService
+from .journal_views import JournalEventView, journal_event_view
 from .models import (
     Account,
     AccountExport,
     AccountExportStatus,
     AccountExportView,
+    ActivityEventStatus,
     AuditAction,
     AuditActorKind,
     AuditEvent,
@@ -100,6 +104,8 @@ from .models import (
     DeviceSnapshotCommand,
     DeviceSnapshotRequest,
     DeviceSnapshotStatus,
+    EventClassificationRequest,
+    EventClassificationResult,
     FeedbackInventoryView,
     InboundMailAddress,
     InboundMailAddressMutationRequest,
@@ -529,6 +535,7 @@ def create_app(
     app.add_exception_handler(DeviceSnapshotNotFound, resource_missing_handler)
     app.add_exception_handler(AccountExportNotFound, resource_missing_handler)
     app.add_exception_handler(CaptureNotFound, resource_missing_handler)
+    app.add_exception_handler(ActivityEventNotFound, resource_missing_handler)
     app.add_exception_handler(MealNotFound, resource_missing_handler)
     app.add_exception_handler(PurchaseNotFound, resource_missing_handler)
     app.add_exception_handler(QuestionNotFound, resource_missing_handler)
@@ -571,6 +578,14 @@ def create_app(
         return Response(
             status_code=status.HTTP_409_CONFLICT,
             content='{"detail":"idempotency_key_reused_with_different_payload"}',
+            media_type="application/json",
+        )
+
+    @app.exception_handler(InvalidEventClassificationTransition)
+    async def invalid_event_classification_transition_handler(*_: object) -> Response:
+        return Response(
+            status_code=status.HTTP_409_CONFLICT,
+            content='{"detail":"event_already_classified_or_changed"}',
             media_type="application/json",
         )
 
@@ -1192,6 +1207,52 @@ def create_app(
     ) -> list[MealEntry]:
         response.headers["Cache-Control"] = "private, no-store"
         return await container.repository.list_meals(user_id)
+
+    @app.get("/v1/journal-events", response_model=list[JournalEventView])
+    async def list_unresolved_journal_events(
+        response: Response,
+        limit: Annotated[int, Query(ge=1, le=50)] = 50,
+        user_id: str = Depends(request_user_id),
+    ) -> list[JournalEventView]:
+        response.headers["Cache-Control"] = "private, no-store"
+        events = await container.repository.recent_events_for_owner(user_id, limit=limit)
+        views: list[JournalEventView] = []
+        for event in events:
+            if event.status != ActivityEventStatus.OPEN:
+                continue
+            _, captures = await container.repository.event_evidence_for_account(
+                account_id=event.account_id,
+                event_id=event.id,
+            )
+            inference_job = await container.repository.job_for_account(
+                event.account_id,
+                event_inference_job_id(event.id),
+            )
+            views.append(
+                journal_event_view(
+                    event,
+                    captures,
+                    inference_job=inference_job,
+                )
+            )
+        return views
+
+    @app.post(
+        "/v1/events/{event_id}/classification",
+        response_model=EventClassificationResult,
+    )
+    async def classify_unresolved_event(
+        event_id: str,
+        request: EventClassificationRequest,
+        idempotency_key: str = Header(min_length=8, max_length=128),
+        user_id: str = Depends(request_user_id),
+    ) -> EventClassificationResult:
+        return await container.repository.classify_event(
+            owner_user_id=user_id,
+            event_id=event_id,
+            request=request,
+            idempotency_key=idempotency_key,
+        )
 
     @app.get("/v1/activities", response_model=list[MealEntry])
     async def list_activity_history(

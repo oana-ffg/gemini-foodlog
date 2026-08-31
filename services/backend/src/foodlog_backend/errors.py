@@ -118,6 +118,10 @@ class ActivityEventNotFound(FoodLogError):
     pass
 
 
+class InvalidEventClassificationTransition(FoodLogError):
+    pass
+
+
 class ModelSpendLimitExceeded(FoodLogError):
     pass
 

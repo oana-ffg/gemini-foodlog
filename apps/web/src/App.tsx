@@ -3,9 +3,11 @@ import { Link } from "react-router-dom";
 import {
   ApiError,
   AuthenticationRequiredError,
+  classifyEvent,
   getConsentPreferences,
   listActivities,
   listJournal,
+  listJournalEvents,
   listMealRevisions,
   listOpenPatternQuestions,
   listProcessing,
@@ -16,6 +18,7 @@ import {
   type CaptureProcessing,
   type ClarificationQuestion,
   type ConsentPreferences,
+  type JournalEvent,
   type MealEntry,
   type MealRevision,
   type MealStatus,
@@ -79,6 +82,8 @@ function RevisionHistory({ mealId, revisionCount }: { mealId: string; revisionCo
                 <strong>
                   {revision.source === "inference"
                     ? "Original inference"
+                    : revision.source === "user_classification"
+                      ? "Identified by you"
                     : `Feedback revision ${revision.number}`}
                 </strong>
                 <StatusBadge status={revision.status} />
@@ -159,6 +164,151 @@ function JournalCard({ entry, onChanged, onNotice }: JournalCardProps) {
   );
 }
 
+interface UnresolvedJournalCardProps {
+  event: JournalEvent;
+  onChanged: () => Promise<void>;
+  onNotice: (message: string) => void;
+}
+
+export function UnresolvedJournalCard({
+  event,
+  onChanged,
+  onNotice,
+}: UnresolvedJournalCardProps) {
+  const [selectedCaptureId, setSelectedCaptureId] = useState(event.capture_ids[0]);
+  const [mealTitle, setMealTitle] = useState("");
+  const [explanation, setExplanation] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
+  const [message, setMessage] = useState<string>();
+  const visibleCaptureId = event.capture_ids.includes(selectedCaptureId)
+    ? selectedCaptureId
+    : event.capture_ids[0];
+
+  const submit = async (kind: "meal" | "not_cooking") => {
+    const title = mealTitle.trim();
+    if (kind === "meal" && !title) {
+      setMessage("Tell FoodLog what this was first.");
+      return;
+    }
+    setSubmitting(true);
+    setMessage(undefined);
+    try {
+      await classifyEvent(
+        event.event_id,
+        {
+          kind,
+          ...(kind === "meal" ? { meal_title: title } : {}),
+          ...(explanation.trim() ? { explanation: explanation.trim() } : {}),
+          expected_event_revision: event.event_revision,
+        },
+        crypto.randomUUID(),
+      );
+      onNotice(
+        kind === "meal"
+          ? "Saved your identification. Gemini cannot overwrite it."
+          : "Saved as not cooking. The images remain in your private activity history.",
+      );
+      await onChanged();
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : "Could not save this event.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <article className="journal-card journal-card--unresolved">
+      <ActivityImageViewer
+        captureIds={event.capture_ids}
+        selectedCaptureId={visibleCaptureId}
+        onSelectCapture={setSelectedCaptureId}
+      />
+      <div className="journal-card__body">
+        <div className="entry-meta">
+          <div className="badge-row">
+            <span className={`processing-badge processing-badge--${event.state}`}>
+              {event.state === "processing" ? "Processing" : "Error processing"}
+            </span>
+          </div>
+          <time dateTime={event.captured_at}>
+            {new Date(event.captured_at).toLocaleString()}
+          </time>
+        </div>
+        <h3>{event.state === "processing" ? "Analysing this kitchen event" : "Analysis failed"}</h3>
+        <p>
+          {event.state === "processing"
+            ? "Your photos are safely stored. You can wait for FoodLog or identify them now."
+            : "Your photos are safely stored even though Gemini did not produce a usable result."}
+        </p>
+        <form
+          className="feedback-form"
+          onSubmit={(submitEvent) => {
+            submitEvent.preventDefault();
+            void submit("meal");
+          }}
+        >
+          <label>
+            Tell FoodLog what this was
+            <input
+              value={mealTitle}
+              onChange={(changeEvent) => setMealTitle(changeEvent.target.value)}
+              maxLength={200}
+              placeholder="For example: steak and roasted vegetables"
+              disabled={submitting}
+            />
+          </label>
+          <label>
+            Optional note
+            <textarea
+              value={explanation}
+              onChange={(changeEvent) => setExplanation(changeEvent.target.value)}
+              maxLength={2000}
+              placeholder="Anything that could help FoodLog understand this event"
+              disabled={submitting}
+            />
+          </label>
+          <div className="feedback-actions">
+            <button type="submit" disabled={submitting}>
+              {submitting ? "Saving…" : "Save to journal"}
+            </button>
+            {!confirmingDiscard ? (
+              <button
+                type="button"
+                className="button--quiet"
+                onClick={() => setConfirmingDiscard(true)}
+                disabled={submitting}
+              >
+                Discard as not cooking
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="button--danger"
+                  onClick={() => void submit("not_cooking")}
+                  disabled={submitting}
+                >
+                  Confirm not cooking
+                </button>
+                <button
+                  type="button"
+                  className="button--quiet"
+                  onClick={() => setConfirmingDiscard(false)}
+                  disabled={submitting}
+                >
+                  Cancel
+                </button>
+              </>
+            )}
+          </div>
+          {message ? <p className="form-message" role="status">{message}</p> : null}
+        </form>
+      </div>
+    </article>
+  );
+}
+
 function App() {
   const { user } = useAuth();
   const firebaseUid = user?.uid;
@@ -166,6 +316,7 @@ function App() {
   const [consentPreferences, setConsentPreferences] = useState<ConsentPreferences>();
   const [capacityReached, setCapacityReached] = useState(false);
   const [journal, setJournal] = useState<MealEntry[]>([]);
+  const [journalEvents, setJournalEvents] = useState<JournalEvent[]>([]);
   const [discardedActivities, setDiscardedActivities] = useState<MealEntry[]>([]);
   const [patternQuestions, setPatternQuestions] = useState<ClarificationQuestion[]>([]);
   const [processing, setProcessing] = useState<CaptureProcessing[]>();
@@ -176,6 +327,13 @@ function App() {
   const [journalNotice, setJournalNotice] = useState<string>();
   const [patternNotice, setPatternNotice] = useState<string>();
   const orderedJournal = useMemo(() => chronologicalJournal(journal), [journal]);
+  const orderedTimeline = useMemo(
+    () => [
+      ...orderedJournal.map((entry) => ({ kind: "meal" as const, at: mealOccurrence(entry), entry })),
+      ...journalEvents.map((event) => ({ kind: "event" as const, at: event.captured_at, event })),
+    ].sort((left, right) => right.at.localeCompare(left.at)),
+    [journalEvents, orderedJournal],
+  );
   const orderedDiscardedActivities = useMemo(
     () => chronologicalJournal(discardedActivities),
     [discardedActivities],
@@ -205,8 +363,9 @@ function App() {
         }
         clearSignupLaunchMailIntent(firebaseUid);
       }
-      const [entries, activities, openQuestions, processingResult, purchasesResult] = await Promise.all([
+      const [entries, unresolvedEvents, activities, openQuestions, processingResult, purchasesResult] = await Promise.all([
         listJournal(),
+        listJournalEvents(),
         listActivities("not_cooking"),
         listOpenPatternQuestions(),
         listProcessing().then(
@@ -225,6 +384,7 @@ function App() {
         throw purchasesResult.error;
       }
       setJournal(entries);
+      setJournalEvents(unresolvedEvents);
       setDiscardedActivities(
         activities.filter((activity) => activity.status === "not_cooking"),
       );
@@ -251,6 +411,7 @@ function App() {
       ) {
         setAccount(undefined);
         setJournal([]);
+        setJournalEvents([]);
         setDiscardedActivities([]);
         setPatternQuestions([]);
         setConsentPreferences(await getConsentPreferences());
@@ -362,12 +523,19 @@ function App() {
           </button>
         </div>
         {journalNotice ? <p className="journal-notice" role="status">{journalNotice}</p> : null}
-        {journal.length === 0 ? (
-          <p className="empty-state">No kitchen event has been analysed yet.</p>
-        ) : orderedJournal.map((entry) => (
+        {orderedTimeline.length === 0 ? (
+          <p className="empty-state">No kitchen event has been captured yet.</p>
+        ) : orderedTimeline.map((item) => item.kind === "meal" ? (
           <JournalCard
-            key={entry.id}
-            entry={entry}
+            key={`meal-${item.entry.id}`}
+            entry={item.entry}
+            onChanged={refreshWorkspace}
+            onNotice={setJournalNotice}
+          />
+        ) : (
+          <UnresolvedJournalCard
+            key={`event-${item.event.event_id}`}
+            event={item.event}
             onChanged={refreshWorkspace}
             onNotice={setJournalNotice}
           />

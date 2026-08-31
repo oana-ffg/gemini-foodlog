@@ -51,6 +51,8 @@ from foodlog_backend.models import (
     Confidence,
     DeviceSnapshotStatus,
     DurableJob,
+    EventClassificationKind,
+    EventClassificationRequest,
     JobKind,
     JobStatus,
     KnowledgeBeliefStrength,
@@ -153,6 +155,129 @@ def test_firestore_manual_snapshot_commands_are_atomic_idempotent_and_scoped() -
             camera_id=camera.id,
         ) is None
         await client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.skipif(
+    "FIRESTORE_EMULATOR_HOST" not in os.environ,
+    reason="requires the Firestore emulator",
+)
+def test_firestore_manual_event_classification_is_atomic_and_idempotent() -> None:
+    async def scenario() -> None:
+        project_id = f"gemini-foodlog-manual-event-{uuid4().hex}"
+        client = AsyncClient(project=project_id)
+        repository = FirestoreRepository(
+            project_id=project_id,
+            public_account_limit=25,
+            trial_image_limit=200,
+            client=client,
+        )
+        owner_user_id = "manual-event-owner"
+        account = await repository.provision_account(owner_user_id)
+        now = utc_now()
+        event = ActivityEvent(
+            id="manual-event",
+            account_id=account.id,
+            camera_ids=["manual-camera"],
+            first_capture_at=now,
+            last_capture_at=now,
+            capture_count=1,
+            grouping_policy_version="manual-event-test-v1",
+        )
+        capture = CaptureRecord(
+            id="manual-capture",
+            account_id=account.id,
+            camera_id="manual-camera",
+            idempotency_key="manual-capture-idempotency",
+            content_type="image/jpeg",
+            content_sha256="b" * 64,
+            object_key=f"accounts/{account.id}/captures/manual-capture.jpg",
+            event_id=event.id,
+            status=CaptureStatus.STORED,
+            created_at=now,
+        )
+        job = DurableJob(
+            id=event_inference_job_id(event.id),
+            account_id=account.id,
+            kind=JobKind.EVENT_INFERENCE,
+            subject_id=event.id,
+            subject_revision=event.current_revision,
+            status=JobStatus.LEASED,
+            attempt_count=1,
+            lease_id="manual-event-model-lease",
+            lease_owner="manual-event-model-worker",
+            lease_expires_at=now + timedelta(minutes=5),
+            created_at=now,
+        )
+        account_ref = client.collection("accounts").document(account.id)
+        await account_ref.collection("events").document(event.id).set(
+            {**event.model_dump(mode="python"), "schema_version": 1}
+        )
+        capture_data = capture.model_dump(mode="python", exclude={"idempotency_key"})
+        capture_data.update(schema_version=1, idempotency_hash="test-only")
+        await account_ref.collection("captures").document(capture.id).set(capture_data)
+        await account_ref.collection("jobs").document(job.id).set(
+            {**job.model_dump(mode="python"), "schema_version": 1}
+        )
+        request = EventClassificationRequest(
+            kind=EventClassificationKind.MEAL,
+            meal_title="Steak and roasted vegetables",
+            expected_event_revision=1,
+        )
+
+        first = await repository.classify_event(
+            owner_user_id=owner_user_id,
+            event_id=event.id,
+            request=request,
+            idempotency_key="manual-event-classification-0001",
+        )
+        duplicate = await repository.classify_event(
+            owner_user_id=owner_user_id,
+            event_id=event.id,
+            request=request,
+            idempotency_key="manual-event-classification-0001",
+        )
+
+        assert duplicate == first
+        assert first.meal.status == MealStatus.CONFIRMED
+        stored_event = await account_ref.collection("events").document(event.id).get()
+        stored_capture = await account_ref.collection("captures").document(capture.id).get()
+        stored_job = await account_ref.collection("jobs").document(job.id).get()
+        revisions = [
+            snapshot
+            async for snapshot in account_ref.collection("meals")
+            .document(first.meal.id)
+            .collection("revisions")
+            .stream()
+        ]
+        assert stored_event.get("status") == ActivityEventStatus.USER_CLASSIFIED
+        assert stored_capture.get("status") == CaptureStatus.PROCESSED
+        assert stored_job.get("status") == JobStatus.COMPLETED
+        assert len(revisions) == 1
+        assert revisions[0].get("source") == "user_classification"
+        assert await repository.publish_event_inference(
+            account_id=account.id,
+            event_id=event.id,
+            expected_event_revision=1,
+            lease_id=job.lease_id or "",
+            lease_owner=job.lease_owner or "",
+            hypothesis=ActivityMealInferenceV1.model_validate(
+                {
+                    **base_payload(),
+                    "event_id": event.id,
+                    "source_capture_ids": [capture.id],
+                    "direct_observations": [
+                        {
+                            "id": "obs_meat",
+                            "description": "A food item is visible.",
+                            "image_evidence": [{"capture_id": capture.id, "region": None}],
+                        }
+                    ],
+                }
+            ),
+        ) is None
+        client.close()
 
     asyncio.run(scenario())
 

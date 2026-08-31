@@ -33,6 +33,7 @@ from .errors import (
     InboundAddressCollision,
     InboundAddressStateConflict,
     InvalidDeviceCredential,
+    InvalidEventClassificationTransition,
     InvalidMealFeedbackTransition,
     JobIdentityConflict,
     KnowledgePageNotFound,
@@ -92,6 +93,7 @@ from .models import (
     CaptureRecord,
     CaptureStatus,
     ClarificationQuestion,
+    Confidence,
     ConsentPreferences,
     DeviceCamera,
     DeviceCredentialRecord,
@@ -100,6 +102,10 @@ from .models import (
     DeviceSnapshotStatus,
     DurableJob,
     EntitlementMode,
+    EventClassification,
+    EventClassificationKind,
+    EventClassificationRequest,
+    EventClassificationResult,
     InboundMailAddress,
     InboundMailAddressStatus,
     InboundMailRoute,
@@ -112,6 +118,7 @@ from .models import (
     KnowledgeRevisionDraft,
     KnowledgeRevisionResult,
     LaunchMailConsent,
+    MealComponent,
     MealEntry,
     MealFeedback,
     MealFeedbackKind,
@@ -172,6 +179,7 @@ from .purchase_normalization import (
 from .repository import (
     DEVICE_SNAPSHOT_REQUEST_LIFETIME,
     PATTERN_RESURFACE_MINIMUM_NEW_SUPPORT,
+    event_classification_id,
     event_question_from_hypothesis,
     event_question_id,
     inference_from_meal,
@@ -3707,6 +3715,209 @@ class FirestoreRepository:
         if len(captures) != event.capture_count:
             raise ValueError("Activity event evidence is incomplete")
         return event, sorted(captures, key=capture_evidence_order)
+
+    async def recent_events_for_owner(
+        self,
+        owner_user_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[ActivityEvent]:
+        if not 1 <= limit <= 50:
+            raise ValueError("event list limit must be between 1 and 50")
+        account = await self.account_for_owner(owner_user_id)
+        query = (
+            self._collection(account.id, "events")
+            .order_by("last_capture_at", direction=firestore.Query.DESCENDING)
+            .limit(limit)
+        )
+        events = [_model(snapshot, ActivityEvent) async for snapshot in query.stream()]
+        if any(event.account_id != account.id for event in events):
+            raise ValueError("Activity event list escaped its account scope")
+        return events
+
+    async def classify_event(
+        self,
+        *,
+        owner_user_id: str,
+        event_id: str,
+        request: EventClassificationRequest,
+        idempotency_key: str,
+    ) -> EventClassificationResult:
+        account = await self.account_for_owner(owner_user_id)
+        classification_id = event_classification_id(account.id, idempotency_key)
+        account_ref = self._account(account.id)
+        event_ref = self._collection(account.id, "events").document(event_id)
+        meal_ref = self._collection(account.id, "meals").document(event_id)
+        job_ref = self._collection(account.id, "jobs").document(
+            event_inference_job_id(event_id)
+        )
+        classification_ref = self._collection(
+            account.id,
+            "event_classifications",
+        ).document(classification_id)
+        capture_query = self._collection(account.id, "captures").where(
+            filter=FieldFilter("event_id", "==", event_id)
+        )
+        capture_snapshots = [snapshot async for snapshot in capture_query.stream()]
+        capture_refs = [snapshot.reference for snapshot in capture_snapshots]
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def classify(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
+            event_snapshot = await event_ref.get(transaction=transaction)
+            meal_snapshot = await meal_ref.get(transaction=transaction)
+            job_snapshot = await job_ref.get(transaction=transaction)
+            classification_snapshot = await classification_ref.get(transaction=transaction)
+            transactional_capture_snapshots = [
+                await capture_ref.get(transaction=transaction) for capture_ref in capture_refs
+            ]
+            if not account_snapshot.exists or account_snapshot.get("status") != "active":
+                raise AccountNotProvisioned
+            if classification_snapshot.exists:
+                stored = classification_snapshot.to_dict() or {}
+                if (
+                    stored.get("event_id") != event_id
+                    or stored.get("kind") != request.kind.value
+                    or stored.get("meal_title") != request.meal_title
+                    or stored.get("explanation") != request.explanation
+                    or stored.get("expected_event_revision")
+                    != request.expected_event_revision
+                ):
+                    raise IdempotencyConflict
+                if not meal_snapshot.exists:
+                    raise ValueError("Event classification exists without its meal")
+                classification = EventClassification(
+                    **stored,
+                    idempotency_key=idempotency_key,
+                )
+                return EventClassificationResult(
+                    classification=classification,
+                    meal=_model(meal_snapshot, MealEntry),
+                )
+            if not event_snapshot.exists:
+                raise ActivityEventNotFound
+            event = _model(event_snapshot, ActivityEvent)
+            if (
+                event.account_id != account.id
+                or event.status != ActivityEventStatus.OPEN
+                or event.current_revision != request.expected_event_revision
+            ):
+                raise InvalidEventClassificationTransition
+            if meal_snapshot.exists:
+                raise InvalidEventClassificationTransition
+            captures = [
+                self._capture_from_snapshot(snapshot, "")
+                for snapshot in transactional_capture_snapshots
+                if snapshot.exists
+            ]
+            if (
+                len(captures) != event.capture_count
+                or any(
+                    capture.account_id != account.id or capture.event_id != event.id
+                    for capture in captures
+                )
+            ):
+                raise InvalidEventClassificationTransition
+            captures.sort(key=capture_evidence_order)
+
+            now = utc_now()
+            first_capture = captures[0]
+            is_meal = request.kind == EventClassificationKind.MEAL
+            title = request.meal_title if is_meal else "Not cooking"
+            assert title is not None
+            rationale = "Identified by you before automated analysis produced a result."
+            if request.explanation is not None:
+                rationale = f"Your note: {request.explanation}"
+            meal = MealEntry(
+                id=event.id,
+                account_id=account.id,
+                capture_id=first_capture.id,
+                event_id=event.id,
+                occurred_at=event.first_capture_at,
+                occurred_utc_offset_minutes=first_capture.captured_utc_offset_minutes,
+                title=title,
+                confidence=Confidence.CONFIDENT,
+                components=(
+                    [MealComponent(name=title, ingredients=[], preparation_methods=[])]
+                    if is_meal
+                    else []
+                ),
+                observations=[],
+                alternatives=[],
+                rationale=rationale,
+                status=MealStatus.CONFIRMED if is_meal else MealStatus.NOT_COOKING,
+                revision_number=1,
+                created_at=now,
+            )
+            classification = EventClassification(
+                id=classification_id,
+                account_id=account.id,
+                event_id=event.id,
+                meal_id=meal.id,
+                kind=request.kind,
+                meal_title=request.meal_title,
+                explanation=request.explanation,
+                expected_event_revision=request.expected_event_revision,
+                idempotency_key=idempotency_key,
+                created_at=now,
+            )
+            revision = MealRevision(
+                id=classification.id,
+                account_id=account.id,
+                meal_id=meal.id,
+                number=1,
+                status=meal.status,
+                inference=inference_from_meal(meal),
+                source=MealRevisionSource.USER_CLASSIFICATION,
+                classification_id=classification.id,
+                created_at=now,
+            )
+            classified_event = event.model_copy(
+                update={
+                    "status": ActivityEventStatus.USER_CLASSIFIED,
+                    "meal_id": meal.id,
+                    "updated_at": now,
+                },
+                deep=True,
+            )
+            transaction.create(meal_ref, _document(meal))
+            transaction.create(
+                meal_ref.collection("revisions").document(revision.id),
+                _document(revision),
+            )
+            transaction.create(
+                classification_ref,
+                _document(classification, exclude={"idempotency_key"}),
+            )
+            transaction.set(event_ref, _document(classified_event))
+            for capture_ref in capture_refs:
+                transaction.update(
+                    capture_ref,
+                    {"status": CaptureStatus.PROCESSED, "updated_at": now},
+                )
+            if job_snapshot.exists:
+                job = _model(job_snapshot, DurableJob)
+                completed_job = DurableJob.model_validate(
+                    {
+                        **job.model_dump(mode="python"),
+                        "status": JobStatus.COMPLETED,
+                        "lease_id": None,
+                        "lease_owner": None,
+                        "lease_expires_at": None,
+                        "last_error_code": None,
+                        "last_error_message": None,
+                        "completed_at": now,
+                        "failed_at": None,
+                    }
+                )
+                transaction.set(job_ref, _document(completed_job))
+            return EventClassificationResult(
+                classification=classification,
+                meal=meal,
+            )
+
+        return await classify(transaction)
 
     async def publish_event_inference(
         self,

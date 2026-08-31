@@ -10,6 +10,7 @@ vi.mock("./firebase", () => firebase);
 
 import {
   AuthenticationRequiredError,
+  classifyEvent,
   correctKnowledge,
   createContextNote,
   createDeviceCamera,
@@ -26,6 +27,7 @@ import {
   listContextNotes,
   listFeedbackInventory,
   listKnowledge,
+  listJournalEvents,
   listOpenPatternQuestions,
   listProcessing,
   listPurchases,
@@ -299,6 +301,40 @@ describe("authenticated API client", () => {
       base_revision_number: 4,
       explanation: "The darker red meat and recent duck purchase distinguish it.",
       learning_disposition: "reusable",
+    }));
+  });
+
+  it("loads unresolved journal events and submits an owner classification", async () => {
+    firebase.auth.currentUser = {
+      getIdToken: vi.fn().mockResolvedValue("firebase-id-token"),
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse({ classification: {}, meal: {} }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listJournalEvents();
+    await classifyEvent("event/one", {
+      kind: "meal",
+      meal_title: "Steak and roasted vegetables",
+      explanation: "I can identify the package.",
+      expected_event_revision: 3,
+    }, "event-classification-0001");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://127.0.0.1:8080/v1/journal-events?limit=50",
+      "http://127.0.0.1:8080/v1/events/event%2Fone/classification",
+    ]);
+    const init = fetchMock.mock.calls[1][1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).get("Idempotency-Key")).toBe(
+      "event-classification-0001",
+    );
+    expect(init.body).toBe(JSON.stringify({
+      kind: "meal",
+      meal_title: "Steak and roasted vegetables",
+      explanation: "I can identify the package.",
+      expected_event_revision: 3,
     }));
   });
 

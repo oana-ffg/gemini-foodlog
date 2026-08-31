@@ -12,7 +12,7 @@ from foodlog_agent.event_reasoning import (
     AccountedEventInference,
     InvalidModelOutputError,
 )
-from foodlog_backend.errors import QuestionSuperseded
+from foodlog_backend.errors import IdempotencyConflict, QuestionSuperseded
 from foodlog_backend.grouping import GroupingPolicy
 from foodlog_backend.inference_schema import ActivityMealInferenceV1
 from foodlog_backend.model_accounting import ModelInvocationExecutionError
@@ -20,6 +20,8 @@ from foodlog_backend.models import (
     ActivityEventStatus,
     CaptureEnvelopeV1,
     CaptureStatus,
+    EventClassificationKind,
+    EventClassificationRequest,
     JobStatus,
     MealStatus,
     ModelSpendReservation,
@@ -494,6 +496,103 @@ def test_validated_hypothesis_is_published_once_with_its_distinct_state(
         assert duplicate is None
         assert len(reasoner.calls) == 1
         assert len(repository._meal_revisions[meal.id]) == 1
+
+    asyncio.run(scenario())
+
+
+def test_user_classification_closes_the_job_and_fences_a_late_model_publish() -> None:
+    async def scenario() -> None:
+        repository, account, event = await _prepared_event()
+        accounted = _accounted_hypothesis(
+            event_id=event.id,
+            capture_ids=["event-processing-earlier", "event-processing-later"],
+        )
+        processor = EventInferenceProcessor(
+            repository=repository,
+            reasoner=RecordingReasoner(result=accounted),
+        )
+        claimed = await processor.process(
+            account_id=account.id,
+            event_id=event.id,
+            expected_revision=event.current_revision,
+            worker_id="late-model-worker",
+        )
+        assert claimed is not None
+
+        classified = await repository.classify_event(
+            owner_user_id=account.owner_user_id,
+            event_id=event.id,
+            request=EventClassificationRequest(
+                kind=EventClassificationKind.MEAL,
+                meal_title="Steak and roasted vegetables",
+                explanation="The package and finished meal were visible to me.",
+                expected_event_revision=event.current_revision,
+            ),
+            idempotency_key="manual-classification-0001",
+        )
+
+        assert classified.meal.title == "Steak and roasted vegetables"
+        assert classified.meal.status == MealStatus.CONFIRMED
+        assert classified.meal.activity_hypothesis is None
+        assert await processor.publish(claimed) is None
+        stored_event, captures = await repository.event_evidence_for_account(
+            account_id=account.id,
+            event_id=event.id,
+        )
+        assert stored_event.status == ActivityEventStatus.USER_CLASSIFIED
+        assert all(capture.status == CaptureStatus.PROCESSED for capture in captures)
+        assert [meal.title for meal in await repository.list_meals(account.owner_user_id)] == [
+            "Steak and roasted vegetables"
+        ]
+        assert repository._meal_revisions[classified.meal.id][0].source == "user_classification"
+        job = await repository.job_for_account(
+            account.id,
+            event_inference_job_id(event.id),
+        )
+        assert job is not None and job.status == JobStatus.COMPLETED
+
+    asyncio.run(scenario())
+
+
+def test_manual_not_cooking_classification_is_idempotent_and_hidden_from_journal() -> None:
+    async def scenario() -> None:
+        repository, account, event = await _prepared_event()
+        request = EventClassificationRequest(
+            kind=EventClassificationKind.NOT_COOKING,
+            explanation="The cat jumped onto the counter.",
+            expected_event_revision=event.current_revision,
+        )
+        first = await repository.classify_event(
+            owner_user_id=account.owner_user_id,
+            event_id=event.id,
+            request=request,
+            idempotency_key="manual-not-cooking-0001",
+        )
+        duplicate = await repository.classify_event(
+            owner_user_id=account.owner_user_id,
+            event_id=event.id,
+            request=request,
+            idempotency_key="manual-not-cooking-0001",
+        )
+
+        assert duplicate == first
+        assert first.meal.status == MealStatus.NOT_COOKING
+        assert await repository.list_meals(account.owner_user_id) == []
+        assert [activity.id for activity in await repository.list_activity_history(
+            account.owner_user_id,
+            status=MealStatus.NOT_COOKING,
+        )] == [first.meal.id]
+        with pytest.raises(IdempotencyConflict):
+            await repository.classify_event(
+                owner_user_id=account.owner_user_id,
+                event_id=event.id,
+                request=EventClassificationRequest(
+                    kind=EventClassificationKind.MEAL,
+                    meal_title="Pasta",
+                    expected_event_revision=event.current_revision,
+                ),
+                idempotency_key="manual-not-cooking-0001",
+            )
 
     asyncio.run(scenario())
 

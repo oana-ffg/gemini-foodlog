@@ -1664,6 +1664,158 @@
         "title": "EntitlementMode",
         "type": "string"
       },
+      "EventClassification": {
+        "properties": {
+          "account_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Account Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "event_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Event Id",
+            "type": "string"
+          },
+          "expected_event_revision": {
+            "minimum": 1.0,
+            "title": "Expected Event Revision",
+            "type": "integer"
+          },
+          "explanation": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Explanation"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/EventClassificationKind"
+          },
+          "meal_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Meal Id",
+            "type": "string"
+          },
+          "meal_title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Meal Title"
+          }
+        },
+        "required": [
+          "id",
+          "account_id",
+          "event_id",
+          "meal_id",
+          "kind",
+          "expected_event_revision",
+          "idempotency_key"
+        ],
+        "title": "EventClassification",
+        "type": "object"
+      },
+      "EventClassificationKind": {
+        "enum": [
+          "meal",
+          "not_cooking"
+        ],
+        "title": "EventClassificationKind",
+        "type": "string"
+      },
+      "EventClassificationRequest": {
+        "properties": {
+          "expected_event_revision": {
+            "minimum": 1.0,
+            "title": "Expected Event Revision",
+            "type": "integer"
+          },
+          "explanation": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Explanation"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/EventClassificationKind"
+          },
+          "meal_title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Meal Title"
+          }
+        },
+        "required": [
+          "kind",
+          "expected_event_revision"
+        ],
+        "title": "EventClassificationRequest",
+        "type": "object"
+      },
+      "EventClassificationResult": {
+        "properties": {
+          "classification": {
+            "$ref": "#/components/schemas/EventClassification"
+          },
+          "meal": {
+            "$ref": "#/components/schemas/MealEntry"
+          }
+        },
+        "required": [
+          "classification",
+          "meal"
+        ],
+        "title": "EventClassificationResult",
+        "type": "object"
+      },
       "FeedbackInventoryView": {
         "properties": {
           "meal_feedback": {
@@ -2015,6 +2167,70 @@
           "replacement"
         ],
         "title": "IngredientCorrection",
+        "type": "object"
+      },
+      "JournalEventView": {
+        "properties": {
+          "camera_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Camera Ids",
+            "type": "array"
+          },
+          "capture_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Capture Ids",
+            "type": "array"
+          },
+          "captured_at": {
+            "format": "date-time",
+            "title": "Captured At",
+            "type": "string"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "event_revision": {
+            "minimum": 1.0,
+            "title": "Event Revision",
+            "type": "integer"
+          },
+          "latest_failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Failure Code"
+          },
+          "state": {
+            "enum": [
+              "processing",
+              "error_processing"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "event_revision",
+          "captured_at",
+          "camera_ids",
+          "capture_ids",
+          "state"
+        ],
+        "title": "JournalEventView",
         "type": "object"
       },
       "KnowledgeBeliefStrength": {
@@ -3087,6 +3303,17 @@
             ],
             "title": "Base Revision Number"
           },
+          "classification_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Classification Id"
+          },
           "correction": {
             "anyOf": [
               {
@@ -3174,7 +3401,8 @@
       "MealRevisionSource": {
         "enum": [
           "inference",
-          "user_feedback"
+          "user_feedback",
+          "user_classification"
         ],
         "title": "MealRevisionSource",
         "type": "string"
@@ -5881,6 +6109,82 @@
         "summary": "Device Status"
       }
     },
+    "/v1/events/{event_id}/classification": {
+      "post": {
+        "operationId": "classify_unresolved_event_v1_events__event_id__classification_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "title": "Event Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventClassificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventClassificationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Classify Unresolved Event"
+      }
+    },
     "/v1/exports": {
       "post": {
         "operationId": "request_account_export_v1_exports_post",
@@ -6338,6 +6642,68 @@
           }
         },
         "summary": "List Journal"
+      }
+    },
+    "/v1/journal-events": {
+      "get": {
+        "operationId": "list_unresolved_journal_events_v1_journal_events_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/JournalEventView"
+                  },
+                  "title": "Response List Unresolved Journal Events V1 Journal Events Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Unresolved Journal Events"
       }
     },
     "/v1/knowledge": {

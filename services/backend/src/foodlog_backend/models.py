@@ -57,6 +57,7 @@ class MealFeedbackLearningDisposition(StrEnum):
 class MealRevisionSource(StrEnum):
     INFERENCE = "inference"
     USER_FEEDBACK = "user_feedback"
+    USER_CLASSIFICATION = "user_classification"
 
 
 class QuestionStatus(StrEnum):
@@ -302,6 +303,7 @@ class AccountExportStatus(StrEnum):
 class ActivityEventStatus(StrEnum):
     OPEN = "open"
     INFERRED = "inferred"
+    USER_CLASSIFIED = "user_classified"
 
 
 class EntitlementMode(StrEnum):
@@ -1546,6 +1548,54 @@ class MealEntry(MealInference):
         return self
 
 
+class EventClassificationKind(StrEnum):
+    MEAL = "meal"
+    NOT_COOKING = "not_cooking"
+
+
+class EventClassificationRequest(BaseModel):
+    kind: EventClassificationKind
+    meal_title: CorrectionText | None = None
+    explanation: str | None = Field(default=None, min_length=1, max_length=2_000)
+    expected_event_revision: int = Field(ge=1)
+
+    @field_validator("explanation")
+    @classmethod
+    def strip_explanation(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must contain non-whitespace text")
+        return stripped
+
+    @model_validator(mode="after")
+    def classification_payload_is_consistent(self) -> "EventClassificationRequest":
+        if self.kind == EventClassificationKind.MEAL and self.meal_title is None:
+            raise ValueError("meal classification requires meal_title")
+        if self.kind == EventClassificationKind.NOT_COOKING and self.meal_title is not None:
+            raise ValueError("not-cooking classification forbids meal_title")
+        return self
+
+
+class EventClassification(BaseModel):
+    id: str = Field(min_length=1, max_length=160)
+    account_id: str = Field(min_length=1, max_length=128)
+    event_id: str = Field(min_length=1, max_length=160)
+    meal_id: str = Field(min_length=1, max_length=160)
+    kind: EventClassificationKind
+    meal_title: str | None = Field(default=None, min_length=1, max_length=200)
+    explanation: str | None = Field(default=None, min_length=1, max_length=2_000)
+    expected_event_revision: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=8, max_length=128)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class EventClassificationResult(BaseModel):
+    classification: EventClassification
+    meal: MealEntry
+
+
 class MealFeedbackRequest(BaseModel):
     kind: MealFeedbackKind
     actual_meal: str | None = Field(default=None, min_length=1, max_length=200)
@@ -1639,6 +1689,7 @@ class MealRevision(BaseModel):
     activity_hypothesis: ActivityMealInferenceV1 | None = None
     source: MealRevisionSource
     feedback_id: str | None = None
+    classification_id: str | None = None
     base_revision_number: int | None = Field(default=None, ge=1)
     correction: MealCorrection | None = None
     created_at: datetime = Field(default_factory=utc_now)

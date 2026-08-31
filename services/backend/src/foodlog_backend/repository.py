@@ -30,6 +30,7 @@ from .errors import (
     InboundAddressCollision,
     InboundAddressStateConflict,
     InvalidDeviceCredential,
+    InvalidEventClassificationTransition,
     InvalidKnowledgeProvenance,
     InvalidKnowledgeTransition,
     InvalidMealCorrectionTarget,
@@ -101,6 +102,10 @@ from .models import (
     DeviceSnapshotStatus,
     DurableJob,
     EntitlementMode,
+    EventClassification,
+    EventClassificationKind,
+    EventClassificationRequest,
+    EventClassificationResult,
     InboundMailAddress,
     InboundMailAddressStatus,
     InboundMailRoute,
@@ -274,6 +279,11 @@ def user_context_note_request_hash(request: UserContextNoteCreate) -> str:
 
 def user_context_note_id(account_id: str, idempotency_key: str) -> str:
     return sha256(f"user-context-note-v1:{account_id}:{idempotency_key}".encode()).hexdigest()
+
+
+def event_classification_id(account_id: str, idempotency_key: str) -> str:
+    identity = f"event-classification-v1\0{account_id}\0{idempotency_key}"
+    return sha256(identity.encode()).hexdigest()
 
 
 def validate_purchase_list_limit(limit: int) -> None:
@@ -1113,6 +1123,22 @@ class Repository(Protocol):
         event_id: str,
     ) -> tuple[ActivityEvent, list[CaptureRecord]]: ...
 
+    async def recent_events_for_owner(
+        self,
+        owner_user_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[ActivityEvent]: ...
+
+    async def classify_event(
+        self,
+        *,
+        owner_user_id: str,
+        event_id: str,
+        request: EventClassificationRequest,
+        idempotency_key: str,
+    ) -> EventClassificationResult: ...
+
     async def publish_event_inference(
         self,
         *,
@@ -1424,6 +1450,8 @@ class InMemoryRepository:
         self._capture_by_idempotency: dict[tuple[str, str], str] = {}
         self._jobs: dict[tuple[str, str], DurableJob] = {}
         self._events: dict[tuple[str, str], ActivityEvent] = {}
+        self._event_classifications: dict[str, EventClassification] = {}
+        self._event_classification_results: dict[str, EventClassificationResult] = {}
         self._segments: dict[tuple[str, str], ActivitySegment] = {}
         self._event_head_by_source: dict[tuple[str, str], str] = {}
         self._meals: dict[str, MealEntry] = {}
@@ -3705,6 +3733,160 @@ class InMemoryRepository:
             if len(captures) != event.capture_count:
                 raise ValueError("Activity event evidence is incomplete")
             return event.model_copy(deep=True), sorted(captures, key=capture_evidence_order)
+
+    async def recent_events_for_owner(
+        self,
+        owner_user_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[ActivityEvent]:
+        if not 1 <= limit <= 50:
+            raise ValueError("event list limit must be between 1 and 50")
+        account = await self.account_for_owner(owner_user_id)
+        async with self._lock:
+            events = sorted(
+                (
+                    event
+                    for (account_id, _), event in self._events.items()
+                    if account_id == account.id
+                ),
+                key=lambda event: (event.last_capture_at, event.id),
+                reverse=True,
+            )
+            return [event.model_copy(deep=True) for event in events[:limit]]
+
+    async def classify_event(
+        self,
+        *,
+        owner_user_id: str,
+        event_id: str,
+        request: EventClassificationRequest,
+        idempotency_key: str,
+    ) -> EventClassificationResult:
+        account = await self.account_for_owner(owner_user_id)
+        classification_id = event_classification_id(account.id, idempotency_key)
+        async with self._lock:
+            existing = self._event_classifications.get(classification_id)
+            if existing is not None:
+                if (
+                    existing.event_id != event_id
+                    or existing.kind != request.kind
+                    or existing.meal_title != request.meal_title
+                    or existing.explanation != request.explanation
+                    or existing.expected_event_revision != request.expected_event_revision
+                ):
+                    raise IdempotencyConflict
+                return self._event_classification_results[classification_id].model_copy(deep=True)
+
+            event_key = (account.id, event_id)
+            event = self._events.get(event_key)
+            if event is None:
+                raise ActivityEventNotFound
+            if (
+                event.status != ActivityEventStatus.OPEN
+                or event.current_revision != request.expected_event_revision
+            ):
+                raise InvalidEventClassificationTransition
+            captures = sorted(
+                [
+                    capture
+                    for capture in self._captures.values()
+                    if capture.account_id == account.id and capture.event_id == event_id
+                ],
+                key=capture_evidence_order,
+            )
+            if len(captures) != event.capture_count:
+                raise ValueError("Activity event evidence is incomplete")
+
+            now = utc_now()
+            first_capture = captures[0]
+            meal_id = event.meal_id or event.id
+            if meal_id in self._meals:
+                raise InvalidEventClassificationTransition
+            is_meal = request.kind == EventClassificationKind.MEAL
+            title = request.meal_title if is_meal else "Not cooking"
+            assert title is not None
+            rationale = "Identified by you before automated analysis produced a result."
+            if request.explanation is not None:
+                rationale = f"Your note: {request.explanation}"
+            meal = MealEntry(
+                id=meal_id,
+                account_id=account.id,
+                capture_id=first_capture.id,
+                event_id=event.id,
+                occurred_at=event.first_capture_at,
+                occurred_utc_offset_minutes=first_capture.captured_utc_offset_minutes,
+                title=title,
+                confidence=Confidence.CONFIDENT,
+                components=(
+                    [MealComponent(name=title, ingredients=[], preparation_methods=[])]
+                    if is_meal
+                    else []
+                ),
+                observations=[],
+                alternatives=[],
+                rationale=rationale,
+                status=MealStatus.CONFIRMED if is_meal else MealStatus.NOT_COOKING,
+                revision_number=1,
+                created_at=now,
+            )
+            classification = EventClassification(
+                id=classification_id,
+                account_id=account.id,
+                event_id=event.id,
+                meal_id=meal.id,
+                kind=request.kind,
+                meal_title=request.meal_title,
+                explanation=request.explanation,
+                expected_event_revision=request.expected_event_revision,
+                idempotency_key=idempotency_key,
+                created_at=now,
+            )
+            revision = MealRevision(
+                id=classification.id,
+                account_id=account.id,
+                meal_id=meal.id,
+                number=1,
+                status=meal.status,
+                inference=inference_from_meal(meal),
+                source=MealRevisionSource.USER_CLASSIFICATION,
+                classification_id=classification.id,
+                created_at=now,
+            )
+            self._meals[meal.id] = meal
+            self._meal_revisions[meal.id] = [revision]
+            for capture in captures:
+                self._captures[capture.id] = capture.model_copy(
+                    update={"status": CaptureStatus.PROCESSED},
+                    deep=True,
+                )
+                self._meal_by_capture[capture.id] = meal.id
+            self._events[event_key] = event.model_copy(
+                update={
+                    "status": ActivityEventStatus.USER_CLASSIFIED,
+                    "meal_id": meal.id,
+                    "updated_at": now,
+                },
+                deep=True,
+            )
+            job_key = (account.id, event_inference_job_id(event.id))
+            job = self._jobs.get(job_key)
+            if job is not None:
+                self._jobs[job_key] = self._updated_job(
+                    job,
+                    status=JobStatus.COMPLETED,
+                    lease_id=None,
+                    lease_owner=None,
+                    lease_expires_at=None,
+                    last_error_code=None,
+                    last_error_message=None,
+                    completed_at=now,
+                    failed_at=None,
+                )
+            result = EventClassificationResult(classification=classification, meal=meal)
+            self._event_classifications[classification.id] = classification
+            self._event_classification_results[classification.id] = result
+            return result.model_copy(deep=True)
 
     async def publish_event_inference(
         self,

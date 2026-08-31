@@ -13,6 +13,7 @@ from PIL import Image
 
 from foodlog_backend.app import create_app, image_dimensions
 from foodlog_backend.errors import AccountCapacityReached
+from foodlog_backend.grouping import GroupingPolicy
 from foodlog_backend.inference import FixtureInferenceEngine, verify_fixture_files
 from foodlog_backend.models import (
     CaptureEnvelopeV1,
@@ -23,6 +24,7 @@ from foodlog_backend.models import (
     MealFeedbackRequest,
     QuestionEvidenceKind,
     QuestionEvidenceReference,
+    capture_grouping_job_id,
     utc_now,
 )
 from foodlog_backend.repository import revised_inference
@@ -392,6 +394,92 @@ def test_processing_endpoint_is_private_tenant_scoped_and_never_caches() -> None
     ]
     assert foreign.status_code == 200
     assert foreign.json() == []
+
+
+def test_unresolved_event_is_a_private_recoverable_journal_card() -> None:
+    app = create_app(Settings(environment="test"))
+    repository = app.state.container.repository
+    image = (FIXTURES / "synthetic-steak-airfryer.png").read_bytes()
+    with TestClient(app) as client:
+        account, camera = provision(client)
+        accepted = post_shared_browser_capture(
+            client,
+            camera=camera,
+            image=image,
+            idempotency_key="manual-journal-capture-0001",
+        )
+        capture_id = accepted.json()["capture_id"]
+
+        async def group_capture() -> str:
+            lease_id = "manual-journal-grouping-lease"
+            claimed = await repository.claim_job(
+                account_id=account["id"],
+                job_id=capture_grouping_job_id(capture_id),
+                expected_subject_revision=1,
+                lease_id=lease_id,
+                lease_owner="manual-journal-test",
+                lease_expires_at=utc_now() + timedelta(minutes=5),
+            )
+            assert claimed is not None
+            grouped = await repository.group_capture(
+                account_id=account["id"],
+                capture_id=capture_id,
+                lease_id=lease_id,
+                lease_owner="manual-journal-test",
+                policy=GroupingPolicy(quiet_after=timedelta(seconds=90)),
+            )
+            assert grouped is not None
+            return grouped.event.id
+
+        event_id = asyncio.run(group_capture())
+        unresolved = client.get("/v1/journal-events", headers=USER_HEADER)
+        foreign_headers = {"X-FoodLog-Local-User": "owner-b"}
+        assert client.post("/v1/accounts", headers=foreign_headers).status_code == 200
+        foreign = client.get("/v1/journal-events", headers=foreign_headers)
+        cross_tenant = client.post(
+            f"/v1/events/{event_id}/classification",
+            headers={**foreign_headers, "Idempotency-Key": "foreign-manual-event-0001"},
+            json={
+                "kind": "meal",
+                "meal_title": "Should not work",
+                "expected_event_revision": 1,
+            },
+        )
+        classified = client.post(
+            f"/v1/events/{event_id}/classification",
+            headers={**USER_HEADER, "Idempotency-Key": "manual-journal-event-0001"},
+            json={
+                "kind": "meal",
+                "meal_title": "Steak and roasted vegetables",
+                "expected_event_revision": 1,
+            },
+        )
+        resolved = client.get("/v1/journal-events", headers=USER_HEADER)
+        journal = client.get("/v1/journal", headers=USER_HEADER)
+
+    assert unresolved.status_code == 200
+    assert unresolved.headers["cache-control"] == "private, no-store"
+    assert unresolved.json() == [
+        {
+            "event_id": event_id,
+            "event_revision": 1,
+            "captured_at": unresolved.json()[0]["captured_at"],
+            "camera_ids": [camera["id"]],
+            "capture_ids": [capture_id],
+            "state": "processing",
+            "latest_failure_code": None,
+        }
+    ]
+    assert foreign.status_code == 200 and foreign.json() == []
+    assert cross_tenant.status_code == 404
+    assert classified.status_code == 200
+    assert classified.json()["meal"]["title"] == "Steak and roasted vegetables"
+    assert classified.json()["meal"]["status"] == "confirmed"
+    assert classified.json()["meal"]["activity_hypothesis"] is None
+    assert resolved.json() == []
+    assert [entry["title"] for entry in journal.json()] == [
+        "Steak and roasted vegetables"
+    ]
 
 
 def test_audit_events_are_idempotent_private_and_cover_user_visible_operations() -> None:

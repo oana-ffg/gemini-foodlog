@@ -35,13 +35,15 @@ The smallest convincing end-to-end story is:
 1. A physical camera or webcam simulator observes ordinary kitchen activity.
 2. The client uploads an activity sequence without the user doing anything.
 3. The backend securely stores and groups the frames.
-4. The agent inspects the event and retrieves relevant account-scoped context.
-5. It records a meal with confidence, alternatives, evidence, and an understandable rationale.
-6. If uncertainty matters, it logs the best guess provisionally and may ask a narrow, evidence-backed question on that event without blocking the journal.
-7. The user confirms or corrects the result in the web UI.
-8. The meal and household knowledge are revised without erasing the original evidence or feedback.
-9. A later similar event benefits from that learning.
-10. After enough history exists, the agent may surface a specific pattern hypothesis with supporting examples for the user to confirm or correct.
+4. The grouped event becomes visible in the owner's journal with its stored image or burst while the agent works.
+5. The agent inspects the event and retrieves relevant account-scoped context.
+6. It records a meal with confidence, alternatives, evidence, and an understandable rationale.
+7. If uncertainty matters, it logs the best guess provisionally and may ask a narrow, evidence-backed question on that event without blocking the journal.
+8. If automated analysis fails, the same journal card says `Error processing` and still lets the owner identify the meal or discard it as not cooking.
+9. The user confirms or corrects the result in the web UI.
+10. The meal and household knowledge are revised without erasing the original evidence or feedback.
+11. A later similar event benefits from that learning.
+12. After enough history exists, the agent may surface a specific pattern hypothesis with supporting examples for the user to confirm or correct.
 
 ### 1.3 Planned production slice
 
@@ -51,7 +53,7 @@ The first durable production vertical slice is browser-to-journal:
 2. The browser obtains webcam permission and creates an account-scoped browser-camera session.
 3. The real ingestion API accepts an authenticated frame, reserves quota idempotently, stores the private image, and publishes processing work.
 4. The real worker assembles one event, invokes Gemini through Vertex AI, validates the structured result, and persists the inference and full trace.
-5. The web application displays the resulting journal entry with its image, confidence, evidence, and processing status.
+5. The web application displays the grouped event immediately with its private image burst and processing state, then replaces that state with the validated inference or a recoverable error without hiding the evidence.
 
 This slice uses the production contracts and tenant boundary. It is not a throwaway manual-upload endpoint. The first iteration may exercise a single browser event before local motion grouping is calibrated, but the browser capture component and ingestion path remain the ones extended for motion bursts. Corrections and learning, purchase email, richer event grouping, and physical firmware follow once this spine works on deployed GCP.
 
@@ -784,6 +786,8 @@ The MVP GUI must let an authenticated user:
 
 - start, pause, and understand the limitations of browser webcam trial capture;
 - browse the chronological meal journal;
+- see grouped image events in that same chronology while Gemini is processing or after it fails;
+- identify an unresolved event manually or discard it as not cooking without allowing a late model result to overwrite the owner's answer;
 - distinguish provisional, confirmed, and corrected meals;
 - open a meal and inspect its event images, evidence, alternatives, and rationale;
   - answer narrow event-specific questions on the event that produced them;
@@ -994,14 +998,14 @@ The design must handle ordinary retries and partial failures without corrupting 
 - repeated image uploads are idempotent;
 - repeated inbound emails do not duplicate purchases;
 - Pub/Sub redelivery does not duplicate events, meals, questions, or wiki revisions;
-- an agent failure leaves the event retryable and inspectable;
+- an agent failure leaves the stored image burst inspectable and manually classifiable on its normal journal card;
 - a failed wiki update cannot erase confirmed knowledge;
 - a later correction preserves the earlier inference and evidence;
 - quota reservation and image acceptance cannot diverge silently;
 - a Pushover outage does not roll back account creation, and its unsent account-created event remains visible and retryable;
 - a failed export never exposes a partial archive as complete, and an export cannot include data created after its recorded snapshot boundary;
 - unauthenticated or cross-account requests fail closed;
-- a processing failure is visible to operators rather than represented as a successful meal.
+- a processing failure is visible to the owner as `Error processing`, not only to operators and never as a successful meal.
 
 ## 17. Open decisions
 

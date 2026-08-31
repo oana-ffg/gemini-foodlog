@@ -355,6 +355,10 @@ input:focus, textarea:focus, select:focus { outline: 3px solid rgba(240, 187, 92
 .journal-card__body { padding: 36px; }
 .journal-card h3 { margin: 16px 0 12px; font-size: 2rem; letter-spacing: -0.035em; }
 .journal-card p, .journal-card li { line-height: 1.6; color: #555d57; }
+.processing-badge { display: inline-flex; align-items: center; min-height: 28px; padding: 4px 11px; border-radius: 999px; font-size: 0.8rem; font-weight: 800; }
+.processing-badge--processing { color: #72510b; background: #fff0bd; }
+.processing-badge--error_processing { color: #8a3627; background: #f7d9d2; }
+.journal-card--unresolved .feedback-form { margin-top: 24px; }
 .entry-meta { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: #777d78; font-size: 0.82rem; }
 .badge-row { display: flex; flex-wrap: wrap; gap: 7px; }
 .confidence { padding: 6px 10px; border-radius: 999px; font-weight: 700; text-transform: capitalize; }
