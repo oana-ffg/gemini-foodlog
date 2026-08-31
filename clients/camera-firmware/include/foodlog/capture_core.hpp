@@ -1,9 +1,7 @@
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <string>
 #include <vector>
 
 namespace foodlog {
@@ -74,75 +72,7 @@ class MotionController {
   std::uint32_t burst_frame_index_ = 0;
 };
 
-enum class DeliveryResult {
-  kAcknowledged,
-  kTransientFailure,
-  kPermanentAuthenticationFailure,
-  kPermanentQuotaFailure,
-  kPermanentItemFailure,
-};
-
-enum class QueueBlockReason {
-  kAuthentication,
-  kQuota,
-};
-
-struct QueueItem {
-  std::string id;
-  std::string idempotency_key;
-  std::uint64_t captured_at_ms;
-  std::uint32_t attempt_count = 0;
-  std::uint64_t next_attempt_at_ms = 0;
-
-  bool operator==(const QueueItem& other) const {
-    return id == other.id && idempotency_key == other.idempotency_key &&
-           captured_at_ms == other.captured_at_ms &&
-           attempt_count == other.attempt_count &&
-           next_attempt_at_ms == other.next_attempt_at_ms;
-  }
-};
-
-struct QueueSnapshot {
-  std::vector<QueueItem> items;
-  std::uint64_t capacity_drop_count = 0;
-  std::uint64_t permanent_item_failure_count = 0;
-  std::optional<QueueBlockReason> block_reason;
-
-  bool operator==(const QueueSnapshot& other) const {
-    return items == other.items &&
-           capacity_drop_count == other.capacity_drop_count &&
-           permanent_item_failure_count == other.permanent_item_failure_count &&
-           block_reason == other.block_reason;
-  }
-};
-
-class QueueSnapshotStore {
- public:
-  virtual ~QueueSnapshotStore() = default;
-  [[nodiscard]] virtual QueueSnapshot load() const = 0;
-  virtual void save(const QueueSnapshot& snapshot) = 0;
-};
-
-class DeliveryQueue {
- public:
-  DeliveryQueue(QueueSnapshotStore& store, std::size_t capacity);
-
-  bool enqueue(QueueItem item);
-  [[nodiscard]] std::optional<QueueItem> next_ready(std::uint64_t now_ms) const;
-  void record_result(const std::string& item_id, DeliveryResult result,
-                     std::uint64_t now_ms);
-  void resume_after_operator_action(std::uint64_t now_ms);
-
-  [[nodiscard]] const QueueSnapshot& snapshot() const noexcept;
-
- private:
-  static std::uint64_t retry_delay_ms(std::uint32_t attempt_count);
-  void validate_snapshot(const QueueSnapshot& snapshot) const;
-  void persist(QueueSnapshot candidate);
-
-  QueueSnapshotStore& store_;
-  std::size_t capacity_;
-  QueueSnapshot snapshot_;
-};
+[[nodiscard]] std::uint64_t delivery_retry_delay_ms(
+    std::uint32_t attempt_count);
 
 }  // namespace foodlog

@@ -4,8 +4,6 @@
 #include <cstdlib>
 #include <limits>
 #include <stdexcept>
-#include <unordered_set>
-#include <utility>
 
 namespace foodlog {
 
@@ -135,148 +133,17 @@ void MotionController::require_monotonic(const std::uint64_t now_ms) {
   last_observation_ms_ = now_ms;
 }
 
-DeliveryQueue::DeliveryQueue(QueueSnapshotStore& store,
-                             const std::size_t capacity)
-    : store_(store), capacity_(capacity), snapshot_(store.load()) {
-  if (capacity_ == 0) {
-    throw std::invalid_argument("queue capacity must be positive");
-  }
-  validate_snapshot(snapshot_);
-}
-
-bool DeliveryQueue::enqueue(QueueItem item) {
-  if (item.id.empty() || item.idempotency_key.empty()) {
-    throw std::invalid_argument("queue item identity must not be empty");
-  }
-  if (snapshot_.block_reason.has_value()) {
-    return false;
-  }
-  const auto existing = std::find_if(
-      snapshot_.items.begin(), snapshot_.items.end(),
-      [&item](const QueueItem& candidate) {
-        return candidate.id == item.id ||
-               candidate.idempotency_key == item.idempotency_key;
-      });
-  if (existing != snapshot_.items.end()) {
-    if (existing->id == item.id &&
-        existing->idempotency_key == item.idempotency_key &&
-        existing->captured_at_ms == item.captured_at_ms) {
-      return true;
-    }
-    throw std::invalid_argument("queue item identity must be unique");
-  }
-  QueueSnapshot candidate = snapshot_;
-  if (candidate.items.size() >= capacity_) {
-    ++candidate.capacity_drop_count;
-    persist(std::move(candidate));
-    return false;
-  }
-  item.attempt_count = 0;
-  item.next_attempt_at_ms = 0;
-  candidate.items.push_back(std::move(item));
-  persist(std::move(candidate));
-  return true;
-}
-
-std::optional<QueueItem> DeliveryQueue::next_ready(
-    const std::uint64_t now_ms) const {
-  if (snapshot_.block_reason.has_value() || snapshot_.items.empty()) {
-    return std::nullopt;
-  }
-  const QueueItem& oldest = snapshot_.items.front();
-  if (oldest.next_attempt_at_ms > now_ms) {
-    return std::nullopt;
-  }
-  return oldest;
-}
-
-void DeliveryQueue::record_result(const std::string& item_id,
-                                  const DeliveryResult result,
-                                  const std::uint64_t now_ms) {
-  if (snapshot_.items.empty() || snapshot_.items.front().id != item_id) {
-    throw std::invalid_argument("delivery result must target the oldest item");
-  }
-  QueueSnapshot candidate = snapshot_;
-  QueueItem& item = candidate.items.front();
-  if (item.next_attempt_at_ms > now_ms) {
-    throw std::invalid_argument("delivery result precedes the retry deadline");
-  }
-  if (item.attempt_count == std::numeric_limits<std::uint32_t>::max()) {
-    throw std::overflow_error("queue attempt counter exhausted");
-  }
-  ++item.attempt_count;
-
-  switch (result) {
-    case DeliveryResult::kAcknowledged:
-      candidate.items.erase(candidate.items.begin());
-      break;
-    case DeliveryResult::kTransientFailure:
-      item.next_attempt_at_ms =
-          saturating_add(now_ms, retry_delay_ms(item.attempt_count));
-      break;
-    case DeliveryResult::kPermanentAuthenticationFailure:
-      candidate.block_reason = QueueBlockReason::kAuthentication;
-      break;
-    case DeliveryResult::kPermanentQuotaFailure:
-      candidate.block_reason = QueueBlockReason::kQuota;
-      break;
-    case DeliveryResult::kPermanentItemFailure:
-      candidate.items.erase(candidate.items.begin());
-      ++candidate.permanent_item_failure_count;
-      break;
-  }
-  persist(std::move(candidate));
-}
-
-void DeliveryQueue::resume_after_operator_action(const std::uint64_t now_ms) {
-  if (!snapshot_.block_reason.has_value()) {
-    return;
-  }
-  QueueSnapshot candidate = snapshot_;
-  candidate.block_reason.reset();
-  if (!candidate.items.empty()) {
-    candidate.items.front().next_attempt_at_ms = now_ms;
-  }
-  persist(std::move(candidate));
-}
-
-const QueueSnapshot& DeliveryQueue::snapshot() const noexcept { return snapshot_; }
-
-std::uint64_t DeliveryQueue::retry_delay_ms(
+std::uint64_t delivery_retry_delay_ms(
     const std::uint32_t attempt_count) {
+  if (attempt_count == 0) {
+    throw std::invalid_argument("retry attempt count must be positive");
+  }
   constexpr std::uint64_t kMaximumDelayMs = 60'000;
   if (attempt_count >= 7) {
     return kMaximumDelayMs;
   }
   return std::min(kMaximumDelayMs,
                   std::uint64_t{1'000} << (attempt_count - 1));
-}
-
-void DeliveryQueue::validate_snapshot(const QueueSnapshot& snapshot) const {
-  if (snapshot.items.size() > capacity_) {
-    throw std::invalid_argument("persisted queue exceeds configured capacity");
-  }
-  std::unordered_set<std::string> ids;
-  std::unordered_set<std::string> idempotency_keys;
-  std::uint64_t previous_captured_at_ms = 0;
-  bool first = true;
-  for (const QueueItem& item : snapshot.items) {
-    if (item.id.empty() || item.idempotency_key.empty() || !ids.insert(item.id).second ||
-        !idempotency_keys.insert(item.idempotency_key).second) {
-      throw std::invalid_argument("persisted queue identity is invalid");
-    }
-    if (!first && item.captured_at_ms < previous_captured_at_ms) {
-      throw std::invalid_argument("persisted queue is not oldest-first");
-    }
-    first = false;
-    previous_captured_at_ms = item.captured_at_ms;
-  }
-}
-
-void DeliveryQueue::persist(QueueSnapshot candidate) {
-  validate_snapshot(candidate);
-  store_.save(candidate);
-  snapshot_ = std::move(candidate);
 }
 
 }  // namespace foodlog

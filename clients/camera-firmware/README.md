@@ -27,10 +27,21 @@ the activity remains open, and returns to watching after five minutes without
 motion. These defaults match the browser client and remain configuration values
 for later real-kitchen calibration.
 
-The first hardware prototype retries a transient upload three times in memory.
-Its encrypted persistent image queue and encrypted-at-rest credential store are
-not implemented yet. Do not deploy this build in an untrusted physical location;
-keep the board under household control until those hardening items land.
+Firmware 0.2.0 mounts the onboard microSD card in one-bit SDMMC mode and keeps
+the most recent 100 unsent captures in an application-encrypted queue. Each JPEG,
+its metadata, and its stable idempotency key are protected with AES-256-GCM under
+a device-specific key derived from the high-entropy camera credential. Files are
+committed through write, flush, and rename; startup removes interrupted temporary
+files, delivery is oldest-first with bounded exponential backoff, and an item is
+deleted only after backend acknowledgement or a permanent item rejection. A full
+queue evicts the oldest unsent capture and reports the loss over serial.
+
+The card performs an encrypted write/read/authentication/delete self-test at
+every boot. If the card is missing or fails, online capture remains available but
+the firmware refuses to persist private images without encryption. Credentials
+remain in ESP32 NVS without hardware flash encryption, so do not deploy this
+prototype in an untrusted physical location until the irreversible release
+hardening workflow is separately proven.
 
 See [the physical camera design](../../docs/physical-camera-design.md) for the
 hardware, provisioning, trust, encryption, and bench-test decisions.

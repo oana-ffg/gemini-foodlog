@@ -91,13 +91,22 @@ Boot v2, release-mode flash encryption, and HMAC-backed NVS encryption are relea
 hardening work and must only be enabled after recovery is proven because those
 eFuse changes are irreversible.
 
-The current hardware adapter deliberately does **not** persist failed JPEGs to
-microSD: plaintext offline images would violate the account privacy boundary. It
-retries one in-memory JPEG up to three times and reports a bounded drop category
-over serial. The checked-in portable queue state machine already proves FIFO,
-backoff, reboot identity, quota/authentication blocking, and drop accounting, but
-its encrypted SD image-store adapter remains unimplemented. CAP-012 therefore
-cannot be marked complete until that adapter and power-loss bench gate exist.
+Firmware 0.2.0 persists the most recent 100 unsent captures to the onboard
+microSD card. JPEG bytes, capture metadata, and stable idempotency identity are
+encrypted and authenticated with AES-256-GCM under a device-specific key derived
+from the high-entropy camera credential. Each record is committed with
+write-flush-rename, interrupted temporary files are removed at startup, delivery
+is oldest-first with exponential backoff capped at one minute, and acknowledged
+or permanently invalid items are deleted. When capacity is reached, the oldest
+unsent item is evicted and the loss is reported over serial so the card retains
+the latest evidence.
+
+Every boot runs a real encrypted write/read/authentication/delete card self-test.
+If the card is missing or unhealthy, online transfer remains available but the
+firmware refuses a plaintext persistence fallback. The CAP-012 hardware gate was
+proven with a private manual JPEG committed before an externally forced ESP32
+reset, recovered as one queued item after reboot, accepted by the backend under
+the original idempotency identity, and removed from the card only afterward.
 
 ## Firmware behavior
 
@@ -132,7 +141,7 @@ The exact board gate is:
 5. request one private snapshot from the signed-in website and verify the resulting
    capture identity and image;
 6. verify motion telemetry and a real hand-wave trigger with Oana;
-7. later, add encrypted persistent storage and prove Wi-Fi/power-loss recovery,
+7. prove the encrypted queue across an externally interrupted power cycle,
    byte-identical retry, and truthful drop accounting;
 8. verify focus, colour visibility, Wi-Fi reliability, and safe placement in the
    intended kitchen position.

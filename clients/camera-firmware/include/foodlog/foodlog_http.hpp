@@ -40,15 +40,13 @@ class FoodLogHttpClient {
 
   [[nodiscard]] DeviceStatusResult check_device_status();
   [[nodiscard]] bool poll_snapshot_request(String& request_id);
-  [[nodiscard]] UploadResult upload_jpeg(const std::uint8_t* jpeg,
-                                         std::size_t jpeg_length,
-                                         const CaptureMetadata& metadata,
-                                         const String& idempotency_key,
-                                         String& capture_id);
-
- private:
+  [[nodiscard]] UploadResult upload_jpeg_json(
+      const std::uint8_t* jpeg, std::size_t jpeg_length,
+      const String& metadata_json, const String& idempotency_key,
+      String& capture_id);
   [[nodiscard]] String metadata_json(const CaptureMetadata& metadata) const;
 
+ private:
   const DeviceConfig& config_;
 };
 

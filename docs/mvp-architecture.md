@@ -200,10 +200,11 @@ Browser capture is a zero-install evaluation path, not equivalent to an unattend
 The MVP physical client targets the available Freenove FNK0085 ESP32-S3 WROOM
 N8R8 board. It replaces the previous firmware, captures no audio, provisions only
 through deliberate physical USB access, and authenticates with a revocable
-per-camera credential. The current demo build keeps failed frames in memory only;
-application-encrypted persistent queue storage and hardware-backed secret
-protection remain explicit release gates. The hardware rationale, provisioning
-protocol, security staging, and bench gate are defined in
+per-camera credential. Firmware 0.2.0 retains the most recent 100 unsent JPEGs,
+metadata records, and idempotency identities in an AES-256-GCM encrypted microSD
+queue committed through write-flush-rename. The externally interrupted reboot
+bench test is proven; hardware-backed secret protection remains an explicit
+release gate. The hardware rationale, provisioning protocol, security staging, and bench gate are defined in
 [the physical camera design](physical-camera-design.md).
 
 ### 4.4 Capture state machine
@@ -1008,7 +1009,7 @@ The following details remain intentionally unresolved:
 
 - local motion/change-detection algorithm;
 - calibrated inactivity threshold, reopen window, and segment-affinity rules;
-- exact persistent queue capacity supported by the selected device;
+- real-kitchen calibration of the selected device's 100-capture persistent queue;
 - public-launch budget amount and global Gemini hard-stop amount, to be chosen after measured costs are available and explicitly re-confirmed with Oana;
 - precise Firestore document paths, composite indexes, and data-evolution sequence;
 - the final Sunday demo scenario and fallback evidence, selected from what the implemented system can honestly demonstrate.

@@ -5,14 +5,17 @@
 #include <esp_timer.h>
 #include <time.h>
 
+#include <algorithm>
+
 #include "foodlog/board_motion_detector.hpp"
 #include "foodlog/capture_core.hpp"
 #include "foodlog/device_config.hpp"
+#include "foodlog/encrypted_sd_capture_queue.hpp"
 #include "foodlog/foodlog_http.hpp"
 
 namespace {
 
-constexpr char kFirmwareVersion[] = "foodlog-fnk0085-0.1.1";
+constexpr char kFirmwareVersion[] = "foodlog-fnk0085-0.2.0";
 constexpr std::uint32_t kSerialBaud = 115200;
 constexpr std::uint32_t kMotionFrameIntervalMilliseconds = 200;
 constexpr std::uint32_t kSnapshotPollIntervalMilliseconds = 2'000;
@@ -44,6 +47,7 @@ foodlog::DeviceConfigStore config_store;
 foodlog::SerialProvisioner provisioner;
 foodlog::BoardMotionDetector motion_detector;
 foodlog::MotionController motion_controller;
+foodlog::EncryptedSdCaptureQueue capture_queue;
 
 bool configured = false;
 bool camera_ready = false;
@@ -57,6 +61,9 @@ std::uint64_t last_wifi_retry_at = 0;
 std::uint64_t last_status_retry_at = 0;
 bool status_check_started = false;
 int consecutive_transport_failures = 0;
+std::uint32_t queue_transient_attempts = 0;
+std::uint64_t next_queue_attempt_at = 0;
+bool queue_delivery_blocked = false;
 String boot_sequence_id;
 
 std::uint64_t uptime_milliseconds() {
@@ -128,7 +135,9 @@ void begin_wifi() {
              device_config.wifi_password.c_str());
   last_wifi_retry_at = uptime_milliseconds();
   api_ready = false;
-  time_ready = false;
+  // The system clock remains valid across a Wi-Fi reconnect while powered.
+  // Keeping it allows motion captures to retain truthful timestamps offline.
+  time_ready = time(nullptr) >= 1'700'000'000;
   status_check_started = false;
   consecutive_transport_failures = 0;
 }
@@ -197,11 +206,12 @@ void restore_motion_frame_size() {
   }
 }
 
-bool upload_capture(const foodlog::BoardMotionAnalysis& motion,
-                    const String& burst_id,
-                    const std::uint32_t burst_frame_index,
-                    const String& snapshot_request_id) {
-  if (!api_ready || !time_ready) {
+bool capture_and_enqueue(const foodlog::BoardMotionAnalysis& motion,
+                         const String& burst_id,
+                         const std::uint32_t burst_frame_index,
+                         const String& snapshot_request_id) {
+  if (!time_ready) {
+    Serial.println("CAPTURE_SKIPPED reason=trusted_time_unavailable");
     return false;
   }
   sensor_t* sensor = esp_camera_sensor_get();
@@ -239,11 +249,42 @@ bool upload_capture(const foodlog::BoardMotionAnalysis& motion,
                                            String(metadata.sequence_number)
                                      : "manual-" + snapshot_request_id;
   foodlog::FoodLogHttpClient client(device_config);
+  const String metadata_json = client.metadata_json(metadata);
+  const String source = snapshot_request_id.isEmpty() ? "motion" : "manual";
+
+  if (capture_queue.ready()) {
+    const bool queue_was_empty = capture_queue.size() == 0;
+    const bool queued = capture_queue.enqueue(
+        frame->buf, frame->len, metadata_json, idempotency_key, source);
+    esp_camera_fb_return(frame);
+    restore_motion_frame_size();
+    if (!queued) {
+      Serial.println("CAPTURE_DROPPED reason=encrypted_queue_write_failed");
+      return false;
+    }
+    Serial.printf("CAPTURE_QUEUED source=%s queued=%u\n", source.c_str(),
+                  static_cast<unsigned int>(capture_queue.size()));
+    if (queue_was_empty) {
+      // A short commit window makes the write-flush-rename boundary observable
+      // in power-loss bench tests without materially delaying normal delivery.
+      next_queue_attempt_at = uptime_milliseconds() + 2'000;
+    }
+    return true;
+  }
+
+  // Keep online capture available when a user has not inserted a card, but do
+  // not write private JPEGs to unencrypted flash or SD storage.
+  if (!api_ready) {
+    esp_camera_fb_return(frame);
+    restore_motion_frame_size();
+    Serial.println("CAPTURE_DROPPED reason=encrypted_queue_unavailable_offline");
+    return false;
+  }
   String capture_id;
   foodlog::UploadResult result = foodlog::UploadResult::kTransientFailure;
   for (int attempt = 0; attempt < 3; ++attempt) {
-    result = client.upload_jpeg(frame->buf, frame->len, metadata,
-                                idempotency_key, capture_id);
+    result = client.upload_jpeg_json(frame->buf, frame->len, metadata_json,
+                                     idempotency_key, capture_id);
     if (result != foodlog::UploadResult::kTransientFailure) {
       break;
     }
@@ -255,8 +296,7 @@ bool upload_capture(const foodlog::BoardMotionAnalysis& motion,
   switch (result) {
     case foodlog::UploadResult::kAcknowledged:
       Serial.printf("CAPTURE_ACCEPTED capture_id=%s source=%s\n",
-                    capture_id.c_str(),
-                    snapshot_request_id.isEmpty() ? "motion" : "manual");
+                    capture_id.c_str(), source.c_str());
       return true;
     case foodlog::UploadResult::kAuthenticationFailure:
       api_ready = false;
@@ -277,6 +317,61 @@ bool upload_capture(const foodlog::BoardMotionAnalysis& motion,
   return false;
 }
 
+void drain_capture_queue(const std::uint64_t now) {
+  if (!capture_queue.ready() || capture_queue.size() == 0 || !api_ready ||
+      !time_ready || queue_delivery_blocked || now < next_queue_attempt_at) {
+    return;
+  }
+  foodlog::StoredCapture capture;
+  if (!capture_queue.load_oldest(capture)) {
+    return;
+  }
+  foodlog::FoodLogHttpClient client(device_config);
+  String capture_id;
+  const foodlog::UploadResult result = client.upload_jpeg_json(
+      capture.jpeg, capture.jpeg_length, capture.metadata_json,
+      capture.idempotency_key, capture_id);
+  switch (result) {
+    case foodlog::UploadResult::kAcknowledged:
+      if (capture_queue.remove_oldest()) {
+        queue_transient_attempts = 0;
+        next_queue_attempt_at = now;
+        Serial.printf(
+            "CAPTURE_ACCEPTED capture_id=%s source=%s queued=%u\n",
+            capture_id.c_str(), capture.source.c_str(),
+            static_cast<unsigned int>(capture_queue.size()));
+      }
+      break;
+    case foodlog::UploadResult::kAuthenticationFailure:
+      api_ready = false;
+      queue_delivery_blocked = true;
+      Serial.println("CAPTURE_BLOCKED reason=authentication");
+      break;
+    case foodlog::UploadResult::kQuotaFailure:
+      api_ready = false;
+      queue_delivery_blocked = true;
+      Serial.println("CAPTURE_BLOCKED reason=quota");
+      break;
+    case foodlog::UploadResult::kPermanentFailure:
+      if (capture_queue.remove_oldest()) {
+        queue_transient_attempts = 0;
+        next_queue_attempt_at = now;
+      }
+      Serial.println("CAPTURE_DROPPED reason=invalid_request");
+      break;
+    case foodlog::UploadResult::kTransientFailure:
+      api_ready = false;
+      queue_transient_attempts =
+          std::min<std::uint32_t>(queue_transient_attempts + 1, 7);
+      next_queue_attempt_at =
+          now + foodlog::delivery_retry_delay_ms(queue_transient_attempts);
+      Serial.printf("CAPTURE_RETRY reason=network attempt=%u queued=%u\n",
+                    static_cast<unsigned int>(queue_transient_attempts),
+                    static_cast<unsigned int>(capture_queue.size()));
+      break;
+  }
+}
+
 void poll_manual_snapshot(const std::uint64_t now) {
   if (!api_ready || now - last_snapshot_poll_at < kSnapshotPollIntervalMilliseconds) {
     return;
@@ -291,13 +386,18 @@ void poll_manual_snapshot(const std::uint64_t now) {
   if (request_id.isEmpty()) {
     return;
   }
+  if (capture_queue.contains_idempotency_key("manual-" + request_id)) {
+    Serial.println("SNAPSHOT_REQUEST status=already_queued");
+    return;
+  }
   foodlog::BoardMotionAnalysis manual_motion;
   manual_motion.valid = true;
-  upload_capture(manual_motion, "", 0, request_id);
+  capture_and_enqueue(manual_motion, "", 0, request_id);
 }
 
 void analyze_motion(const std::uint64_t now) {
-  if (!api_ready || now - last_motion_frame_at < kMotionFrameIntervalMilliseconds) {
+  if (!time_ready ||
+      now - last_motion_frame_at < kMotionFrameIntervalMilliseconds) {
     return;
   }
   last_motion_frame_at = now;
@@ -325,7 +425,7 @@ void analyze_motion(const std::uint64_t now) {
   }
   const String burst_id = boot_sequence_id + "-burst-" +
                           String(instruction->burst_number);
-  upload_capture(analysis, burst_id, instruction->burst_frame_index, "");
+  capture_and_enqueue(analysis, burst_id, instruction->burst_frame_index, "");
 }
 
 }  // namespace
@@ -341,10 +441,12 @@ void setup() {
     restore_motion_frame_size();
   }
   boot_sequence_id = make_boot_sequence_id();
+  const bool queue_ready = configured && capture_queue.begin(device_config);
   Serial.printf(
-      "FOODLOG_CAMERA_READY firmware=%s configured=%s camera=%s psram=%s\n",
+      "FOODLOG_CAMERA_READY firmware=%s configured=%s camera=%s psram=%s queue=%s\n",
       kFirmwareVersion, configured ? "true" : "false",
-      camera_ready ? "ready" : "failed", psramFound() ? "ready" : "unavailable");
+      camera_ready ? "ready" : "failed", psramFound() ? "ready" : "unavailable",
+      queue_ready ? "ready" : "unavailable");
   if (configured) {
     begin_wifi();
   }
@@ -368,5 +470,6 @@ void loop() {
   maintain_trusted_time_and_api(now);
   poll_manual_snapshot(now);
   analyze_motion(now);
+  drain_capture_queue(now);
   delay(1);
 }

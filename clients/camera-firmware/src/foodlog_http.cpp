@@ -9,7 +9,7 @@ namespace foodlog {
 namespace {
 
 constexpr char kApiHost[] = "foodlog-api-sptvo5nsga-ew.a.run.app";
-constexpr char kFirmwareVersion[] = "foodlog-fnk0085-0.1.1";
+constexpr char kFirmwareVersion[] = "foodlog-fnk0085-0.2.0";
 constexpr char kBoundary[] = "----foodlog-fnk0085-capture-v1";
 constexpr std::uint32_t kHttpTimeoutMilliseconds = 30'000;
 
@@ -147,12 +147,11 @@ bool FoodLogHttpClient::poll_snapshot_request(String& request_id) {
   return status_code == HTTP_CODE_OK || status_code == HTTP_CODE_NOT_FOUND;
 }
 
-UploadResult FoodLogHttpClient::upload_jpeg(
+UploadResult FoodLogHttpClient::upload_jpeg_json(
     const std::uint8_t* jpeg, const std::size_t jpeg_length,
-    const CaptureMetadata& metadata, const String& idempotency_key,
+    const String& metadata_body, const String& idempotency_key,
     String& capture_id) {
   capture_id = "";
-  const String metadata_body = metadata_json(metadata);
   const String prefix =
       String("--") + kBoundary +
       "\r\nContent-Disposition: form-data; name=\"metadata\"\r\n"

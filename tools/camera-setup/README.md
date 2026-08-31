@@ -13,6 +13,8 @@ by Freenove in the
 - Windows 10 or 11
 - Python 3.10 or newer
 - a data-capable USB cable connected directly to the FNK0085 board
+- a FAT-formatted microSD card in the board's onboard slot (the included card is
+  suitable)
 - 2.4 GHz Wi-Fi credentials (the ESP32 cannot join a 5 GHz-only network)
 - the private camera setup JSON generated once by your signed-in FoodLog account
 
@@ -54,9 +56,12 @@ install a serial driver automatically when the board is first connected.
   credentials in ESP32 NVS without hardware flash encryption. Do not give the
   physical board to another person. The release-security fuse workflow must be
   completed before treating a lost board as tamper-resistant.
-- Failed offline images are not written to microSD in this build, avoiding
-  plaintext private-image storage. They can be lost after the three bounded
-  immediate retries; the encrypted persistent queue remains follow-up work.
+- Firmware 0.2.0 retains the most recent 100 unsent pictures on microSD. JPEGs,
+  metadata, and retry identity are application-encrypted with AES-256-GCM and a
+  device-specific key; incomplete writes are discarded on reboot and accepted
+  pictures are removed after delivery. A missing or unhealthy card never causes
+  a plaintext fallback: online transfer continues, but offline pictures are
+  dropped with a diagnostic message.
 
 ## Recovery
 
