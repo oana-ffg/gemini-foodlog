@@ -286,7 +286,7 @@ the deployed application, evidence-linked inference and corrections, the cat
 negative control, a longitudinal pattern, and sanitized Google Cloud execution
 proof. It passed automated codec, duration, black-gap, silence, loudness, and
 contact-sheet checks. Oana approved this exact cut for submission on 31 August
-2026. A public YouTube or Vimeo URL is the remaining video step.
+2026. It is publicly available at <https://vimeo.com/1222721564>.
 
 The rehearsed outline is: state the logging friction and value; show the
 production architecture; run one continuous production capture-to-journal
@@ -317,7 +317,7 @@ and permitted claims live in
 | English description covering features, technologies, data sources, findings, and learnings | This document | Fresh-reader and final-form review. |
 | Repository URL and spin-up instructions | Public repository above; logged-out access plus clean-checkout README/deployment rehearsal passed | Recheck the exact submitted commit and public URL. |
 | Architecture diagram | `docs/architecture-diagram.png` is rendered from source-controlled Mermaid and visually inspected at 2400 by 700 | Upload the PNG to Devpost's required architecture field. |
-| Public demonstration video, no longer than four minutes, showing Google Cloud execution | The approved 219.2-second cut includes app action, physical hardware, and sanitized Cloud proof | Publish the exact cut and add its public URL. |
+| Public demonstration video, no longer than four minutes, showing Google Cloud execution | The approved 219.2-second cut includes app action, physical hardware, and sanitized Cloud proof at <https://vimeo.com/1222721564> | Public playback, title, description, all-audiences rating, and AI disclosure verified while signed out. |
 | English application and submission materials | English UI, documentation, test plan, and planned narration | Oana completes the final human language review. |
 | Privacy and IP-safe media | Synthetic judge data and explicit media review tickets | REL-011 remains Oana's frame-by-frame publication gate. |
 
@@ -325,9 +325,9 @@ The authoritative requirements are the [official hackathon rules](https://allthi
 
 ## TODO Official Form Fields
 
-- **Submitter type:** Oana must choose Individuals or Organization. Organization
-  is appropriate only if FoodLog is genuinely submitted on behalf of the
-  incorporated entity.
+- **Submitter type:** Individual. Oana's Danish sole proprietorship is not a
+  separate incorporated company, so FoodLog is not opting into Startup
+  Excellence.
 - **Country of residence:** Denmark.
 - **Category:** Taskmaster.
 - **Organization name:** required by the live form only when submitting on
@@ -346,12 +346,10 @@ The authoritative requirements are the [official hackathon rules](https://allthi
   documents Pub/Sub, Firestore, Cloud Storage, App Engine, and other services.
 - **Architecture diagram upload:** `docs/architecture-diagram.png`, 2400 by 700,
   SHA-256 `9e50a67dde92db953b85d9ac98399699d928eebbc970c010f3aec85ce3a2a6c4`.
-- **Startup Excellence opt-in:** Oana must decide whether this is an eligible
-  organization entry and, if so, provide the truthful incorporated name and
-  corporate email in the private form.
+- **Startup Excellence opt-in:** No.
 - **Google AI models:** Gemini 3.6 Flash, Gemini 3.1 Flash TTS Preview, Veo 3.1
   Lite, and Lyria 3 Pro Preview. The description distinguishes production food
   inference from the demonstration-media pipeline.
 - **Bonus content URL:** not available until REL-013 is approved and published.
 - **Bonus social URL:** not available until REL-014 is approved and published.
-- **Public video URL:** pending upload of the approved exact cut.
+- **Public video URL:** <https://vimeo.com/1222721564>.
