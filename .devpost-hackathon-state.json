@@ -25,7 +25,8 @@
   "completed_stages": [
     "start-hackathon",
     "review-hackathon-rules",
-    "prepare-submission"
+    "prepare-submission",
+    "submit-project"
   ],
   "rules_acknowledged": true,
   "learning": {
@@ -38,7 +39,9 @@
   "submission": {
     "id": 1163777,
     "draft_file": "devpost-submission.md",
-    "status": "ready"
+    "status": "submitted",
+    "submitted_at": "2026-08-31T11:51:36.808-04:00",
+    "url": "https://devpost.com/software/gemini-foodlog"
   },
-  "next_command": "submit-project"
+  "next_command": "hackathon-map"
 }
