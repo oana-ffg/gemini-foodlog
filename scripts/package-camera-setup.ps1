@@ -2,7 +2,7 @@
 param(
     [string]$Version = '0.1.0',
     [string]$FirmwarePath = 'clients\camera-firmware\.pio\build\freenove-esp32-s3-wroom\foodlog-camera-fnk0085.bin',
-    [string]$OutputPath = 'apps\web\public\downloads\foodlog-camera-setup.zip'
+    [string]$OutputPath = 'assets\brand\downloads\foodlog-camera-setup.zip'
 )
 
 $ErrorActionPreference = 'Stop'
