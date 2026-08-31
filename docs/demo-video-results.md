@@ -102,8 +102,13 @@ mastering target:
 
 Each comparison is 193.8 seconds with unchanged H.264 1920-by-1080 30 fps
 video and AAC 48 kHz stereo audio. All three passed duration, stream,
-black-gap, five-second-silence, and independent-hash verification. Human review
-must choose one, request a mix-only adjustment, or reject all three.
+black-gap, five-second-silence, and independent-hash verification. On 31 August
+2026, Oana selected `uplifting-techno`, the first comparison, as the final
+soundtrack direction. Its private comparison file is
+`artifacts/demo-video/lyria-comparisons/foodlog-demo-uplifting-techno.mp4` and
+its SHA-256 is
+`0eded8981420b8739b31add7418a1d89477bb4e5727a904ff6fe4977c73ccd32`.
+The final frame-by-frame privacy, IP, wording, and pacing review remains.
 
 ## Automated verification
 

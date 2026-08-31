@@ -72,3 +72,12 @@ the same post-render mixer rather than embedded at a fixed level in Remotion.
 The mixer lowers the music, removes competing vocal frequencies, sidechain-
 ducks it under speech, extends it with a crossfade instead of a hard loop, and
 masters every comparison identically.
+
+## Human selection
+
+On 31 August 2026, Oana selected `uplifting-techno`, the first comparison, as
+the final soundtrack direction. The selected private comparison cut is
+`artifacts/demo-video/lyria-comparisons/foodlog-demo-uplifting-techno.mp4` with
+SHA-256 `0eded8981420b8739b31add7418a1d89477bb4e5727a904ff6fe4977c73ccd32`.
+The remaining gate is the final frame-by-frame privacy, IP, wording, and pacing
+review; selecting the score is not publication authorization.
