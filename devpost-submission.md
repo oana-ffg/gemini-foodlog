@@ -63,9 +63,10 @@ household knowledge.
    knowledge. Separate longitudinal questions let the agent ask whether a
    repeated pattern is real without turning unidentified-meal questions into a
    generic inbox.
-7. Optional authenticated Nemlig order and invoice emails become
-   provenance-preserving purchase evidence. A person can also add time-bounded
-   context such as an unusual ingredient expected tomorrow.
+7. Authenticated forwarded supermarket order and invoice emails can become
+   provenance-preserving purchase evidence; the current prototype is validated
+   against one retailer format. A person can also add time-bounded context such
+   as an unusual ingredient expected tomorrow.
 8. The account-data page exposes the records FoodLog holds and supports a
    private, temporary export. Stored evidence is tenant-scoped; browser clients
    cannot read Firestore or Cloud Storage directly.
@@ -128,32 +129,18 @@ are integrated into the reproducible demonstration-media pipeline rather than
 the production food-inference path; their prompts, exact costs, hashes, and
 verification evidence are source-controlled.
 
-## How We Used Codex
-
-Codex helped turn the initial product idea into an auditable build: architecture
-and threat-boundary design, the sequenced HTML backlog, implementation across the
-web, backend, mail, camera, Terraform, and CI packages, and repeated production
-deployment and smoke testing. It also generated privacy-safe still fixtures,
-constructed reproducible longitudinal evaluation manifests, reviewed failures
-instead of retrying them into passes, ran focused and repository-wide security
-reviews, and kept the submission claims tied to committed or deployed evidence.
-Oana made the product, privacy, spending, publication, and external-submission
-decisions; Codex did not silently grant itself those approvals.
-
 ## Authorized data sources
 
 - kitchen images deliberately uploaded by the account's browser or camera;
 - user corrections, pattern answers, temporary context notes, and explicitly
   taught household knowledge;
-- authenticated Nemlig confirmation and final-invoice email evidence forwarded
-  to an opaque per-account address;
+- authenticated online-supermarket order and invoice evidence forwarded to an
+  opaque per-account address;
 - application-generated capture, grouping, inference, purchase, feedback,
   accounting, and revision metadata.
 
-No browser route receives direct Firestore or Cloud Storage credentials. Gemini
-receives only the bounded evidence selected for one account and one run. The
-application stores a redacted operational trace; it does not expose hidden model
-reasoning as a product claim.
+All evidence is tenant-scoped. Gemini receives only the bounded evidence selected
+for one account and one event, and operational traces are redacted.
 
 ## Findings and learnings
 
@@ -183,31 +170,17 @@ reasoning as a product claim.
 
 ## Known Limitations
 
-- Firmware 0.2.0 runs on the real Freenove ESP32-S3 board. A hand-wave produced
-  authenticated motion captures, and an encrypted queued JPEG survived a forced
-  reboot and uploaded afterward. Multi-day ordinary-kitchen endurance testing
-  remains outstanding.
-- Manual phone capture works in the hosted app. Motion mode and offline queue
-  recovery still require the planned multi-hour real-phone test.
-- The live model path has passed bounded synthetic production smoke tests, but
-  prompt quality and question frequency still need the planned multi-day
-  ordinary-kitchen dataset and Oana's final normal-user evaluation.
-- Purchase grounding currently targets Nemlig confirmation and invoice emails;
-  it is optional and not a general retailer parser.
-- The judge account credentials and provisioned production records are release
-  artifacts and are not stored in this repository. The reviewed fixture bytes,
-  hashes, and declarative seed manifest are source-controlled for auditability.
-  Provisioning and automatic four-scenario verification are complete; the final
-  judge-style browser login remains in the consolidated human test pass.
-- The known promotional Google Cloud credit expires on 2026-09-24. Continuous
-  hosted availability after that date depends on the explicit safety decision
-  in the [judge availability runbook](https://github.com/oana-ffg/gemini-foodlog/blob/main/docs/judge-availability-runbook.md).
-  The official requirements make a hosted URL optional but strongly encouraged
-  and accept the public demo plus repository as deployment proof if the app is
-  offline during judging.
-- The MVP records food, not symptoms. Its longitudinal food record can support
-  later comparison with symptom information kept elsewhere; it is not a medical
-  device and does not make diagnostic or causal claims.
+- Manual phone capture and the physical ESP32-S3 camera work end to end, including
+  authenticated motion capture and encrypted offline recovery. Multi-hour phone
+  and multi-day ordinary-kitchen endurance testing remain outstanding.
+- The live Gemini path has passed real-image and bounded synthetic production
+  tests. Prompt quality and question frequency still need evaluation against a
+  longer ordinary-kitchen dataset.
+- Purchase-email ingestion is currently validated with one online supermarket;
+  broader retailer coverage remains to be tested.
+- The MVP records food, not symptoms. It can support later comparison with
+  symptom information kept elsewhere, but it is not a medical device and does
+  not make diagnostic or causal claims.
 
 ## Testing Instructions
 
