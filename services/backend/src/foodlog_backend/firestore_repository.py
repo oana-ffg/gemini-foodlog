@@ -28,6 +28,7 @@ from .errors import (
     CaptureNotFound,
     CrossAccountAccess,
     DeviceCredentialCollision,
+    DeviceSnapshotNotFound,
     IdempotencyConflict,
     InboundAddressCollision,
     InboundAddressStateConflict,
@@ -95,6 +96,8 @@ from .models import (
     DeviceCamera,
     DeviceCredentialRecord,
     DeviceCredentialStatus,
+    DeviceSnapshotRequest,
+    DeviceSnapshotStatus,
     DurableJob,
     EntitlementMode,
     InboundMailAddress,
@@ -167,6 +170,7 @@ from .purchase_normalization import (
     reconcile_purchase_items,
 )
 from .repository import (
+    DEVICE_SNAPSHOT_REQUEST_LIFETIME,
     PATTERN_RESURFACE_MINIMUM_NEW_SUPPORT,
     event_question_from_hypothesis,
     event_question_id,
@@ -183,6 +187,7 @@ from .repository import (
     purchase_identity_aliases,
     revised_inference,
     rich_pattern_question_id,
+    snapshot_request_at,
     user_context_note_id,
     user_context_note_request_hash,
     validate_ai_trace_usage,
@@ -2488,6 +2493,174 @@ class FirestoreRepository:
             )
 
         return await authenticate(transaction)
+
+    async def request_device_snapshot(
+        self,
+        *,
+        owner_user_id: str,
+        camera_id: str,
+    ) -> DeviceSnapshotRequest:
+        account = await self.account_for_owner(owner_user_id)
+        account_ref = self._account(account.id)
+        camera_ref = self._collection(account.id, "cameras").document(camera_id)
+        request_ref = self._collection(account.id, "device_snapshot_requests").document(camera_id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def create(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
+            camera_snapshot = await camera_ref.get(transaction=transaction)
+            existing_snapshot = await request_ref.get(transaction=transaction)
+            if (
+                not account_snapshot.exists
+                or account_snapshot.get("status") != "active"
+                or account_snapshot.get("owner_user_id") != owner_user_id
+                or not camera_snapshot.exists
+                or camera_snapshot.get("account_id") != account.id
+                or camera_snapshot.get("kind") != "device"
+                or camera_snapshot.get("status") != CameraStatus.ACTIVE.value
+            ):
+                raise CameraNotFound
+            now = utc_now()
+            if existing_snapshot.exists:
+                existing = snapshot_request_at(
+                    _model(existing_snapshot, DeviceSnapshotRequest),
+                    now,
+                )
+                if existing.status == DeviceSnapshotStatus.PENDING:
+                    return existing
+            request = DeviceSnapshotRequest(
+                id=str(uuid4()),
+                account_id=account.id,
+                camera_id=camera_id,
+                requested_at=now,
+                expires_at=now + DEVICE_SNAPSHOT_REQUEST_LIFETIME,
+            )
+            transaction.set(request_ref, _document(request))
+            return request
+
+        return await create(transaction)
+
+    async def device_snapshot_for_owner(
+        self,
+        *,
+        owner_user_id: str,
+        camera_id: str,
+        request_id: str,
+    ) -> DeviceSnapshotRequest:
+        account = await self.account_for_owner(owner_user_id)
+        account_ref = self._account(account.id)
+        camera_ref = self._collection(account.id, "cameras").document(camera_id)
+        request_ref = self._collection(account.id, "device_snapshot_requests").document(camera_id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def load(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
+            camera_snapshot = await camera_ref.get(transaction=transaction)
+            request_snapshot = await request_ref.get(transaction=transaction)
+            if (
+                not account_snapshot.exists
+                or account_snapshot.get("status") != "active"
+                or account_snapshot.get("owner_user_id") != owner_user_id
+                or not camera_snapshot.exists
+                or camera_snapshot.get("account_id") != account.id
+                or camera_snapshot.get("kind") != "device"
+                or not request_snapshot.exists
+            ):
+                raise DeviceSnapshotNotFound
+            request = _model(request_snapshot, DeviceSnapshotRequest)
+            if request.account_id != account.id or request.id != request_id:
+                raise DeviceSnapshotNotFound
+            return snapshot_request_at(request, utc_now())
+
+        return await load(transaction)
+
+    async def pending_device_snapshot(
+        self,
+        *,
+        account_id: str,
+        camera_id: str,
+    ) -> DeviceSnapshotRequest | None:
+        account_ref = self._account(account_id)
+        camera_ref = self._collection(account_id, "cameras").document(camera_id)
+        request_ref = self._collection(account_id, "device_snapshot_requests").document(camera_id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def load(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
+            camera_snapshot = await camera_ref.get(transaction=transaction)
+            request_snapshot = await request_ref.get(transaction=transaction)
+            if (
+                not account_snapshot.exists
+                or account_snapshot.get("status") != "active"
+                or not camera_snapshot.exists
+                or camera_snapshot.get("account_id") != account_id
+                or camera_snapshot.get("kind") != "device"
+                or camera_snapshot.get("status") != CameraStatus.ACTIVE.value
+            ):
+                raise CameraNotFound
+            if not request_snapshot.exists:
+                return None
+            request = snapshot_request_at(
+                _model(request_snapshot, DeviceSnapshotRequest),
+                utc_now(),
+            )
+            if request.account_id != account_id or request.status != DeviceSnapshotStatus.PENDING:
+                return None
+            return request
+
+        return await load(transaction)
+
+    async def complete_device_snapshot(
+        self,
+        *,
+        account_id: str,
+        camera_id: str,
+        request_id: str,
+        capture_id: str,
+    ) -> DeviceSnapshotRequest:
+        account_ref = self._account(account_id)
+        camera_ref = self._collection(account_id, "cameras").document(camera_id)
+        request_ref = self._collection(account_id, "device_snapshot_requests").document(camera_id)
+        transaction = self._client.transaction()
+
+        @firestore.async_transactional
+        async def complete(transaction):
+            account_snapshot = await account_ref.get(transaction=transaction)
+            camera_snapshot = await camera_ref.get(transaction=transaction)
+            request_snapshot = await request_ref.get(transaction=transaction)
+            if (
+                not account_snapshot.exists
+                or account_snapshot.get("status") != "active"
+                or not camera_snapshot.exists
+                or camera_snapshot.get("account_id") != account_id
+                or camera_snapshot.get("kind") != "device"
+                or camera_snapshot.get("status") != CameraStatus.ACTIVE.value
+                or not request_snapshot.exists
+            ):
+                raise DeviceSnapshotNotFound
+            current = _model(request_snapshot, DeviceSnapshotRequest)
+            if current.account_id != account_id or current.id != request_id:
+                raise DeviceSnapshotNotFound
+            if current.status == DeviceSnapshotStatus.COMPLETED:
+                if current.capture_id != capture_id:
+                    raise DeviceSnapshotNotFound
+                return current
+            if current.status != DeviceSnapshotStatus.PENDING:
+                raise DeviceSnapshotNotFound
+            completed = current.model_copy(
+                update={
+                    "status": DeviceSnapshotStatus.COMPLETED,
+                    "completed_at": utc_now(),
+                    "capture_id": capture_id,
+                }
+            )
+            transaction.set(request_ref, _document(completed))
+            return completed
+
+        return await complete(transaction)
 
     async def revoke_device_camera(
         self,

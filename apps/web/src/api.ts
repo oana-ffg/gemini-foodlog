@@ -86,6 +86,17 @@ export interface DeviceCameraCredentialIssue {
   credential: string;
 }
 
+export interface DeviceSnapshotRequest {
+  id: string;
+  account_id: string;
+  camera_id: string;
+  status: "pending" | "completed" | "expired";
+  requested_at: string;
+  expires_at: string;
+  completed_at: string | null;
+  capture_id: string | null;
+}
+
 export interface MealComponent {
   name: string;
   ingredients: string[];
@@ -827,6 +838,22 @@ export function createDeviceCamera(name: string): Promise<DeviceCameraCredential
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
   });
+}
+
+export function requestDeviceSnapshot(cameraId: string): Promise<DeviceSnapshotRequest> {
+  return apiRequest<DeviceSnapshotRequest>(
+    `/v1/device-cameras/${encodeURIComponent(cameraId)}/snapshot-requests`,
+    { method: "POST" },
+  );
+}
+
+export function getDeviceSnapshotRequest(
+  cameraId: string,
+  requestId: string,
+): Promise<DeviceSnapshotRequest> {
+  return apiRequest<DeviceSnapshotRequest>(
+    `/v1/device-cameras/${encodeURIComponent(cameraId)}/snapshot-requests/${encodeURIComponent(requestId)}`,
+  );
 }
 
 export function listJournal(): Promise<MealEntry[]> {

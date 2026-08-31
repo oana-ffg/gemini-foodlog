@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("./api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./api")>()),
   createDeviceCamera: vi.fn(),
+  getDeviceSnapshotRequest: vi.fn(),
   listCameras: vi.fn(),
+  requestDeviceSnapshot: vi.fn(),
   revokeCamera: vi.fn(),
 }));
 
@@ -30,6 +32,9 @@ describe("camera source management", () => {
     expect(html).toContain("Camera sources");
     expect(html).toContain("Use this phone or browser");
     expect(html).toContain("Add a physical camera");
+    expect(html).toContain("Freenove FNK0085 ESP32-S3 WROOM camera");
+    expect(html).toContain("Download the FoodLog camera setup utility");
+    expect(html).toContain("/downloads/foodlog-camera-setup.zip");
     expect(html).toContain("4 images accepted");
     expect(html).not.toContain("flc_v1_");
   });

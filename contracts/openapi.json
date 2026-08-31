@@ -715,6 +715,20 @@
             "title": "Sequence Number",
             "type": "integer"
           },
+          "snapshot_request_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 8,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Request Id"
+          },
           "width": {
             "maximum": 4096.0,
             "minimum": 1.0,
@@ -1506,6 +1520,109 @@
         ],
         "title": "DeviceSession",
         "type": "object"
+      },
+      "DeviceSnapshotCommand": {
+        "properties": {
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 8,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          }
+        },
+        "title": "DeviceSnapshotCommand",
+        "type": "object"
+      },
+      "DeviceSnapshotRequest": {
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "camera_id": {
+            "title": "Camera Id",
+            "type": "string"
+          },
+          "capture_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capture Id"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Id",
+            "type": "string"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DeviceSnapshotStatus",
+            "default": "pending"
+          }
+        },
+        "required": [
+          "id",
+          "account_id",
+          "camera_id",
+          "expires_at"
+        ],
+        "title": "DeviceSnapshotRequest",
+        "type": "object"
+      },
+      "DeviceSnapshotStatus": {
+        "enum": [
+          "pending",
+          "completed",
+          "expired"
+        ],
+        "title": "DeviceSnapshotStatus",
+        "type": "string"
       },
       "DirectObservation": {
         "additionalProperties": false,
@@ -5551,6 +5668,171 @@
           }
         },
         "summary": "Revoke Device Camera"
+      }
+    },
+    "/v1/device-cameras/{camera_id}/snapshot-requests": {
+      "post": {
+        "operationId": "request_device_snapshot_v1_device_cameras__camera_id__snapshot_requests_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "camera_id",
+            "required": true,
+            "schema": {
+              "title": "Camera Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceSnapshotRequest"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Request Device Snapshot"
+      }
+    },
+    "/v1/device-cameras/{camera_id}/snapshot-requests/{request_id}": {
+      "get": {
+        "operationId": "get_device_snapshot_v1_device_cameras__camera_id__snapshot_requests__request_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "camera_id",
+            "required": true,
+            "schema": {
+              "title": "Camera Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceSnapshotRequest"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Device Snapshot"
+      }
+    },
+    "/v1/device/snapshot-request": {
+      "get": {
+        "operationId": "poll_device_snapshot_v1_device_snapshot_request_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceSnapshotCommand"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Poll Device Snapshot"
       }
     },
     "/v1/device/status": {

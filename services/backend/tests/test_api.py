@@ -850,6 +850,131 @@ def test_shared_device_ingestion_uses_credential_scope_and_honors_revocation() -
     assert stored_image.content == image
 
 
+def test_owner_only_manual_snapshot_round_trip_uses_the_device_capture_path() -> None:
+    owner_headers = {"X-FoodLog-Local-User": "snapshot-owner"}
+    other_headers = {"X-FoodLog-Local-User": "snapshot-other-owner"}
+    with build_client() as client:
+        assert client.post("/v1/accounts", headers=owner_headers).status_code == 200
+        assert client.post("/v1/accounts", headers=other_headers).status_code == 200
+        issued = client.post(
+            "/v1/device-cameras",
+            headers=owner_headers,
+            json={"name": "Counter camera"},
+        )
+        assert issued.status_code == 200
+        camera = issued.json()["camera"]
+        credential = issued.json()["credential"]
+
+        foreign_request = client.post(
+            f"/v1/device-cameras/{camera['id']}/snapshot-requests",
+            headers=other_headers,
+        )
+        requested = client.post(
+            f"/v1/device-cameras/{camera['id']}/snapshot-requests",
+            headers=owner_headers,
+        )
+        duplicate_request = client.post(
+            f"/v1/device-cameras/{camera['id']}/snapshot-requests",
+            headers=owner_headers,
+        )
+        request_id = requested.json()["id"]
+        command = client.get(
+            "/v1/device/snapshot-request",
+            headers={"Authorization": f"FoodLogCamera {credential}"},
+        )
+
+        image = (FIXTURES / "synthetic-chicken-airfryer.png").read_bytes()
+        metadata = {
+            **capture_metadata(camera["id"], image, client_kind="physical"),
+            "snapshot_request_id": request_id,
+        }
+        accepted = client.post(
+            "/v1/captures",
+            **shared_capture_request(
+                headers={
+                    "Authorization": f"FoodLogCamera {credential}",
+                    "Idempotency-Key": "manual-device-capture-0001",
+                },
+                metadata=metadata,
+                image=image,
+            ),
+        )
+        completed = client.get(
+            f"/v1/device-cameras/{camera['id']}/snapshot-requests/{request_id}",
+            headers=owner_headers,
+        )
+        upload_retry = client.post(
+            "/v1/captures",
+            **shared_capture_request(
+                headers={
+                    "Authorization": f"FoodLogCamera {credential}",
+                    "Idempotency-Key": "manual-device-capture-0001",
+                },
+                metadata=metadata,
+                image=image,
+            ),
+        )
+        foreign_status = client.get(
+            f"/v1/device-cameras/{camera['id']}/snapshot-requests/{request_id}",
+            headers=other_headers,
+        )
+        empty_poll = client.get(
+            "/v1/device/snapshot-request",
+            headers={"Authorization": f"FoodLogCamera {credential}"},
+        )
+
+    assert foreign_request.status_code == 404
+    assert requested.status_code == 202
+    assert requested.headers["cache-control"] == "private, no-store"
+    assert requested.json()["status"] == "pending"
+    assert duplicate_request.status_code == 202
+    assert duplicate_request.json()["id"] == request_id
+    assert command.status_code == 200
+    assert command.headers["cache-control"] == "no-store"
+    assert command.json()["request_id"] == request_id
+    assert accepted.status_code == 202
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
+    assert completed.json()["capture_id"] == accepted.json()["capture_id"]
+    assert upload_retry.status_code == 202
+    assert upload_retry.json()["capture_id"] == accepted.json()["capture_id"]
+    assert foreign_status.status_code == 404
+    assert empty_poll.json() == {"request_id": None, "expires_at": None}
+
+
+def test_manual_snapshot_metadata_is_rejected_without_a_matching_device_command() -> None:
+    owner_headers = {"X-FoodLog-Local-User": "snapshot-rejection-owner"}
+    with build_client() as client:
+        assert client.post("/v1/accounts", headers=owner_headers).status_code == 200
+        issued = client.post(
+            "/v1/device-cameras",
+            headers=owner_headers,
+            json={"name": "Counter camera"},
+        ).json()
+        image = (FIXTURES / "synthetic-chicken-airfryer.png").read_bytes()
+        rejected = client.post(
+            "/v1/captures",
+            **shared_capture_request(
+                headers={
+                    "Authorization": f"FoodLogCamera {issued['credential']}",
+                    "Idempotency-Key": "unrequested-device-capture-0001",
+                },
+                metadata={
+                    **capture_metadata(
+                        issued["camera"]["id"],
+                        image,
+                        client_kind="physical",
+                    ),
+                    "snapshot_request_id": "made-up-request-0001",
+                },
+                image=image,
+            ),
+        )
+
+    assert rejected.status_code == 422
+    assert rejected.json() == {"detail": "invalid_snapshot_request"}
+
+
 def test_shared_ingestion_rejects_invalid_metadata_dimensions_and_image_structure() -> None:
     with build_client() as client:
         _, camera = provision(client)

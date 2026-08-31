@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <span>
 #include <string>
 #include <vector>
 
@@ -24,8 +23,8 @@ struct MotionAnalysis {
 };
 
 MotionAnalysis analyze_luma_motion(
-    std::span<const std::uint8_t> previous_luma,
-    std::span<const std::uint8_t> current_luma,
+    const std::vector<std::uint8_t>& previous_luma,
+    const std::vector<std::uint8_t>& current_luma,
     MotionDetectionConfig config = {});
 
 struct MotionConfig {
@@ -45,7 +44,11 @@ struct CaptureInstruction {
   std::uint64_t burst_number;
   std::uint32_t burst_frame_index;
 
-  bool operator==(const CaptureInstruction&) const = default;
+  bool operator==(const CaptureInstruction& other) const {
+    return in_motion_burst == other.in_motion_burst &&
+           burst_number == other.burst_number &&
+           burst_frame_index == other.burst_frame_index;
+  }
 };
 
 class MotionController {
@@ -91,7 +94,12 @@ struct QueueItem {
   std::uint32_t attempt_count = 0;
   std::uint64_t next_attempt_at_ms = 0;
 
-  bool operator==(const QueueItem&) const = default;
+  bool operator==(const QueueItem& other) const {
+    return id == other.id && idempotency_key == other.idempotency_key &&
+           captured_at_ms == other.captured_at_ms &&
+           attempt_count == other.attempt_count &&
+           next_attempt_at_ms == other.next_attempt_at_ms;
+  }
 };
 
 struct QueueSnapshot {
@@ -100,7 +108,12 @@ struct QueueSnapshot {
   std::uint64_t permanent_item_failure_count = 0;
   std::optional<QueueBlockReason> block_reason;
 
-  bool operator==(const QueueSnapshot&) const = default;
+  bool operator==(const QueueSnapshot& other) const {
+    return items == other.items &&
+           capacity_drop_count == other.capacity_drop_count &&
+           permanent_item_failure_count == other.permanent_item_failure_count &&
+           block_reason == other.block_reason;
+  }
 };
 
 class QueueSnapshotStore {

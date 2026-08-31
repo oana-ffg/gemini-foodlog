@@ -23,6 +23,7 @@ EXPORT_COLLECTIONS = (
     "cameras",
     "captures",
     "consents",
+    "device_snapshot_requests",
     "events",
     "feedback",
     "inbound_mail_addresses",

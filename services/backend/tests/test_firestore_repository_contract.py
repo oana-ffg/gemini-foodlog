@@ -19,6 +19,7 @@ from foodlog_backend.errors import (
     AiTraceConflict,
     AiTraceNotFound,
     CameraNotFound,
+    DeviceSnapshotNotFound,
     IdempotencyConflict,
     InboundAddressStateConflict,
     InvalidMealFeedbackTransition,
@@ -48,6 +49,7 @@ from foodlog_backend.models import (
     CaptureRecord,
     CaptureStatus,
     Confidence,
+    DeviceSnapshotStatus,
     DurableJob,
     JobKind,
     JobStatus,
@@ -80,6 +82,79 @@ from foodlog_backend.models import (
     utc_now,
 )
 from tests.inference_fixtures import base_payload
+
+
+@pytest.mark.skipif(
+    "FIRESTORE_EMULATOR_HOST" not in os.environ,
+    reason="requires the Firestore emulator",
+)
+def test_firestore_manual_snapshot_commands_are_atomic_idempotent_and_scoped() -> None:
+    async def scenario() -> None:
+        project_id = f"gemini-foodlog-snapshot-contract-{uuid4().hex}"
+        client = AsyncClient(project=project_id)
+        repository = FirestoreRepository(
+            project_id=project_id,
+            public_account_limit=25,
+            trial_image_limit=200,
+            client=client,
+        )
+        account = await repository.provision_account("snapshot-contract-owner")
+        await repository.provision_account("snapshot-contract-other")
+        camera = await repository.issue_device_camera(
+            owner_user_id=account.owner_user_id,
+            name="Counter camera",
+            credential_hash=sha256(b"snapshot-contract-credential").hexdigest(),
+            token_version=1,
+        )
+
+        requested = await repository.request_device_snapshot(
+            owner_user_id=account.owner_user_id,
+            camera_id=camera.id,
+        )
+        retry = await repository.request_device_snapshot(
+            owner_user_id=account.owner_user_id,
+            camera_id=camera.id,
+        )
+        assert retry == requested
+        assert requested.status == DeviceSnapshotStatus.PENDING
+        assert await repository.pending_device_snapshot(
+            account_id=account.id,
+            camera_id=camera.id,
+        ) == requested
+
+        with pytest.raises(CameraNotFound):
+            await repository.request_device_snapshot(
+                owner_user_id="snapshot-contract-other",
+                camera_id=camera.id,
+            )
+        with pytest.raises(DeviceSnapshotNotFound):
+            await repository.device_snapshot_for_owner(
+                owner_user_id="snapshot-contract-other",
+                camera_id=camera.id,
+                request_id=requested.id,
+            )
+
+        completed = await repository.complete_device_snapshot(
+            account_id=account.id,
+            camera_id=camera.id,
+            request_id=requested.id,
+            capture_id="snapshot-contract-capture",
+        )
+        assert completed.status == DeviceSnapshotStatus.COMPLETED
+        assert completed.capture_id == "snapshot-contract-capture"
+        assert await repository.complete_device_snapshot(
+            account_id=account.id,
+            camera_id=camera.id,
+            request_id=requested.id,
+            capture_id="snapshot-contract-capture",
+        ) == completed
+        assert await repository.pending_device_snapshot(
+            account_id=account.id,
+            camera_id=camera.id,
+        ) is None
+        await client.close()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.skipif(

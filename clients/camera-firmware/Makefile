@@ -1,5 +1,5 @@
 CXX ?= c++
-CXXFLAGS ?= -std=c++20 -Wall -Wextra -Werror -pedantic -O2
+CXXFLAGS ?= -std=c++17 -Wall -Wextra -Werror -pedantic -O2
 
 BUILD_DIR := .build
 TEST_BINARY := $(BUILD_DIR)/capture_core_test

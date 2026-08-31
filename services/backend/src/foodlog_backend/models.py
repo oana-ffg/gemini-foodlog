@@ -1089,6 +1089,43 @@ class DeviceSession(BaseModel):
     status: Literal["active"] = "active"
 
 
+class DeviceSnapshotStatus(StrEnum):
+    PENDING = "pending"
+    COMPLETED = "completed"
+    EXPIRED = "expired"
+
+
+class DeviceSnapshotRequest(BaseModel):
+    id: str = Field(min_length=8, max_length=128)
+    account_id: str
+    camera_id: str
+    status: DeviceSnapshotStatus = DeviceSnapshotStatus.PENDING
+    requested_at: datetime = Field(default_factory=utc_now)
+    expires_at: datetime
+    completed_at: datetime | None = None
+    capture_id: str | None = None
+
+    @model_validator(mode="after")
+    def completion_fields_are_consistent(self) -> "DeviceSnapshotRequest":
+        completed = self.status == DeviceSnapshotStatus.COMPLETED
+        if completed != (self.completed_at is not None and self.capture_id is not None):
+            raise ValueError("completed snapshot requests require completion evidence")
+        if self.expires_at <= self.requested_at:
+            raise ValueError("snapshot request expiry must follow its request time")
+        return self
+
+
+class DeviceSnapshotCommand(BaseModel):
+    request_id: str | None = Field(default=None, min_length=8, max_length=128)
+    expires_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def command_fields_are_consistent(self) -> "DeviceSnapshotCommand":
+        if (self.request_id is None) != (self.expires_at is None):
+            raise ValueError("snapshot command fields must be provided together")
+        return self
+
+
 class MotionMetadataV1(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1126,6 +1163,12 @@ class CaptureEnvelopeV1(BaseModel):
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
     )
     burst_frame_index: int | None = Field(default=None, ge=0, le=2_147_483_647)
+    snapshot_request_id: str | None = Field(
+        default=None,
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
     width: int = Field(ge=1, le=4_096)
     height: int = Field(ge=1, le=4_096)
     motion: MotionMetadataV1 | None = None

@@ -157,6 +157,21 @@
       "title": "Sequence Number",
       "type": "integer"
     },
+    "snapshot_request_id": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "minLength": 8,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Snapshot Request Id"
+    },
     "width": {
       "maximum": 4096,
       "minimum": 1,

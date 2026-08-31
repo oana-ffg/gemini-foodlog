@@ -22,8 +22,8 @@ std::uint64_t saturating_add(const std::uint64_t left,
 }  // namespace
 
 MotionAnalysis analyze_luma_motion(
-    const std::span<const std::uint8_t> previous_luma,
-    const std::span<const std::uint8_t> current_luma,
+    const std::vector<std::uint8_t>& previous_luma,
+    const std::vector<std::uint8_t>& current_luma,
     const MotionDetectionConfig config) {
   if (previous_luma.empty() || previous_luma.size() != current_luma.size()) {
     throw std::invalid_argument(

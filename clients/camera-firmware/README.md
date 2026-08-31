@@ -1,19 +1,24 @@
 # FoodLog physical-camera firmware
 
-This package is the C++ core for the M5Stack Unit CamS3-5MP U174-B firmware. It
-shares the deployed Capture API v1 contract with the browser and Python clients.
+This package builds the FoodLog prototype firmware for the Freenove ESP32-S3
+WROOM board sold as FNK0085. It shares Capture API v1 with the browser and Python
+clients and uses the board's OV2640-compatible camera wiring.
 
-The current checkpoint contains the hardware-independent motion and persistent
-delivery state machines. They are compiled and tested on the host so cadence,
-retry, reboot, capacity, and permanent-failure behavior do not depend on a camera
-being attached. The ESP-IDF adapters for PY260 capture, encrypted NVS, encrypted
-microSD storage, USB provisioning, Wi-Fi, trusted time, and HTTPS remain blocked
-on the exact physical board and are not represented as implemented.
+The board firmware includes local JPEG-luma motion detection, the shared capture
+cadence state machine, Wi-Fi and trusted-time setup, HTTPS upload with an embedded
+root bundle, owner-requested snapshot polling, and a secret-safe USB provisioning
+protocol. The portable state-machine tests remain host-runnable.
 
-Run the portable tests:
+Run the portable tests with a C++17 compiler:
 
 ```sh
 make test
+```
+
+Build the exact board image with PlatformIO:
+
+```sh
+pio run -d clients/camera-firmware
 ```
 
 The core starts a capture immediately when motion is observed, captures no more
@@ -22,13 +27,10 @@ the activity remains open, and returns to watching after five minutes without
 motion. These defaults match the browser client and remain configuration values
 for later real-kitchen calibration.
 
-The queue persists an atomic metadata snapshot through a storage interface. The
-ESP-IDF storage adapter must durably write encrypted image bytes before adding the
-item to that snapshot and remove them only after the snapshot no longer references
-them. Authentication and trial-quota failures block all delivery; an explicitly
-authorized recovery resumes the same oldest item. Invalid item payloads are
-dropped with a durable counter rather than retried forever. Capacity loss also has
-a durable counter.
+The first hardware prototype retries a transient upload three times in memory.
+Its encrypted persistent image queue and encrypted-at-rest credential store are
+not implemented yet. Do not deploy this build in an untrusted physical location;
+keep the board under household control until those hardening items land.
 
 See [the physical camera design](../../docs/physical-camera-design.md) for the
 hardware, provisioning, trust, encryption, and bench-test decisions.

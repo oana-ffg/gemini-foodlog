@@ -1,8 +1,10 @@
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   API_BASE_URL,
   createDeviceCamera,
+  getDeviceSnapshotRequest,
   listCameras,
+  requestDeviceSnapshot,
   revokeCamera,
   type Account,
   type BrowserCamera,
@@ -27,6 +29,7 @@ function deviceConfiguration(issue: DeviceCameraCredentialIssue) {
     api_base_url: API_BASE_URL,
     capture_endpoint: `${API_BASE_URL}/v1/captures`,
     status_endpoint: `${API_BASE_URL}/v1/device/status`,
+    snapshot_poll_endpoint: `${API_BASE_URL}/v1/device/snapshot-request`,
     camera_id: issue.camera.id,
     authorization: `FoodLogCamera ${issue.credential}`,
   };
@@ -44,6 +47,7 @@ export default function CameraSources({
   const [issued, setIssued] = useState<DeviceCameraCredentialIssue>();
   const [busyAction, setBusyAction] = useState<string>();
   const [message, setMessage] = useState("Loading camera sources…");
+  const snapshotRunRef = useRef(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -57,6 +61,9 @@ export default function CameraSources({
 
   useEffect(() => {
     void refresh();
+    return () => {
+      snapshotRunRef.current += 1;
+    };
   }, [refresh]);
 
   const registerBrowser = async (event: FormEvent<HTMLFormElement>) => {
@@ -125,6 +132,51 @@ export default function CameraSources({
     }
   };
 
+  const downloadDeviceConfiguration = () => {
+    if (!issued) return;
+    const blob = new Blob(
+      [JSON.stringify(deviceConfiguration(issued), null, 2)],
+      { type: "application/json" },
+    );
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.download = `foodlog-camera-${issued.camera.id}.json`;
+    anchor.click();
+    URL.revokeObjectURL(href);
+    setMessage("Camera setup file downloaded. Keep it private until setup is complete.");
+  };
+
+  const requestSnapshot = async (camera: DeviceCameraCredentialIssue["camera"]) => {
+    const run = snapshotRunRef.current + 1;
+    snapshotRunRef.current = run;
+    setBusyAction(`snapshot:${camera.id}`);
+    setMessage(`Asking ${camera.name} for one private snapshot…`);
+    try {
+      let request = await requestDeviceSnapshot(camera.id);
+      for (let attempt = 0; attempt < 45 && request.status === "pending"; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+        if (snapshotRunRef.current !== run) return;
+        request = await getDeviceSnapshotRequest(camera.id, request.id);
+      }
+      if (snapshotRunRef.current !== run) return;
+      if (request.status === "completed") {
+        await refresh();
+        if (snapshotRunRef.current !== run) return;
+        setMessage(`${camera.name} uploaded the requested snapshot successfully.`);
+      } else if (request.status === "expired") {
+        setMessage(`${camera.name} did not collect the request before it expired.`);
+      } else {
+        setMessage(`The request is still queued for ${camera.name}; it may be offline.`);
+      }
+    } catch (error: unknown) {
+      if (snapshotRunRef.current !== run) return;
+      setMessage(error instanceof Error ? error.message : "Snapshot request failed.");
+    } finally {
+      if (snapshotRunRef.current === run) setBusyAction(undefined);
+    }
+  };
+
   return (
     <section className="camera-sources" aria-labelledby="camera-sources-title">
       <div className="section-heading">
@@ -155,6 +207,20 @@ export default function CameraSources({
 
         <form onSubmit={registerDevice}>
           <h3>Add a physical camera</h3>
+          <p>
+            Currently supports the{" "}
+            <a
+              href="https://github.com/Freenove/Freenove_ESP32_S3_WROOM_Board"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Freenove FNK0085 ESP32-S3 WROOM camera
+            </a>
+            .{" "}
+            <a href="/downloads/foodlog-camera-setup.zip" download>
+              Download the FoodLog camera setup utility
+            </a>
+          </p>
           <label>
             Source name
             <input
@@ -174,6 +240,10 @@ export default function CameraSources({
       {issued ? (
         <div className="device-credential" role="status">
           <strong>Save this credential now—it cannot be shown again.</strong>
+          <p>
+            Download the private setup file, then use it with the camera setup utility.
+            Do not email or share it.
+          </p>
           <textarea
             readOnly
             aria-label="Physical camera configuration"
@@ -182,6 +252,9 @@ export default function CameraSources({
           />
           <div className="button-row">
             <button type="button" onClick={copyDeviceConfiguration}>Copy configuration</button>
+            <button type="button" onClick={downloadDeviceConfiguration}>
+              Download setup file
+            </button>
             <button type="button" className="button--quiet" onClick={() => setIssued(undefined)}>
               I saved it; hide credential
             </button>
@@ -205,14 +278,25 @@ export default function CameraSources({
               <p className="fine-print">Created {new Date(camera.created_at).toLocaleString()}</p>
             </div>
             {camera.status === "active" ? (
-              <button
-                type="button"
-                className="button--danger"
-                disabled={busyAction !== undefined}
-                onClick={() => void revoke(camera)}
-              >
-                {busyAction === camera.id ? "Revoking…" : "Revoke"}
-              </button>
+              <div className="button-row button-row--compact">
+                {camera.kind === "device" ? (
+                  <button
+                    type="button"
+                    disabled={busyAction !== undefined}
+                    onClick={() => void requestSnapshot(camera)}
+                  >
+                    {busyAction === `snapshot:${camera.id}` ? "Taking snapshot…" : "Take snapshot"}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="button--danger"
+                  disabled={busyAction !== undefined}
+                  onClick={() => void revoke(camera)}
+                >
+                  {busyAction === camera.id ? "Revoking…" : "Revoke"}
+                </button>
+              </div>
             ) : null}
           </article>
         ))}

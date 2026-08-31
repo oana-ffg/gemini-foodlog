@@ -13,6 +13,7 @@ import {
   correctKnowledge,
   createContextNote,
   createDeviceCamera,
+  getDeviceSnapshotRequest,
   getOrCreateInboundMailAddress,
   getPurchase,
   getKnowledgePage,
@@ -31,6 +32,7 @@ import {
   listQuestions,
   provisionAccount,
   recordLaunchMailConsent,
+  requestDeviceSnapshot,
   retireKnowledge,
   retireContextNote,
   revokeCamera,
@@ -408,6 +410,36 @@ describe("authenticated API client", () => {
     expect((fetchMock.mock.calls[1][1] as RequestInit).body).toBe(
       JSON.stringify({ name: "ESP kitchen camera" }),
     );
+  });
+
+  it("uses owner-authenticated routes for physical-camera snapshot control", async () => {
+    firebase.auth.currentUser = {
+      getIdToken: vi.fn().mockResolvedValue("firebase-id-token"),
+    };
+    const request = {
+      id: "snapshot-request-1",
+      account_id: "account-1",
+      camera_id: "device-camera-1",
+      status: "pending" as const,
+      requested_at: "2026-08-31T02:00:00Z",
+      expires_at: "2026-08-31T02:05:00Z",
+      completed_at: null,
+      capture_id: null,
+    };
+    const fetchMock = vi.fn().mockImplementation(
+      () => Promise.resolve(jsonResponse(request, 202)),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await requestDeviceSnapshot("camera/one");
+    await getDeviceSnapshotRequest("camera/one", "request/one");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://127.0.0.1:8080/v1/device-cameras/camera%2Fone/snapshot-requests",
+      "http://127.0.0.1:8080/v1/device-cameras/camera%2Fone/snapshot-requests/request%2Fone",
+    ]);
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe("POST");
+    expect((fetchMock.mock.calls[1][1] as RequestInit).method).toBeUndefined();
   });
 
   it("uses the authenticated household-wiki CRUD and history routes", async () => {

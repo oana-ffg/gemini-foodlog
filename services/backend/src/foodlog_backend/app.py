@@ -38,6 +38,7 @@ from .errors import (
     CaptureNotFound,
     CrossAccountAccess,
     DeviceCredentialCollision,
+    DeviceSnapshotNotFound,
     IdempotencyConflict,
     InboundAddressGenerationFailed,
     InboundAddressStateConflict,
@@ -96,6 +97,9 @@ from .models import (
     DeviceCameraCreate,
     DeviceCameraCredentialIssue,
     DeviceSession,
+    DeviceSnapshotCommand,
+    DeviceSnapshotRequest,
+    DeviceSnapshotStatus,
     FeedbackInventoryView,
     InboundMailAddress,
     InboundMailAddressMutationRequest,
@@ -522,6 +526,7 @@ def create_app(
         return Response(status_code=status.HTTP_404_NOT_FOUND)
 
     app.add_exception_handler(CameraNotFound, resource_missing_handler)
+    app.add_exception_handler(DeviceSnapshotNotFound, resource_missing_handler)
     app.add_exception_handler(AccountExportNotFound, resource_missing_handler)
     app.add_exception_handler(CaptureNotFound, resource_missing_handler)
     app.add_exception_handler(MealNotFound, resource_missing_handler)
@@ -1003,6 +1008,39 @@ def create_app(
             camera_id=camera_id,
         )
 
+    @app.post(
+        "/v1/device-cameras/{camera_id}/snapshot-requests",
+        response_model=DeviceSnapshotRequest,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def request_device_snapshot(
+        camera_id: str,
+        response: Response,
+        user_id: str = Depends(request_user_id),
+    ) -> DeviceSnapshotRequest:
+        response.headers["Cache-Control"] = "private, no-store"
+        return await container.repository.request_device_snapshot(
+            owner_user_id=user_id,
+            camera_id=camera_id,
+        )
+
+    @app.get(
+        "/v1/device-cameras/{camera_id}/snapshot-requests/{request_id}",
+        response_model=DeviceSnapshotRequest,
+    )
+    async def get_device_snapshot(
+        camera_id: str,
+        request_id: str,
+        response: Response,
+        user_id: str = Depends(request_user_id),
+    ) -> DeviceSnapshotRequest:
+        response.headers["Cache-Control"] = "private, no-store"
+        return await container.repository.device_snapshot_for_owner(
+            owner_user_id=user_id,
+            camera_id=camera_id,
+            request_id=request_id,
+        )
+
     @app.get("/v1/device/status", response_model=DeviceSession)
     async def device_status(
         identity: Annotated[
@@ -1011,6 +1049,24 @@ def create_app(
         ],
     ) -> DeviceSession:
         return DeviceSession(camera_id=identity.camera_id)
+
+    @app.get("/v1/device/snapshot-request", response_model=DeviceSnapshotCommand)
+    async def poll_device_snapshot(
+        response: Response,
+        identity: Annotated[
+            VerifiedDeviceIdentity,
+            Depends(request_device_identity),
+        ],
+    ) -> DeviceSnapshotCommand:
+        response.headers["Cache-Control"] = "no-store"
+        request = await container.repository.pending_device_snapshot(
+            account_id=identity.account_id,
+            camera_id=identity.camera_id,
+        )
+        return DeviceSnapshotCommand(
+            request_id=request.id if request else None,
+            expires_at=request.expires_at if request else None,
+        )
 
     @app.post(
         "/v1/captures",
@@ -1064,6 +1120,28 @@ def create_app(
                 account_id=principal.account_id,
                 camera_id=principal.camera_id,
             )
+            if envelope.snapshot_request_id is not None:
+                try:
+                    snapshot_request = (
+                        await container.repository.device_snapshot_for_owner(
+                            owner_user_id=principal.owner_user_id,
+                            camera_id=principal.camera_id,
+                            request_id=envelope.snapshot_request_id,
+                        )
+                    )
+                except DeviceSnapshotNotFound as error:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                        detail="invalid_snapshot_request",
+                    ) from error
+                if snapshot_request.status not in {
+                    DeviceSnapshotStatus.PENDING,
+                    DeviceSnapshotStatus.COMPLETED,
+                }:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                        detail="invalid_snapshot_request",
+                    )
         else:
             if envelope.client_kind != "browser":
                 raise HTTPException(
@@ -1081,7 +1159,13 @@ def create_app(
                     detail="camera_client_kind_mismatch",
                 )
 
-        return await container.capture_service.accept_capture(
+            if envelope.snapshot_request_id is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="camera_client_kind_mismatch",
+                )
+
+        accepted = await container.capture_service.accept_capture(
             owner_user_id=owner_user_id,
             camera=camera,
             idempotency_key=idempotency_key,
@@ -1089,6 +1173,17 @@ def create_app(
             image=content,
             metadata=envelope,
         )
+        if (
+            isinstance(principal, VerifiedDeviceIdentity)
+            and envelope.snapshot_request_id is not None
+        ):
+            await container.repository.complete_device_snapshot(
+                account_id=principal.account_id,
+                camera_id=principal.camera_id,
+                request_id=envelope.snapshot_request_id,
+                capture_id=accepted.capture_id,
+            )
+        return accepted
 
     @app.get("/v1/journal", response_model=list[MealEntry])
     async def list_journal(

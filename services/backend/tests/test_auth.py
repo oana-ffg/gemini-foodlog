@@ -137,6 +137,8 @@ def test_verified_bearer_token_is_the_only_source_of_user_identity() -> None:
         ("POST", "/v1/cameras/camera-id/revoke"),
         ("POST", "/v1/device-cameras"),
         ("POST", "/v1/device-cameras/camera-id/revoke"),
+        ("POST", "/v1/device-cameras/camera-id/snapshot-requests"),
+        ("GET", "/v1/device-cameras/camera-id/snapshot-requests/request-id"),
         ("POST", "/v1/captures"),
         ("GET", "/v1/journal"),
         ("GET", "/v1/activities"),

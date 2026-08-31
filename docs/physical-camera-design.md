@@ -2,159 +2,137 @@
 
 ## Decision
 
-The MVP physical client targets the **M5Stack Unit CamS3-5MP, SKU U174-B**, using
-ESP-IDF and C++. No hardware has been purchased by this repository work.
+The MVP prototype targets the **Freenove ESP32-S3 WROOM Board with camera,
+product code FNK0085**. This is the exact USB-connected board available for the
+hackathon demo, and its previous Home Camera firmware has a separately validated
+camera-only restore bundle. The FoodLog implementation uses Arduino through the
+pinned PlatformIO `freenove_esp32_s3_wroom` target because that target and camera
+pin map have already run on this physical unit.
 
-On 28 August 2026, the current official product is a USD 17.50
-ESP32-S3-WROOM-1-N16R8 unit with 8 MB
-PSRAM, 16 MB flash, a 5 MP PY260 fixed-focus JPEG camera, an 88-degree field of
-view, a microSD slot, an onboard Wi-Fi antenna, and bundled Grove-to-USB-C
-programming hardware. Its maximum documented image size is 2592 by 1944, within
-the backend's 4096-by-4096 envelope. The older 2 MP U174 is end-of-life and must
-not be substituted accidentally.
+PlatformIO identifies this target as an ESP32-S3 N8R8 board with 8 MB flash and
+8 MB PSRAM. FoodLog captures 640-by-480 frames for local motion analysis and
+switches to the camera sensor's 1600-by-1200 JPEG mode for accepted uploads when
+PSRAM is available. The backend's 4096-by-4096 envelope accepts both sizes.
 
-This is the best prototype fit because it is a currently sold, enclosed camera
-with enough PSRAM for image capture, enough flash for two firmware slots plus
-encrypted configuration, persistent removable storage, native ESP32-S3 security
-features, and materially more distant-image detail than the discontinued 2 MP
-model. It does not require a custom camera ribbon, enclosure, or separate SD
-carrier.
-
-The board's documented operating range is 0 to 40 degrees Celsius. It must be
-mounted away from stove heat, steam, and splashes; the intended side view from
-roughly two metres away is appropriate, but the bench test must still verify
-temperature and Wi-Fi reliability in the actual position. Its onboard antenna is
-the main hardware risk. It also has no documented battery-backed real-time clock,
-so firmware must never invent wall-clock time after an offline cold boot.
+The camera must be mounted away from stove heat, steam, and splashes. Its final
+side view, image focus, Wi-Fi stability, and temperature still require the planned
+human kitchen-position test.
 
 Official references:
 
-- [M5Stack product page and current price](https://shop.m5stack.com/products/unit-cams3-wi-fi-camera-5mp)
-- [M5Stack hardware and ESP-IDF documentation](https://docs.m5stack.com/en/unit/Unit-CAMS3%205MP)
+- [Freenove FNK0085 source, examples, and purchase links](https://github.com/Freenove/Freenove_ESP32_S3_WROOM_Board)
+- [Freenove FNK0085 documentation](https://docs.freenove.com/projects/fnk0085/en/latest/index.html)
+- [Freenove camera web-server example](https://docs.freenove.com/projects/fnk0085/en/latest/fnk0085/codes/C/32_Camera_Web_Server.html)
 - [ESP32-S3 platform security overview](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/security/security.html)
-- [ESP32-S3 security enablement workflows](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/security/security-features-enablement-workflows.html)
 
 ## Alternatives considered
 
 | Board | Decision | Reason |
 | --- | --- | --- |
-| M5Stack Unit CamS3-5MP U174-B | Selected | Current, enclosed, 5 MP, 8 MB PSRAM, 16 MB flash, microSD, bundled USB adapter, official ESP-IDF example. |
-| M5Stack Unit CamS3 U174 | Reject | The official store marks the 2 MP model end-of-life. |
-| Seeed XIAO ESP32S3 Sense | Reserve option | Smaller and exposes an external antenna, but the camera changed from OV2640 to OV3660 across current revisions and it needs a separate enclosure and mount. |
-| Espressif ESP32-S3-EYE | Reject for MVP | Excellent first-party development board, but its LCD, microphone, and accelerometer add unused cost and bulk while its camera is 2 MP and flash is 8 MB. |
-| AI-Thinker ESP32-CAM / original ESP32 boards | Reject | Less memory and a weaker provisioning/debugging baseline than ESP32-S3; saving a few dollars is not worth increasing firmware and image-quality risk. |
+| Freenove FNK0085 ESP32-S3 WROOM N8R8 | Selected for MVP | The exact backed-up board is connected, its camera wiring and motion calibration are physically proven, and it has 8 MB PSRAM plus USB serial provisioning. |
+| M5Stack Unit CamS3-5MP U174-B | Future product candidate | Enclosed and higher resolution, but it is not the board available for the hackathon bench proof and would require a second hardware adapter. |
+| Seeed XIAO ESP32S3 Sense | Reserve option | Compact, but camera revisions vary and it needs an enclosure and mount. |
+| Original ESP32-CAM boards | Reject | Less memory and a weaker provisioning/debugging baseline than the available ESP32-S3 board. |
 
 ## Trust boundary
 
 The physical camera can only:
 
 - validate its own credential through `GET /v1/device/status`;
+- poll its own pending command through `GET /v1/device/snapshot-request`; and
 - upload a frame through `POST /v1/captures` using
-  `Authorization: FoodLogCamera <credential>`; and
-- receive success or bounded error information for those requests.
+  `Authorization: FoodLogCamera <credential>`.
 
 It cannot read images, meals, purchases, questions, account data, another camera,
 or administrative state. The backend derives account and camera scope from the
-credential; firmware never sends an account or owner identifier. Revocation of
-one device credential must not affect the owner's Firebase session or other
+random credential. Firmware never sends an account or owner identifier. Website
+snapshot creation and status routes require the verified owner's Firebase bearer
+token, return 404 across account boundaries, and use private no-store responses.
+Revoking one device credential does not affect the owner's session or other
 cameras.
 
-The firmware completely replaces M5Stack's factory image and never uses EZData or
-another vendor cloud. The microphone remains disabled and no audio is captured.
+The firmware replaces the prior device image and does not use a vendor cloud.
+No audio is captured.
 
 ## One-time provisioning
 
 Provisioning is local and requires physical USB access. The device does not expose
 an open setup access point, BLE pairing surface, or reusable factory secret.
 
-1. The verified owner creates a named physical camera in FoodLog with
-   `POST /v1/device-cameras`.
+1. A verified owner creates a named physical camera in FoodLog.
 2. The backend returns the camera ID and one `flc_v1_` credential exactly once in
    a `Cache-Control: no-store` response. Only its SHA-256 verifier is retained by
    the backend.
-3. The owner connects the bundled Grove-to-USB-C adapter and opens a local USB
-   serial provisioning session. A fresh device accepts its first configuration;
-   an already provisioned device accepts replacement secrets but never reads the
-   old ones back. Physical USB possession is the pairing boundary.
-4. A local source-controlled provisioning command reads the Wi-Fi SSID, Wi-Fi
-   passphrase, camera ID, camera credential, and an allowlisted local-time rule
-   from interactive input, never command-line arguments. It sends one
-   length-bounded versioned record over USB serial. Neither side echoes secret
-   fields.
-5. Firmware validates the complete record before one atomic commit to encrypted
-   NVS, clears the serial receive buffer, reboots, joins Wi-Fi, and calls
-   `/v1/device/status` over TLS.
-6. The command reports only camera ID, firmware version, and success or a bounded
-   error category. It never reads the stored secrets back. A failed partial write
-   leaves the previous complete configuration active or the device unprovisioned.
+3. The owner downloads a private JSON setup file and the public setup ZIP.
+4. `setup-foodlog-camera.ps1` verifies the packaged firmware SHA-256, creates a
+   user-local Python environment, and installs pinned `esptool` and `pyserial`
+   versions. It prompts when more than one COM port exists.
+5. `provision_camera.py` validates that the setup file targets the exact FoodLog
+   HTTPS origin, then asks interactively for Wi-Fi details. Secrets never enter
+   command-line arguments or logs.
+6. The camera accepts four base64-transported, length-bounded serial fields between
+   `PROVISION_BEGIN` and `PROVISION_COMMIT`. Neither side echoes values. Firmware
+   validates the complete record before one NVS commit and reboot.
+7. After trusted NTP time is available, the camera validates normal TLS hostname
+   and chain trust using the four public GTS roots derived from Google's official
+   `https://pki.goog/roots.pem`, then calls `/v1/device/status`.
 
-TLS uses ESP-IDF's maintained certificate bundle and normal hostname validation;
-the service certificate is not pinned because ordinary certificate rotation must
-not brick the camera. The exact production API origin is compiled into signed
-firmware rather than supplied by the device owner.
+The production API origin is compiled into firmware. It cannot be replaced by a
+setup file. Root-CA trust is used instead of disabling certificate validation or
+pinning a rotating service leaf certificate. The board's known-good explicit
+IP-plus-SNI TLS overload preserves hostname verification after a separate DNS
+lookup.
 
-## Secret and queued-image storage
+## Prototype secret and image storage
 
-The final demo device uses ESP32-S3 Secure Boot v2, release-mode flash encryption,
-and HMAC-backed NVS encryption. Its flash and NVS hardware keys are unique per
-device; the firmware release-signing key never enters the repository. Espressif
-recommends secure boot and flash encryption together and recommends NVS encryption
-for stored Wi-Fi credentials.
+This development build stores Wi-Fi and camera credentials in ESP32 NVS without
+hardware flash encryption. The board must remain physically controlled. Secure
+Boot v2, release-mode flash encryption, and HMAC-backed NVS encryption are release
+hardening work and must only be enabled after recovery is proven because those
+eFuse changes are irreversible.
 
-Irreversible eFuse security settings are enabled only after the same physical board
-passes firmware, camera, SD, recovery, and USB-update tests in development mode.
-This avoids turning an ordinary firmware mistake into an unrecoverable board while
-the client is still under active development.
+The current hardware adapter deliberately does **not** persist failed JPEGs to
+microSD: plaintext offline images would violate the account privacy boundary. It
+retries one in-memory JPEG up to three times and reports a bounded drop category
+over serial. The checked-in portable queue state machine already proves FIFO,
+backoff, reboot identity, quota/authentication blocking, and drop accounting, but
+its encrypted SD image-store adapter remains unimplemented. CAP-012 therefore
+cannot be marked complete until that adapter and power-loss bench gate exist.
 
-Pending images on microSD are private user data. Each JPEG and queue manifest is
-encrypted and authenticated at the application layer with AES-GCM using a
-device-generated key retained only in encrypted NVS. Filenames contain opaque IDs,
-not timestamps, account IDs, or meal guesses. An item contains the exact capture
-envelope, content hash, and idempotency key needed for a byte-identical retry. It
-is removed logically only after a successful backend acknowledgement. Queue
-eviction deletes the oldest encrypted item and increments a durable dropped-frame
-counter; ordinary SD deletion is not represented as forensic secure erasure.
+## Firmware behavior
 
-The persistent-queue capacity is selected from measured JPEG sizes on the actual
-board and SD card during CAP-012; it is not guessed from the card's nominal size.
-
-## Firmware and delivery behavior
-
-- ESP-IDF with C++ owns camera, Wi-Fi, TLS, USB serial, encrypted NVS, SD, and task
-  supervision. Arduino is not the production firmware framework.
-- Motion detection uses low-resolution frames locally. Accepted burst frames are
-  encoded as JPEG and sent through the existing Capture API v1 contract.
-- Sequence number, burst identity, timestamp with UTC offset, dimensions, firmware
-  version, motion score, threshold, and algorithm name follow the checked-in JSON
-  schema exactly.
-- The device persists its sequence state before acknowledging local capture, sends
-  oldest-first, and reuses the same idempotency key and bytes on retry.
-- Transient network and server failures back off with jitter. Revoked credential,
-  exhausted trial quota, invalid payload, and other permanent responses stop that
-  retry loop and remain locally visible through status LED/serial diagnostics.
-- Watchdog resets and power loss cannot turn a queued item into a different upload
-  or silently reset the dropped-frame counter.
-- Each boot must establish trusted time over authenticated network service before
-  starting capture. During a later network outage, wall time is derived from that
-  trusted anchor and the monotonic clock. A cold boot without time sync pauses
-  capture visibly instead of fabricating `captured_at`; the provisioned local-time
-  rule supplies the UTC offset preserved in the capture envelope.
+- A brightness-compensated 80-by-60 luminance decoder uses the motion calibration
+  proven on this exact camera: normalized average score `2/255`, changed-pixel
+  ratio `0.025`, and two consecutive positive frames.
+- Confirmed motion captures immediately, then at most once per second during a
+  15-second burst, once per minute while activity remains open, and closes after
+  five minutes without motion. The portable host tests own this cadence.
+- The device polls every two seconds for one owner-created manual snapshot. It
+  includes the opaque request ID in the normal Capture API envelope; the backend
+  completes only a matching request for that credential's camera.
+- Captures include UTC time, dimensions, firmware version, sequence identity,
+  burst identity/index where applicable, and bounded motion metadata.
+- TLS uploads use stable idempotency keys and three immediate retries. Revoked
+  credentials and trial quota stop capture until the periodic status check proves
+  recovery; invalid requests are not retried forever.
+- A cold boot pauses upload until authenticated network time is available instead
+  of inventing `captured_at`.
 
 ## Bench gate
 
-CAP-011 remains unverified until the exact U174-B board is physically available.
-The gate is:
+The exact board gate is:
 
-1. flash the FoodLog firmware through the bundled adapter;
-2. provision over USB without a secret appearing in process arguments, logs, or
-   serial echo;
-3. reboot and prove encrypted configuration persists;
-4. validate the device credential against production over TLS;
-5. upload an exact JPEG and verify its server-side SHA-256 and camera identity;
-6. revoke the camera and prove status/upload receive permanent authentication
-   failure without an infinite retry;
-7. disconnect Wi-Fi and power during queued delivery, then prove reboot recovery,
-   byte-identical idempotent upload, and truthful drop accounting;
-8. run in the intended kitchen position long enough to verify image focus, meat
-   colour visibility, Wi-Fi stability, power draw, SD behavior, trusted-time
-   recovery, and temperature below the board's 40-degree maximum.
+1. compile the firmware for `freenove_esp32_s3_wroom` with its embedded trust
+   bundle;
+2. flash the connected board over USB without administrator access if the current
+   serial driver permits it;
+3. provision without a secret appearing in process arguments, logs, or serial
+   echo, then prove NVS persistence across reboot;
+4. validate the dedicated test-account camera credential against production TLS;
+5. request one private snapshot from the signed-in website and verify the resulting
+   capture identity and image;
+6. verify motion telemetry and a real hand-wave trigger with Oana;
+7. later, add encrypted persistent storage and prove Wi-Fi/power-loss recovery,
+   byte-identical retry, and truthful drop accounting;
+8. verify focus, colour visibility, Wi-Fi reliability, and safe placement in the
+   intended kitchen position.

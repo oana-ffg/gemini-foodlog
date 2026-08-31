@@ -25,6 +25,7 @@ from .errors import (
     CaptureNotFound,
     CrossAccountAccess,
     DeviceCredentialCollision,
+    DeviceSnapshotNotFound,
     IdempotencyConflict,
     InboundAddressCollision,
     InboundAddressStateConflict,
@@ -96,6 +97,8 @@ from .models import (
     DeviceCamera,
     DeviceCredentialRecord,
     DeviceCredentialStatus,
+    DeviceSnapshotRequest,
+    DeviceSnapshotStatus,
     DurableJob,
     EntitlementMode,
     InboundMailAddress,
@@ -174,6 +177,16 @@ from .purchase_normalization import (
 )
 
 PATTERN_RESURFACE_MINIMUM_NEW_SUPPORT = 2
+DEVICE_SNAPSHOT_REQUEST_LIFETIME = timedelta(minutes=5)
+
+
+def snapshot_request_at(
+    request: DeviceSnapshotRequest,
+    now: datetime,
+) -> DeviceSnapshotRequest:
+    if request.status == DeviceSnapshotStatus.PENDING and request.expires_at <= now:
+        return request.model_copy(update={"status": DeviceSnapshotStatus.EXPIRED}, deep=True)
+    return request
 
 
 def validate_ai_trace_usage(trace: AiTraceRecord, usage: ModelUsageRecord) -> None:
@@ -928,6 +941,37 @@ class Repository(Protocol):
         credential_hash: str,
     ) -> VerifiedDeviceIdentity: ...
 
+    async def request_device_snapshot(
+        self,
+        *,
+        owner_user_id: str,
+        camera_id: str,
+    ) -> DeviceSnapshotRequest: ...
+
+    async def device_snapshot_for_owner(
+        self,
+        *,
+        owner_user_id: str,
+        camera_id: str,
+        request_id: str,
+    ) -> DeviceSnapshotRequest: ...
+
+    async def pending_device_snapshot(
+        self,
+        *,
+        account_id: str,
+        camera_id: str,
+    ) -> DeviceSnapshotRequest | None: ...
+
+    async def complete_device_snapshot(
+        self,
+        *,
+        account_id: str,
+        camera_id: str,
+        request_id: str,
+        capture_id: str,
+    ) -> DeviceSnapshotRequest: ...
+
     async def revoke_device_camera(
         self,
         *,
@@ -1373,6 +1417,7 @@ class InMemoryRepository:
         self._purchase_reconciliations: dict[tuple[str, str], PurchaseReconciliation] = {}
         self._device_cameras: dict[str, DeviceCamera] = {}
         self._device_credentials: dict[str, DeviceCredentialRecord] = {}
+        self._device_snapshot_requests: dict[str, DeviceSnapshotRequest] = {}
         self._cameras: dict[str, BrowserCamera] = {}
         self._browser_camera_by_instance: dict[tuple[str, str], str] = {}
         self._captures: dict[str, CaptureRecord] = {}
@@ -2818,6 +2863,125 @@ class InMemoryRepository:
                 account_id=account.id,
                 camera_id=camera.id,
             )
+
+    async def request_device_snapshot(
+        self,
+        *,
+        owner_user_id: str,
+        camera_id: str,
+    ) -> DeviceSnapshotRequest:
+        account = await self.account_for_owner(owner_user_id)
+        async with self._lock:
+            self._require_active_account_locked(account.id)
+            camera = self._device_cameras.get(camera_id)
+            if (
+                camera is None
+                or camera.account_id != account.id
+                or camera.status != CameraStatus.ACTIVE
+            ):
+                raise CameraNotFound
+            now = utc_now()
+            existing = self._device_snapshot_requests.get(camera_id)
+            if (
+                existing is not None
+                and snapshot_request_at(existing, now).status == DeviceSnapshotStatus.PENDING
+            ):
+                return existing.model_copy(deep=True)
+            request = DeviceSnapshotRequest(
+                id=str(uuid4()),
+                account_id=account.id,
+                camera_id=camera_id,
+                requested_at=now,
+                expires_at=now + DEVICE_SNAPSHOT_REQUEST_LIFETIME,
+            )
+            self._device_snapshot_requests[camera_id] = request
+            return request.model_copy(deep=True)
+
+    async def device_snapshot_for_owner(
+        self,
+        *,
+        owner_user_id: str,
+        camera_id: str,
+        request_id: str,
+    ) -> DeviceSnapshotRequest:
+        account = await self.account_for_owner(owner_user_id)
+        async with self._lock:
+            camera = self._device_cameras.get(camera_id)
+            request = self._device_snapshot_requests.get(camera_id)
+            if (
+                camera is None
+                or camera.account_id != account.id
+                or request is None
+                or request.account_id != account.id
+                or request.id != request_id
+            ):
+                raise DeviceSnapshotNotFound
+            return snapshot_request_at(request, utc_now()).model_copy(deep=True)
+
+    async def pending_device_snapshot(
+        self,
+        *,
+        account_id: str,
+        camera_id: str,
+    ) -> DeviceSnapshotRequest | None:
+        async with self._lock:
+            self._require_active_account_locked(account_id)
+            camera = self._device_cameras.get(camera_id)
+            if (
+                camera is None
+                or camera.account_id != account_id
+                or camera.status != CameraStatus.ACTIVE
+            ):
+                raise CameraNotFound
+            request = self._device_snapshot_requests.get(camera_id)
+            if request is None:
+                return None
+            current = snapshot_request_at(request, utc_now())
+            if current.status != DeviceSnapshotStatus.PENDING:
+                return None
+            return current.model_copy(deep=True)
+
+    async def complete_device_snapshot(
+        self,
+        *,
+        account_id: str,
+        camera_id: str,
+        request_id: str,
+        capture_id: str,
+    ) -> DeviceSnapshotRequest:
+        async with self._lock:
+            self._require_active_account_locked(account_id)
+            camera = self._device_cameras.get(camera_id)
+            request = self._device_snapshot_requests.get(camera_id)
+            if (
+                camera is None
+                or camera.account_id != account_id
+                or camera.status != CameraStatus.ACTIVE
+                or request is None
+                or request.account_id != account_id
+                or request.id != request_id
+            ):
+                raise DeviceSnapshotNotFound
+            # The command may have expired while the device was uploading a
+            # frame it polled while pending. Completion remains valid for that
+            # exact request/camera pair and is idempotent by capture ID.
+            current = request
+            if current.status == DeviceSnapshotStatus.COMPLETED:
+                if current.capture_id != capture_id:
+                    raise DeviceSnapshotNotFound
+                return current.model_copy(deep=True)
+            if current.status != DeviceSnapshotStatus.PENDING:
+                raise DeviceSnapshotNotFound
+            completed = current.model_copy(
+                update={
+                    "status": DeviceSnapshotStatus.COMPLETED,
+                    "completed_at": utc_now(),
+                    "capture_id": capture_id,
+                },
+                deep=True,
+            )
+            self._device_snapshot_requests[camera_id] = completed
+            return completed.model_copy(deep=True)
 
     async def revoke_device_camera(
         self,

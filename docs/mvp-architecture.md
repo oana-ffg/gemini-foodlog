@@ -89,7 +89,7 @@ The three areas do not imply exactly three packages or deployable processes. The
 
 - **Backend and agent orchestration:** Python.
 - **Web application:** TypeScript with React and Vite.
-- **Physical firmware:** C++ on ESP-IDF, targeting the M5Stack Unit CamS3-5MP U174-B.
+- **Physical firmware:** C++ on Arduino/PlatformIO, targeting the available Freenove FNK0085 ESP32-S3 WROOM N8R8 board; an ESP-IDF secure-release profile remains later hardening.
 - **Webcam simulator:** Python.
 - **Cross-language contracts:** generated OpenAPI and JSON Schema artifacts rather than manually duplicated types.
 
@@ -197,11 +197,13 @@ Browser capture is a zero-install evaluation path, not equivalent to an unattend
 
 ### 4.3a Physical camera target
 
-The MVP physical client targets the M5Stack Unit CamS3-5MP U174-B. It replaces the
-factory firmware, captures no audio, provisions only through deliberate physical
-USB access, stores Wi-Fi and the revocable FoodLog device credential in encrypted
-NVS, and encrypts queued images on microSD. The exact hardware rationale,
-provisioning protocol, security staging, and bench gate are defined in
+The MVP physical client targets the available Freenove FNK0085 ESP32-S3 WROOM
+N8R8 board. It replaces the previous firmware, captures no audio, provisions only
+through deliberate physical USB access, and authenticates with a revocable
+per-camera credential. The current demo build keeps failed frames in memory only;
+application-encrypted persistent queue storage and hardware-backed secret
+protection remain explicit release gates. The hardware rationale, provisioning
+protocol, security staging, and bench gate are defined in
 [the physical camera design](physical-camera-design.md).
 
 ### 4.4 Capture state machine

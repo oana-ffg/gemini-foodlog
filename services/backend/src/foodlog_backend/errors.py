@@ -98,6 +98,10 @@ class CameraNotFound(FoodLogError):
     pass
 
 
+class DeviceSnapshotNotFound(FoodLogError):
+    pass
+
+
 class CrossAccountAccess(FoodLogError):
     pass
 

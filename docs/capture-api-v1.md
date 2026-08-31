@@ -27,6 +27,23 @@ The owner can independently revoke it with
 `POST /v1/device-cameras/{camera_id}/revoke`. A revoked credential receives `401`
 and must not be retried indefinitely.
 
+## Owner-requested physical snapshot
+
+An authenticated, email-verified owner requests one frame with
+`POST /v1/device-cameras/{camera_id}/snapshot-requests`. The route returns `202`,
+is idempotent while that camera already has a pending command, and uses
+`Cache-Control: private, no-store`. A foreign account receives `404` rather than
+camera or request existence information. The owner polls the exact result at
+`GET /v1/device-cameras/{camera_id}/snapshot-requests/{request_id}`.
+
+The camera polls only its own command through
+`GET /v1/device/snapshot-request` using its `FoodLogCamera` credential. A pending
+command contains an opaque request ID and expiry, never account data. The device
+adds that ID as `snapshot_request_id` to the ordinary capture envelope. The API
+accepts it only for the credential-derived camera and atomically marks the command
+completed with the accepted capture ID. Exact upload retries and completion are
+idempotent; missing, foreign, or expired commands cannot authorize a manual frame.
+
 ## Browser registration and camera inventory
 
 Each browser installation persists a random, non-secret `client_instance_id` and
