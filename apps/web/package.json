@@ -22,7 +22,7 @@
     "@vitejs/plugin-react": "6.1.0",
     "fake-indexeddb": "^6.2.5",
     "typescript": "7.0.2",
-    "vite": "8.2.2",
-    "vitest": "^4.1.11"
+    "vite": "8.2.4",
+    "vitest": "^4.1.12"
   }
 }
