@@ -124,7 +124,7 @@ jobs:
       - name: Run release quality gates
         if: inputs.operation == 'deploy'
         run: |
-          npm ci
+          npm ci --no-audit --no-fund
           npm run typecheck
           npm test --workspace @foodlog/web
           npm run test:hosting-config
