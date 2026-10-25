@@ -6,7 +6,7 @@ Gemini FoodLog is a new project for Google's 2026 [All Things Agentic Hackathon]
 
 ## Deployment status
 
-**Paused on 25 October 2026 after hackathon judging.** The GCP-hosted app and background processing are offline. This repository remains public; source, retained application data, deployed images, and recovery configurations are preserved. Watch the [recorded demo](https://vimeo.com/1222721564), or follow [deployment recovery](docs/shutdown-recovery.md) to resume deliberately.
+**Paused on 25 October 2026 after hackathon judging.** The GCP-hosted app and background processing are offline, and project billing is disabled after a verified private offline backup. This repository remains public; application data, deployed images, identities, secrets and recovery configurations are preserved in that offline archive. Watch the [recorded demo](https://vimeo.com/1222721564), or follow [deployment recovery](docs/shutdown-recovery.md) to resume deliberately.
 
 ## The problem
 

@@ -1,6 +1,6 @@
 # Reproducible setup and deployment
 
-**Current deployment: paused on 25 October 2026.** See [shutdown and recovery](shutdown-recovery.md) for verified state, retained resources, costs, and resumption. Historical release and judging evidence below describes the earlier live deployment.
+**Current deployment: paused with project billing disabled on 25 October 2026 after a verified offline backup.** See [shutdown and recovery](shutdown-recovery.md) for verified state, retained resources, costs, and resumption. Historical release and judging evidence below describes the earlier live deployment.
 
 - **Last rehearsed:** 2026-08-28
 - **Production project:** `gemini-foodlog-2026` (`163029863855`)
