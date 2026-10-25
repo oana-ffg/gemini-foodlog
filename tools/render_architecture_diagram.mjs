@@ -50,7 +50,7 @@ const html = `<!doctype html>
   <body>
     <div id="diagram"></div>
     <script>
-      mermaid.initialize({startOnLoad: false, theme: "neutral", securityLevel: "strict"});
+      mermaid.initialize({startOnLoad: false, theme: "neutral", layout: "dagre", look: "classic", securityLevel: "strict"});
       mermaid.render("foodlog-architecture", ${JSON.stringify(source)}).then(({svg}) => {
         document.getElementById("diagram").innerHTML = svg;
       });
