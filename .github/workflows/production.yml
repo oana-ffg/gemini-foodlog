@@ -68,6 +68,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Reject deployment while suspended
+        if: inputs.operation == 'deploy'
+        run: |
+          if grep -Eq '^runtime_suspended[[:space:]]*=[[:space:]]*true' infra/terraform/production/production.auto.tfvars; then
+            echo "FoodLog is suspended. Follow docs/shutdown-recovery.md before resuming deployment." >&2
+            exit 1
+          fi
+
       - name: Require exact main ref
         run: |
           if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then

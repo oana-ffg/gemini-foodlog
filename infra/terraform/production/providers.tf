@@ -1,3 +1,9 @@
+variable "runtime_suspended" {
+  description = "Keep Cloud Run disabled and Pub/Sub push delivery paused while retaining all data and recovery resources."
+  type        = bool
+  default     = false
+}
+
 variable "project_id" {
   description = "Google Cloud project that owns the FoodLog production resources."
   type        = string

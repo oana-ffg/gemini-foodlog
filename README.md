@@ -4,6 +4,10 @@
 
 Gemini FoodLog is a new project for Google's 2026 [All Things Agentic Hackathon](https://allthingsagentichackathon.devpost.com/). It explores whether an autonomous agent can reconstruct a useful household food timeline from ordinary, unstaged kitchen activity, sparse human clarification, and authorized grocery context.
 
+## Deployment status
+
+**Paused on 25 October 2026 after hackathon judging.** The GCP-hosted app and background processing are offline. This repository remains public; source, retained application data, deployed images, and recovery configurations are preserved. Watch the [recorded demo](https://vimeo.com/1222721564), or follow [deployment recovery](docs/shutdown-recovery.md) to resume deliberately.
+
 ## The problem
 
 Food and symptom diaries can help people look for patterns, but keeping one manually is tedious and unreliable. The moments when a diary matters most are also the moments when remembering every ingredient and maintaining a logging habit may be hardest.

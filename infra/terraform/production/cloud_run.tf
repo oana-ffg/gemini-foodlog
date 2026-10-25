@@ -121,6 +121,11 @@ resource "google_cloud_run_v2_service" "api" {
     component = "api"
   })
 
+  scaling {
+    scaling_mode          = var.runtime_suspended ? "MANUAL" : "AUTOMATIC"
+    manual_instance_count = var.runtime_suspended ? 0 : null
+  }
+
   template {
     service_account                  = google_service_account.runtime["api"].email
     timeout                          = "60s"
@@ -574,6 +579,11 @@ resource "google_cloud_run_v2_service" "image" {
     component = "image"
   })
 
+  scaling {
+    scaling_mode          = var.runtime_suspended ? "MANUAL" : "AUTOMATIC"
+    manual_instance_count = var.runtime_suspended ? 0 : null
+  }
+
   template {
     service_account                  = google_service_account.runtime["worker"].email
     timeout                          = "30s"
@@ -688,6 +698,11 @@ resource "google_cloud_run_v2_service" "inference" {
     component = "inference"
   })
 
+  scaling {
+    scaling_mode          = var.runtime_suspended ? "MANUAL" : "AUTOMATIC"
+    manual_instance_count = var.runtime_suspended ? 0 : null
+  }
+
   template {
     service_account                  = google_service_account.runtime["worker"].email
     timeout                          = "300s"
@@ -795,6 +810,11 @@ resource "google_cloud_run_v2_service" "mail_worker" {
   labels = merge(local.common_labels, {
     component = "mail-worker"
   })
+
+  scaling {
+    scaling_mode          = var.runtime_suspended ? "MANUAL" : "AUTOMATIC"
+    manual_instance_count = var.runtime_suspended ? 0 : null
+  }
 
   template {
     service_account                  = google_service_account.runtime["worker"].email
@@ -904,6 +924,11 @@ resource "google_cloud_run_v2_service" "export_worker" {
   labels = merge(local.common_labels, {
     component = "export-worker"
   })
+
+  scaling {
+    scaling_mode          = var.runtime_suspended ? "MANUAL" : "AUTOMATIC"
+    manual_instance_count = var.runtime_suspended ? 0 : null
+  }
 
   template {
     service_account                  = google_service_account.runtime["worker"].email
@@ -1016,6 +1041,11 @@ resource "google_cloud_run_v2_service" "notification" {
   labels = merge(local.common_labels, {
     component = "notification"
   })
+
+  scaling {
+    scaling_mode          = var.runtime_suspended ? "MANUAL" : "AUTOMATIC"
+    manual_instance_count = var.runtime_suspended ? 0 : null
+  }
 
   template {
     service_account                  = google_service_account.runtime["notification"].email

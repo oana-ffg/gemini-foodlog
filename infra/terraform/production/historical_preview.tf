@@ -167,6 +167,11 @@ resource "google_cloud_run_v2_service" "preview" {
     source_location          = "gs://run-sources-gemini-foodlog-2026-europe-west1/services/foodlog-preview-api/1787650583.477445-102049413aca4112bd4ae27ff9b009d2.zip#1787650601116039"
   }
 
+  scaling {
+    scaling_mode          = var.runtime_suspended ? "MANUAL" : "AUTOMATIC"
+    manual_instance_count = var.runtime_suspended ? 0 : null
+  }
+
   template {
     service_account                  = google_service_account.preview.email
     execution_environment            = "EXECUTION_ENVIRONMENT_GEN2"

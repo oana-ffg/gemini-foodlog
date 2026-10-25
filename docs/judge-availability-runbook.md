@@ -1,5 +1,7 @@
 # Judge availability runbook
 
+**Current deployment: paused on 25 October 2026.** See [shutdown and recovery](shutdown-recovery.md) for verified state, retained resources, costs, and resumption. Historical release and judging evidence below describes the earlier live deployment.
+
 - **Last verified:** 2026-08-28
 - **Hosted application:** <https://gemini-foodlog-2026.web.app>
 - **Production health:** <https://foodlog-api-sptvo5nsga-ew.a.run.app/health>

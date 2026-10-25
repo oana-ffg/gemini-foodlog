@@ -138,7 +138,7 @@ resource "google_pubsub_subscription" "consumer" {
   }
 
   dynamic "push_config" {
-    for_each = contains(keys(local.pubsub_push_targets), each.key) ? [
+    for_each = !var.runtime_suspended && contains(keys(local.pubsub_push_targets), each.key) ? [
       local.pubsub_push_targets[each.key]
     ] : []
 
@@ -183,12 +183,16 @@ resource "google_pubsub_subscription" "inference_consumer" {
     max_delivery_attempts = 20
   }
 
-  push_config {
-    push_endpoint = "${google_cloud_run_v2_service.inference.uri}/internal/pubsub/capture-stored"
+  dynamic "push_config" {
+    for_each = var.runtime_suspended ? [] : [true]
 
-    oidc_token {
-      service_account_email = google_service_account.runtime["worker"].email
-      audience              = google_cloud_run_v2_service.inference.uri
+    content {
+      push_endpoint = "${google_cloud_run_v2_service.inference.uri}/internal/pubsub/capture-stored"
+
+      oidc_token {
+        service_account_email = google_service_account.runtime["worker"].email
+        audience              = google_cloud_run_v2_service.inference.uri
+      }
     }
   }
 

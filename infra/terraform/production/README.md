@@ -1,5 +1,7 @@
 # Production infrastructure
 
+**Current deployment: paused on 25 October 2026.** See [shutdown and recovery](../../../docs/shutdown-recovery.md) for verified state, retained resources, costs, and resumption. Historical release and judging evidence below describes the earlier live deployment.
+
 This root owns the durable Google Cloud resources for Gemini FoodLog in project
 `gemini-foodlog-2026`. It uses a private GCS backend so plans and applies share a
 versioned, lockable source of truth.
