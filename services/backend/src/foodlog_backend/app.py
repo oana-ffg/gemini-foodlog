@@ -95,6 +95,7 @@ from .models import (
     CaptureAccepted,
     CaptureEnvelopeV1,
     CaptureInventoryView,
+    CaptureStatus,
     ClarificationQuestion,
     ConsentPreferences,
     DeviceCamera,
@@ -104,6 +105,7 @@ from .models import (
     DeviceSnapshotCommand,
     DeviceSnapshotRequest,
     DeviceSnapshotStatus,
+    DurableJob,
     EventClassificationRequest,
     EventClassificationResult,
     FeedbackInventoryView,
@@ -1328,19 +1330,21 @@ def create_app(
             limit=limit,
         )
         views: list[CaptureProcessingView] = []
+        inference_jobs: dict[tuple[str, str], DurableJob | None] = {}
         for capture in captures:
-            grouping_job = await container.repository.job_for_account(
-                capture.account_id,
-                capture_grouping_job_id(capture.id),
-            )
-            inference_job = (
-                await container.repository.job_for_account(
+            grouping_job = None
+            inference_job = None
+            if capture.status != CaptureStatus.ACCEPTED and capture.event_id:
+                key = (capture.account_id, event_inference_job_id(capture.event_id))
+                # A burst shares one job. Cache missing jobs too, only for this response.
+                if key not in inference_jobs:
+                    inference_jobs[key] = await container.repository.job_for_account(*key)
+                inference_job = inference_jobs[key]
+            elif capture.status == CaptureStatus.STORED:
+                grouping_job = await container.repository.job_for_account(
                     capture.account_id,
-                    event_inference_job_id(capture.event_id),
+                    capture_grouping_job_id(capture.id),
                 )
-                if capture.event_id
-                else None
-            )
             views.append(
                 capture_processing_view(
                     capture,
