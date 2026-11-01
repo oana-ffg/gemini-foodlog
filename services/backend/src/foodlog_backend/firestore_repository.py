@@ -5429,33 +5429,33 @@ class FirestoreRepository:
         account = await self._account(account_id).get()
         if not account.exists or account.get("status") != "active":
             raise AccountNotProvisioned
-        meals = [
-            _model(snapshot, MealEntry)
-            async for snapshot in self._collection(account_id, "meals").stream()
-        ]
+        meal_query = self._collection(account_id, "meals").where(
+            filter=FieldFilter(
+                "status", "in", [MealStatus.PROVISIONAL.value, MealStatus.CONTRADICTED.value]
+            )
+        )
+        # Keep the legacy occurred_at/created_at fallback when ordering meals.
+        meals = [_model(snapshot, MealEntry) async for snapshot in meal_query.stream()]
+        question_query = (
+            self._collection(account_id, "questions")
+            .where(filter=FieldFilter("status", "==", QuestionStatus.OPEN.value))
+            .order_by("created_at", direction=firestore.Query.DESCENDING)
+            .order_by("__name__", direction=firestore.Query.DESCENDING)
+            .limit(limit)
+        )
         questions = [
-            _model(snapshot, ClarificationQuestion)
-            async for snapshot in self._collection(account_id, "questions").stream()
+            _model(snapshot, ClarificationQuestion) async for snapshot in question_query.stream()
         ]
         if any(meal.account_id != account_id for meal in meals) or any(
             question.account_id != account_id for question in questions
         ):
             raise CrossAccountAccess
         unresolved_meals = sorted(
-            (
-                meal
-                for meal in meals
-                if meal.status in {MealStatus.PROVISIONAL, MealStatus.CONTRADICTED}
-            ),
+            meals,
             key=lambda item: (item.occurred_at or item.created_at, item.id),
             reverse=True,
         )[:limit]
-        open_questions = sorted(
-            (question for question in questions if question.status == QuestionStatus.OPEN),
-            key=lambda item: (item.created_at, item.id),
-            reverse=True,
-        )[:limit]
-        return unresolved_meals, open_questions
+        return unresolved_meals, questions
 
     async def list_questions(
         self,
